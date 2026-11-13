@@ -55,9 +55,11 @@ def search(words: str, limit: int = 10) -> list[str]:
 def parse_event(event: dict, market_slug: str | None) -> list[dict]:
     """Open contracts of an event: the named market first, then the most undecided (nearest 50%)."""
     out = []
-    # untraded contracts are placeholders ("Candidate S"); keep one only if it was asked for by name
+    # contracts that take no orders and never traded are placeholders ("Candidate S"): keep one only if
+    # it was asked for by name. A market listed today has no trades yet but does take orders.
     ms = [m for m in event.get("markets") or []
-          if not m.get("closed") and ((m.get("volumeNum") or 0) > 0 or m.get("slug") == market_slug)]
+          if not m.get("closed") and ((m.get("volumeNum") or 0) > 0 or m.get("acceptingOrders")
+                                      or m.get("slug") == market_slug)]
     for m in ms:
         try:
             token = json.loads(m["clobTokenIds"])[0]

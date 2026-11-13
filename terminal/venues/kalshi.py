@@ -76,9 +76,10 @@ def parse_event(event: dict, wanted: str, url: str | None = None) -> list[dict]:
     """
     slug = event["event_ticker"].lower()
     url = url or f"https://kalshi.com/markets/{event.get('series_ticker', slug).lower()}/e/{slug}"
-    # untraded contracts are placeholders; keep one only if it was asked for by name
+    # contracts with no trades and no quote are placeholders; keep one only if it was asked for by name
     ms = [m for m in event.get("markets") or []
-          if m.get("status") == "active" and (float(m.get("volume_fp") or 0) > 0 or m["ticker"] == wanted)]
+          if m.get("status") == "active" and (float(m.get("volume_fp") or 0) > 0 or price(m) is not None
+                                              or m["ticker"] == wanted)]
     ms.sort(key=lambda m: (m["ticker"] != wanted, abs((price(m) if price(m) is not None else 1000) - 50)))
     def title(m):
         t, sub = m.get("title") or event["title"], m.get("yes_sub_title") or ""

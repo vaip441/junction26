@@ -149,19 +149,23 @@ def test_kalshi_lookup_of_nothing_is_market_not_found(monkeypatch):
         kalshi.lookup("NOPE")
 
 
-def test_untraded_placeholder_contracts_are_left_out_unless_named():
-    def pm(slug, price, volume):
+def test_placeholder_contracts_are_left_out_unless_named_but_new_untraded_ones_are_kept():
+    def pm(slug, price, volume, open_):
         return {**POLY["markets"][0], "slug": slug, "question": slug, "closed": False, "volumeNum": volume,
-                "outcomePrices": json.dumps([str(price), str(1 - price)])}
-    event = {**POLY, "markets": [pm("candidate-s", 0.5, 0), pm("real", 0.2, 900.0), pm("candidate-t", 0.5, None)]}
-    assert [c["slug"] for c in polymarket.parse_event(event, None)] == ["real"]
-    assert [c["slug"] for c in polymarket.parse_event(event, "candidate-s")] == ["candidate-s", "real"]
+                "acceptingOrders": open_, "outcomePrices": json.dumps([str(price), str(1 - price)])}
+    # "Candidate S" style placeholders take no orders; a game listed today takes orders but has no trades yet
+    event = {**POLY, "markets": [pm("candidate-s", 0.5, 0, False), pm("real", 0.2, 900.0, True),
+                                 pm("candidate-t", 0.5, None, False), pm("listed-today", 0.34, None, True)]}
+    assert [c["slug"] for c in polymarket.parse_event(event, None)] == ["listed-today", "real"]
+    assert [c["slug"] for c in polymarket.parse_event(event, "candidate-s")] == ["candidate-s", "listed-today", "real"]
 
-    def k(ticker, volume):
-        return {**KALSHI["markets"][0], "ticker": ticker, "status": "active", "volume_fp": volume}
-    event = {**KALSHI, "markets": [k("PLACEHOLDER", "0.00"), k("REAL", "12.00")]}
-    assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="x")] == ["REAL"]
-    assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="PLACEHOLDER")] == ["PLACEHOLDER", "REAL"]
+    def k(ticker, volume, bid="0.0000", ask="1.0000"):
+        return {**KALSHI["markets"][0], "ticker": ticker, "status": "active", "volume_fp": volume,
+                "yes_bid_dollars": bid, "yes_ask_dollars": ask, "last_price_dollars": "0.0000"}
+    event = {**KALSHI, "markets": [k("PLACEHOLDER", "0.00"), k("REAL", "12.00", "0.10", "0.12"),
+                                   k("QUOTED", "0.00", "0.30", "0.40")]}
+    assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="x")] == ["QUOTED", "REAL"]
+    assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="PLACEHOLDER")] == ["PLACEHOLDER", "QUOTED", "REAL"]
 
 
 def test_every_contract_carries_its_events_title():
