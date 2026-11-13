@@ -79,3 +79,54 @@ def test_market_detail_has_rules_related_and_pages(path):
     with client(path) as c:
         d = c.get("/markets/mu-demo").json()
     assert d["rules"] and d["related"] == [] and d["pages"] == [] and d["queries"] == []
+
+
+CONTRACTS = [{"venue": "polymarket", "venue_ref": f"tok{i}", "title": f"Contract {i}?", "rules": "rules",
+              "url": f"https://polymarket.com/event/e/m{i}", "price": 40.0 + i, "slug": f"m{i}"} for i in range(3)]
+
+
+def test_post_market_rejects_plain_words_for_now(path):
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "will jensen get fired"})
+        assert r.status_code == 422 and r.json()["detail"] == "paste a Kalshi or Polymarket market link"
+        assert c.post("/markets", json={"query": ""}).status_code == 422
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/e", "poll_seconds": 5}).status_code == 422
+
+
+def test_post_market_tracks_lead_and_related(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        return CONTRACTS
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "https://polymarket.com/event/e", "poll_seconds": 60})
+        assert r.status_code == 200
+        m = r.json()
+        assert m["id"] == "pm-m0" and m["price"] == 40.0 and m["poll_seconds"] == 60
+        assert [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2"] and m["related"][0]["price"] == 41.0
+        assert [x["id"] for x in c.get("/markets").json()] == ["mu-demo", "pm-m0"]
+        again = c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()
+        assert again["id"] == "pm-m0" and len(c.get("/markets").json()) == 2
+
+
+def test_post_market_unknown_market_is_404(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        raise LookupError("market not found")
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    with client(path) as c:
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/gone"}).status_code == 404
+
+
+def test_writes_need_the_shared_key_when_one_is_set(path):
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="s3cret")) as c:
+        body = {"text": "hello", "kind": "typed"}
+        assert c.post("/markets/mu-demo/ticks", json=body).status_code == 401
+        assert c.post("/markets/mu-demo/ticks", json=body, headers={"X-Terminal-Key": "wrong"}).status_code == 401
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/e"}).status_code == 401
+        assert c.post("/markets/mu-demo/ticks", json=body, headers={"X-Terminal-Key": "s3cret"}).status_code == 200
+        assert c.get("/markets").status_code == 200

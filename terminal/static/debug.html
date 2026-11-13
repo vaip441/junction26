@@ -17,6 +17,7 @@
 <ul id="tape"></ul>
 <script>
 const $ = id => document.getElementById(id);
+const KEY = new URLSearchParams(location.search).get("key") || "";  // open /?key=... when TERMINAL_KEY is set
 let current = null;
 const pct = p => p == null ? "–" : p.toFixed(1) + "%";
 function row(t) {
@@ -41,7 +42,7 @@ async function load() {
 $("market").onchange = () => { current = $("market").value; load(); };
 $("form").onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch(`/markets/${current}/ticks`, {method: "POST", headers: {"content-type": "application/json"},
+  const r = await fetch(`/markets/${current}/ticks`, {method: "POST", headers: {"content-type": "application/json", "X-Terminal-Key": KEY},
     body: JSON.stringify({text: $("text").value, kind: "typed"})});
   $("error").textContent = r.ok ? "" : `Error ${r.status}: ${(await r.json()).detail?.toString?.() ?? ""}`;
   if (r.ok) $("text").value = "";
