@@ -145,39 +145,54 @@ def due(db, last_fetch: dict, now: float) -> list[dict]:
 MARKETS_AT_ONCE = 4
 
 
-async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *,
-                       queries_for=None, fetch=None, starting_price=None) -> None:
-    """One round over the due markets, a few side by side. This is the only place articles are fetched,
-    so a market's first completed pass is its backfill and every later pass is live; the two never race.
-    Passes may overlap: every due market is claimed before any is fetched, so none is fetched twice."""
+async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *, queries_for=None,
+                       fetch=None, starting_price=None, limit: asyncio.Semaphore | None = None,
+                       busy: set | None = None) -> None:
+    """One round over the due markets. This is the only place articles are fetched, so a market's first
+    completed pass is its backfill and every later pass is live; the two never race.
+
+    Passes may overlap (see article_loop), sharing `limit` and `busy`: a market being fetched is never
+    fetched a second time, and routine fetches stay capped across passes. A first fill does not queue.
+    """
     queries_for, fetch = queries_for or watch.queries_for, fetch or fetch_articles
     starting_price = starting_price or madeup.starting_price
-    limit = asyncio.Semaphore(MARKETS_AT_ONCE)
+    limit = limit or asyncio.Semaphore(MARKETS_AT_ONCE)
+    busy = set() if busy is None else busy
     started = time.time() if now is None else now
-    markets = due(db, last_fetch, started)
+    markets = [m for m in due(db, last_fetch, started) if m["id"] not in busy]
     last_fetch.update({m["id"]: started for m in markets})
+    busy.update(m["id"] for m in markets)
+
+    async def work(m: dict) -> None:
+        try:
+            if not m["queries"]:
+                store.set_queries(db, m["id"], await queries_for(m["title"], m["rules"]))
+                m = store.get_market(db, m["id"])
+            first = not m["filled"]
+            if first:
+                bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
+            n = await fetch(db, bus, scorer, m, backfill=first, num_results=20 if first else 10)
+            if first and m["venue"] == "made_up" and store.latest_price(db, m["id"]) is None:
+                # a made-up market opens at the model's odds given the coverage just found
+                price = await starting_price(m["title"], m["rules"], store.headlines(db, m["id"]))
+                store.add_price(db, m["id"], started, price)
+                bus.publish("price", {"market_id": m["id"], "ts": started, "price": price})
+            if first:
+                store.set_filled(db, m["id"])
+                bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
+        except Exception as e:
+            log.warning("article pass failed for %s, retrying in %ss: %s", m["id"], RETRY_SECONDS, e)
+            last_fetch[m["id"]] = started - m["poll_seconds"] + RETRY_SECONDS
 
     async def one(m: dict) -> None:
-        async with limit:
-            try:
-                if not m["queries"]:
-                    store.set_queries(db, m["id"], await queries_for(m["title"], m["rules"]))
-                    m = store.get_market(db, m["id"])
-                first = not m["filled"]
-                if first:
-                    bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
-                n = await fetch(db, bus, scorer, m, backfill=first, num_results=20 if first else 10)
-                if first and m["venue"] == "made_up" and store.latest_price(db, m["id"]) is None:
-                    # a made-up market opens at the model's odds given the coverage just found
-                    price = await starting_price(m["title"], m["rules"], store.headlines(db, m["id"]))
-                    store.add_price(db, m["id"], started, price)
-                    bus.publish("price", {"market_id": m["id"], "ts": started, "price": price})
-                if first:
-                    store.set_filled(db, m["id"])
-                    bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
-            except Exception as e:
-                log.warning("article pass failed for %s, retrying in %ss: %s", m["id"], RETRY_SECONDS, e)
-                last_fetch[m["id"]] = started - m["poll_seconds"] + RETRY_SECONDS
+        try:
+            if m["filled"]:
+                async with limit:
+                    await work(m)
+            else:  # someone just asked for this market: do not queue it behind routine polling
+                await work(m)
+        finally:
+            busy.discard(m["id"])
 
     await asyncio.gather(*(one(m) for m in markets))
 
@@ -186,10 +201,11 @@ async def article_loop(db, bus, scorer, wake: asyncio.Event) -> None:
     """Run article passes forever. `wake` starts the next pass at once, for a newly added market."""
     last_fetch: dict[str, float] = {}
     running: set[asyncio.Task] = set()
+    limit, busy = asyncio.Semaphore(MARKETS_AT_ONCE), set()  # shared, so overlapping passes cannot exceed the cap
 
     async def one_pass() -> None:
         try:
-            await article_pass(db, bus, scorer, last_fetch)
+            await article_pass(db, bus, scorer, last_fetch, limit=limit, busy=busy)
         except Exception:
             log.exception("article pass failed")
 

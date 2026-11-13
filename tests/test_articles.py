@@ -408,32 +408,52 @@ def test_x_posts_are_stored_with_their_post_time_and_reddit_posts_with_the_pages
     assert scraped == [POSTS[1]["url"]]  # an X post's id holds its time: no request spent
 
 
-def test_a_market_added_mid_pass_is_fetched_at_once_and_none_is_fetched_twice(monkeypatch):
+def blocking_fetch(release, calls):
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        calls.append(market["id"])
+        if market["id"] != "new":
+            await release.wait()
+        return 0
+    return fetch
+
+
+def test_a_market_added_mid_pass_is_fetched_at_once_and_routine_ones_stay_capped():
     db, bus, m = setup()
     store.add_market(db, id="n", venue="kalshi", venue_ref="N", title="t", rules="r", url=None, queries=["q"])
-    monkeypatch.setattr(poller, "MARKETS_AT_ONCE", 1)
+    store.set_filled(db, "m")
+    store.set_filled(db, "n")
 
     async def go():
-        release, calls = asyncio.Event(), []
-
-        async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
-            calls.append(market["id"])
-            if market["id"] != "new":
-                await release.wait()
-            return 0
-
-        last = {}
-        first = asyncio.create_task(poller.article_pass(db, bus, up, last, now=1000, fetch=fetch))
-        await asyncio.sleep(0.01)  # the first market is being fetched, the second waits its turn
+        release, calls, last = asyncio.Event(), [], {}
+        shared = {"limit": asyncio.Semaphore(1), "busy": set(), "fetch": blocking_fetch(release, calls)}
+        first = asyncio.create_task(poller.article_pass(db, bus, up, last, now=1000, **shared))
+        await asyncio.sleep(0.01)  # one routine market is being fetched, the other waits its turn
         store.add_market(db, id="new", venue="kalshi", venue_ref="X", title="t", rules="r", url=None, queries=["q"])
-        await poller.article_pass(db, bus, up, last, now=1001, fetch=fetch)
+        await poller.article_pass(db, bus, up, last, now=1001, **shared)  # a first fill does not queue
         seen = list(calls)
         release.set()
         await first
-        return seen, calls
+        return seen, calls, shared["busy"]
 
-    seen, calls = asyncio.run(go())
-    assert seen == ["m", "new"] and sorted(calls) == ["m", "n", "new"]
+    seen, calls, busy = asyncio.run(go())
+    assert seen == ["m", "new"] and sorted(calls) == ["m", "n", "new"] and busy == set()
+
+
+def test_a_market_still_being_fetched_is_not_fetched_again_when_it_falls_due():
+    db, bus, m = setup()
+
+    async def go():
+        release, calls, last = asyncio.Event(), [], {}
+        shared = {"limit": asyncio.Semaphore(4), "busy": set(), "fetch": blocking_fetch(release, calls)}
+        first = asyncio.create_task(poller.article_pass(db, bus, up, last, now=1000, **shared))
+        await asyncio.sleep(0.01)
+        await poller.article_pass(db, bus, up, last, now=5000, **shared)  # due again by the clock, but in flight
+        release.set()
+        await first
+        await poller.article_pass(db, bus, up, last, now=9000, **shared)  # free again
+        return calls
+
+    assert asyncio.run(go()) == ["m", "m"]
 
 
 def test_a_new_markets_first_fill_does_not_wait_behind_the_reserve():
