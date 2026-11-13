@@ -17,7 +17,8 @@
 <ul id="tape"></ul>
 <script>
 const $ = id => document.getElementById(id);
-const KEY = new URLSearchParams(location.search).get("key") || "";  // open /?key=... when TERMINAL_KEY is set
+// The write key (TERMINAL_KEY in .env) is asked for once and kept in this browser.
+let KEY = new URLSearchParams(location.search).get("key") || localStorage.getItem("terminalKey") || "";
 let current = null;
 const pct = p => p == null ? "–" : p.toFixed(1) + "%";
 function row(t) {
@@ -40,10 +41,16 @@ async function load() {
   $("tape").replaceChildren(...ticks.map(row));
 }
 $("market").onchange = () => { current = $("market").value; load(); };
+const send = () => fetch(`/markets/${current}/ticks`, {method: "POST", headers: {"content-type": "application/json", "X-Terminal-Key": KEY},
+    body: JSON.stringify({text: $("text").value, kind: "typed"})});
 $("form").onsubmit = async e => {
   e.preventDefault();
-  const r = await fetch(`/markets/${current}/ticks`, {method: "POST", headers: {"content-type": "application/json", "X-Terminal-Key": KEY},
-    body: JSON.stringify({text: $("text").value, kind: "typed"})});
+  let r = await send();
+  if (r.status === 401) {
+    KEY = (prompt("Write key (TERMINAL_KEY from the .env file on the server)") || "").trim();
+    r = await send();
+    if (r.ok) localStorage.setItem("terminalKey", KEY);
+  }
   $("error").textContent = r.ok ? "" : `Error ${r.status}: ${(await r.json()).detail?.toString?.() ?? ""}`;
   if (r.ok) $("text").value = "";
 };
