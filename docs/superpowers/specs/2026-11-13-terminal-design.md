@@ -331,14 +331,19 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   their last-checked time and status, and `sources`: where the market's ticks came
   from, most ticks first, as `[{ "source", "ticks", "moved" }]` (`moved` counts the
   ticks called up or down).
+- `DELETE /markets/{id}`: stop tracking a market; it, its related contracts, their
+  ticks and prices are removed. 409 for the demo market. Sends a `market` event with
+  status `deleted`.
 - `GET /markets/{id}/ticks?limit=` and `GET /markets/{id}/prices?since=`: history for
   first paint.
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
 - `GET /record`: the weekend record numbers.
 - `GET /status`: Context.dev capacity per key (use, resting time, credits left).
-- `GET /stream`: server-sent events. Event types: `tick`, `price`, `market`,
-  `page_check`. One connection carries all markets; each event has a `market_id`.
+- `GET /stream`: server-sent events. Event types: `tick`, `tick_update`, `price`,
+  `market`, `page_check`. A `tick_update` is a whole tick again, sent when its
+  `published_ts` arrives about a minute or two after the tick: replace the tick with
+  the same `id`. One connection carries all markets; each event has a `market_id`.
   A `market` event is `{ "market_id", "status" }`. While plain words are being worked
   on it also carries `"query"` and `market_id` is null: `searching venues`, then
   `found contracts` (with `count`), then `tracking` or `made up` with the id, or
@@ -356,7 +361,9 @@ A tick:
 as a percentage from 0 to 100, like every other price in the interface.
 A `post` is from X or Reddit; its `source` names who posted, as `x.com/<handle>` or
 `reddit.com/r/<subreddit>`, and its `headline` is the post's text.
-`published_ts` is when the item was published, where known. Instant-fill ticks carry
+`published_ts` is when the item was published, where known: show this as the tick's
+time and fall back to `ts`. X posts have it at once; news articles get it at once or
+within a couple of minutes; Reddit posts and pages that state no time never do. Instant-fill ticks carry
 `backfill: true` and are drawn on the chart at `published_ts`.
 
 The frontend owns speech-to-text (microphone to sentences), the spoken call-out of

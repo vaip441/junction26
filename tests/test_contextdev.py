@@ -243,3 +243,46 @@ def test_wait_time_counts_the_reserve():
     for t in range(8):
         lim.try_take(now=t)
     assert lim.wait_time(now=10) == 0 and lim.wait_time(now=10, reserve=2) == 50  # the first request ages out at 60
+
+
+def test_published_times_come_from_one_batch_read_page_by_page(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    seen, polls = [], []
+
+    def handler(request):
+        path = request.url.path
+        seen.append((request.method, path, dict(request.url.params)))
+        if path == "/v1/batch/submit":
+            assert [u["url"] for u in json.loads(request.content)["input"]["data"]["urls"]] == ["https://a.example/1", "https://a.example/2", "https://a.example/3"]
+            return httpx.Response(202, json={"id": "batch_1", "status": "queued"})
+        if path == "/v1/batch/batch_1":
+            polls.append(1)
+            return httpx.Response(200, json={"status": "running" if len(polls) < 2 else "completed"})
+        if request.url.params.get("cursor") is None:
+            return httpx.Response(200, json={"data": [{"url": "https://a.example/1", "status": "ok",
+                                                       "metadata": {"publishedTime": "2026-11-13T12:00:00Z"}}],
+                                             "has_more": True, "next_cursor": "1:1"})
+        return httpx.Response(200, json={"data": [{"url": "https://a.example/2", "status": "ok", "metadata": {}}],
+                                         "has_more": False, "next_cursor": None})
+
+    cd = client_with(handler, monkeypatch)
+    monkeypatch.setattr(cd, "BATCH_POLL_SECONDS", 0)
+    times = asyncio.run(cd.published_times(["https://a.example/1", "https://a.example/2", "https://a.example/3"]))
+    assert times == {"https://a.example/1": 1794571200.0, "https://a.example/2": None}  # /3 failed: not in the results
+    assert [s[1] for s in seen] == ["/v1/batch/submit", "/v1/batch/batch_1", "/v1/batch/batch_1",
+                                    "/v1/batch/batch_1/results", "/v1/batch/batch_1/results"]
+    assert seen[-1][2] == {"limit": "100", "cursor": "1:1"}
+
+
+def test_a_batch_that_is_refused_or_fails_is_an_error(monkeypatch):
+    import asyncio
+
+    import httpx
+    import pytest
+
+    cd = client_with(lambda request: httpx.Response(403, json={"error_code": "BATCH_LIMIT_EXCEEDED"}), monkeypatch)
+    with pytest.raises(cd.ContextError):
+        asyncio.run(cd.published_times(["https://a.example/1"]))

@@ -18,8 +18,10 @@ CREATE TABLE IF NOT EXISTS ticks (
     source TEXT NOT NULL, url TEXT, headline TEXT NOT NULL, up REAL NOT NULL, none REAL NOT NULL, down REAL NOT NULL,
     strength REAL NOT NULL, verdict TEXT NOT NULL, confidence REAL NOT NULL, price_at REAL,
     test INTEGER NOT NULL, backfill INTEGER NOT NULL, hidden INTEGER NOT NULL, dedupe_key TEXT NOT NULL,
+    date_checked INTEGER NOT NULL DEFAULT 0,
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
+CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
@@ -32,6 +34,8 @@ def connect(path: str) -> sqlite3.Connection:
     db.executescript(SCHEMA)
     if "filled" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores created before 13 Nov
         db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
+    if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
+        db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
     return db
 
 
@@ -67,6 +71,14 @@ def set_poll_seconds(db, id: str, seconds: int) -> None:
 def promote(db, id: str) -> None:
     """Turn a related contract into a market of its own."""
     db.execute("UPDATE markets SET lead_id = NULL WHERE id = ?", (id,))
+
+
+def delete_market(db, id: str) -> None:
+    """Remove a market, its related contracts, and all their ticks and prices."""
+    for (mid,) in db.execute("SELECT id FROM markets WHERE id = ? OR lead_id = ?", (id, id)).fetchall():
+        db.execute("DELETE FROM ticks WHERE market_id = ?", (mid,))
+        db.execute("DELETE FROM prices WHERE market_id = ?", (mid,))
+        db.execute("DELETE FROM markets WHERE id = ?", (mid,))
 
 
 def get_market(db, id: str) -> dict | None:
@@ -131,6 +143,31 @@ def recent_headlines(db, market_id: str, limit: int = 12) -> list[str]:
     return [r["headline"] for r in db.execute(
         "SELECT headline FROM ticks WHERE market_id = ? AND hidden = 0 AND test = 0 ORDER BY ts DESC, id DESC LIMIT ?",
         (market_id, limit))]
+
+
+# A page's publish time is a fact about its address, so it is kept per address: read once, whichever
+# market found it. date_checked marks an address that was read, with or without a time on the page.
+
+def undated_urls(db, limit: int) -> list[str]:
+    """Addresses of shown articles whose publish time has not been looked up yet, newest first."""
+    return [r["url"] for r in db.execute(
+        "SELECT url FROM ticks WHERE kind = 'article' AND hidden = 0 AND published_ts IS NULL AND date_checked = 0"
+        " AND url IS NOT NULL GROUP BY url ORDER BY MAX(ts) DESC LIMIT ?", (limit,))]
+
+
+def date_known(db, url: str) -> tuple[float | None] | None:
+    """(publish time or None) if this address was already read under any market; None if it never was."""
+    row = db.execute("SELECT published_ts FROM ticks WHERE url = ? AND (published_ts IS NOT NULL OR date_checked = 1)"
+                     " ORDER BY published_ts IS NULL LIMIT 1", (url,)).fetchone()
+    return row and (row["published_ts"],)
+
+
+def set_published(db, url: str, ts: float | None) -> list[dict]:
+    """Record what reading an address found, on every tick that has it. Returns the shown ticks that gained a time."""
+    gained = [] if ts is None else [r["id"] for r in db.execute(
+        "SELECT id FROM ticks WHERE url = ? AND published_ts IS NULL AND hidden = 0", (url,))]
+    db.execute("UPDATE ticks SET published_ts = COALESCE(published_ts, ?), date_checked = 1 WHERE url = ?", (ts, url))
+    return [_tick(db.execute("SELECT * FROM ticks WHERE id = ?", (id,)).fetchone()) for id in gained]
 
 
 def sources(db, market_id: str, limit: int = 20) -> list[dict]:

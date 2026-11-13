@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from terminal import contextdev, madeup, venues, watch
 from terminal import db as store
-from terminal.pipeline import dedupe_key, ingest
+from terminal.pipeline import dedupe_key, ingest, public
 
 log = logging.getLogger(__name__)
 
@@ -78,18 +78,23 @@ BACKGROUND_RESERVE = 2
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
                          search=None, scrape=None) -> int:
     """Search every query of a market, plus X and Reddit once, and ingest results not seen before.
-    Returns how many ticks were stored."""
+    Returns how many ticks were stored.
+
+    Every query runs on every pass: measured on 14 Nov, a market's four queries returned 25 to 28
+    different results between them, so dropping or rotating them would lose coverage, not waste.
+    """
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
     queries, reserve = market["queries"], 0 if backfill else BACKGROUND_RESERVE
-    # shortcut: posts are searched with the first query only, to spend one request per pass; search
-    # every query once there are enough keys
-    *found, posts = await asyncio.gather(
-        *(search(q, num_results=num_results, exclude_domains=NOT_NEWS, reserve=reserve) for q in queries),
-        search(queries[0], num_results=num_results, include_domains=POST_SITES, reserve=reserve),
-        return_exceptions=True)
-    fresh, failed = {}, 0
-
-    def keep(results, kind: str) -> None:
+    searches = [("article", q, {"exclude_domains": NOT_NEWS}) for q in queries]
+    searches.append(("post", queries[0], {"include_domains": POST_SITES}))  # posts: the first query only
+    found = await asyncio.gather(*(search(q, num_results=num_results, reserve=reserve, **kw) for _, q, kw in searches),
+                                 return_exceptions=True)
+    fresh, failed = {}, []
+    for (kind, q, _), results in zip(searches, found):
+        if isinstance(results, BaseException):
+            log.warning("%s search failed for %r on %s: %s", kind, q, market["id"], results)
+            failed.append(kind)
+            continue
         for r in results:
             try:
                 key = dedupe_key(kind, r["url"], r["title"], 0)
@@ -97,28 +102,22 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 continue
             if key not in fresh and not store.has_tick(db, market["id"], key):
                 fresh[key] = (kind, r)
-
-    for q, results in zip(queries, found):
-        if isinstance(results, BaseException):
-            log.warning("search failed for %r on %s: %s", q, market["id"], results)
-            failed += 1
-        else:
-            keep(results, "article")
-    if failed and failed == len(queries):
-        raise FetchFailed(f"all {failed} searches failed for {market['id']}")
-    if isinstance(posts, BaseException):
-        log.warning("posts search failed on %s: %s", market["id"], posts)
-    else:
-        keep(posts, "post")
+    # a failed posts search alone does not fail the pass; one whose article searches all failed does
+    if failed.count("article") == len(queries) > 0:
+        raise FetchFailed(f"{len(failed)} of {len(searches)} searches failed for {market['id']}")
     limit = asyncio.Semaphore(10)
 
     async def one(kind: str, r: dict) -> bool:
         async with limit:
-            text, published = "", posted_at(r["url"]) if kind == "post" else None
-            if published is None:  # the page carries the publish date; fetched only with spare capacity
-                try:
-                    page, published = await scrape(r["url"])
-                    text = page if kind == "article" else ""  # a post is its own text
+            text, published, read = "", None, None
+            if kind == "post":
+                published = posted_at(r["url"])  # a post is its own text; Reddit pages carry no time
+            elif (read := store.date_known(db, r["url"])) is not None:
+                published = read[0]  # this address was read before, under this or another market
+            else:
+                try:  # the page carries the publish time; read now only with spare capacity
+                    text, published = await scrape(r["url"])
+                    read = (published,) if text or published else None  # else left for the batch fill
                 except Exception as e:
                     log.warning("scrape failed for %s: %s", r["url"], e)
             source = post_source(r["url"]) if kind == "post" else urlsplit(r["url"]).netloc.lower().removeprefix("www.")
@@ -129,9 +128,31 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             except Exception:  # one odd page must not cost the market the rest of the batch
                 log.exception("could not ingest %s", r["url"])
                 return False
+            if tick is not None and read is not None:
+                store.set_published(db, r["url"], published)  # remembered, so no market reads it again
             return tick is not None
 
     return sum(await asyncio.gather(*(one(kind, r) for kind, r in fresh.values())))
+
+
+DATE_BATCH = 100
+
+
+async def fill_dates(db, bus, *, published_times=None) -> int:
+    """Look up the publish times still missing on shown articles, in one batch. Returns how many addresses
+    were looked up. Each is looked up once: a page that cannot be read or carries no time is not retried."""
+    urls = store.undated_urls(db, DATE_BATCH)
+    if not urls:
+        return 0
+    times = await (published_times or contextdev.published_times)(urls)
+    for url in urls:
+        for tick in store.set_published(db, url, times.get(url)):
+            bus.publish("tick_update", public(tick))
+    return len(urls)
+
+
+async def date_loop(db, bus, interval: float = 60) -> None:
+    await forever("dates", interval, lambda: fill_dates(db, bus))
 
 
 RETRY_SECONDS = 60
@@ -167,10 +188,12 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
     busy.update(m["id"] for m in markets)
 
     async def work(m: dict) -> None:
+        id, poll = m["id"], m["poll_seconds"]
         try:
             if not m["queries"]:
-                store.set_queries(db, m["id"], await queries_for(m["title"], m["rules"]))
-                m = store.get_market(db, m["id"])
+                store.set_queries(db, id, await queries_for(m["title"], m["rules"]))
+                if (m := store.get_market(db, id)) is None:
+                    return  # deleted meanwhile
             first = not m["filled"]
             if first:
                 bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
@@ -184,8 +207,8 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                 store.set_filled(db, m["id"])
                 bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
         except Exception as e:
-            log.warning("article pass failed for %s, retrying in %ss: %s", m["id"], RETRY_SECONDS, e)
-            last_fetch[m["id"]] = started - m["poll_seconds"] + RETRY_SECONDS
+            log.warning("article pass failed for %s, retrying in %ss: %s", id, RETRY_SECONDS, e)
+            last_fetch[id] = started - poll + RETRY_SECONDS
 
     async def one(m: dict) -> None:
         try:

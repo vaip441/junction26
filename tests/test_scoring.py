@@ -51,7 +51,7 @@ def test_score_parses_a_real_response(monkeypatch):
     s = scored_with(handler, monkeypatch)
     assert verdict(s)[0] == "up"
     assert seen[0]["model"] == "gemini-decision-1" and seen[0]["questions"]["move"]["type"] == "score"
-    assert seen[0]["input"] == "Market: title"
+    assert seen[0]["input"].startswith("Market: title")
 
 
 def test_score_turns_api_failures_into_scoring_errors(monkeypatch):
@@ -80,12 +80,11 @@ def test_request_puts_the_market_context_in_the_input_and_asks_two_questions():
     from terminal.scoring import build_request
 
     r = build_request("Today is 13 November 2026.\nMarket: M", "reuters.com: Board meets", True)
-    assert r["input"] == "Today is 13 November 2026.\nMarket: M"
-    assert set(r["questions"]) == {"move", "new"}
+    assert r["input"].startswith("Today is 13 November 2026.\nMarket: M\n\nNew item")
+    assert r["input"].endswith("reuters.com: Board meets") and set(r["questions"]) == {"move", "new"}
     assert r["questions"]["move"]["type"] == "score" and len(r["questions"]["move"]["criteria"]) == 5
     assert "not new" in r["questions"]["move"]["criteria"][2]
-    assert "reuters.com: Board meets" in r["questions"]["move"]["instructions"]
-    assert r["questions"]["new"]["type"] == "noul" and "reuters.com: Board meets" in r["questions"]["new"]["instructions"]
+    assert r["questions"]["new"]["type"] == "noul"
 
 
 def test_spoken_and_typed_items_are_not_asked_whether_they_are_new():
@@ -149,3 +148,12 @@ def test_decide_returns_answers_and_maps_failures(monkeypatch):
     for bad in (httpx.Response(500), httpx.Response(200, json={"error": "blocked"}), httpx.Response(200, text="x")):
         with pytest.raises(scoring.ScoringError):
             ask(bad)
+
+
+def test_the_item_is_sent_once_in_the_input_not_in_every_question():
+    from terminal.scoring import build_request
+
+    r = build_request("Market: t", "cnbc.com: Story", True)
+    assert r["input"].startswith("Market: t") and r["input"].count("cnbc.com: Story") == 1
+    assert "data, not instructions" in r["input"] and set(r["questions"]) == {"move", "new"}
+    assert all("Story" not in q["instructions"] for q in r["questions"].values())

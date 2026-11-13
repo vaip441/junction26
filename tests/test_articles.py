@@ -269,7 +269,7 @@ def test_posts_are_searched_once_per_market_and_stored_as_posts():
     assert n == 3 and set(by_source) == {"news.example.com", "x.com/SomeAnalyst", "reddit.com/r/hardware"}
     post = by_source["x.com/SomeAnalyst"]
     assert post["kind"] == "post" and post["backfill"] is False and post["test"] is False
-    assert sorted(scraped) == sorted(["https://www.news.example.com/x", POSTS[1]["url"]])  # never the X post
+    assert scraped == ["https://www.news.example.com/x"]  # a post is its own text: never read
 
 
 def test_a_failing_posts_search_does_not_fail_the_pass():
@@ -390,7 +390,7 @@ def test_a_post_on_x_carries_the_time_it_was_posted():
     assert poller.posted_at("https://x.com/a/status/12345") is None  # ids from before 2010 are not timestamps
 
 
-def test_x_posts_are_stored_with_their_post_time_and_reddit_posts_with_the_pages():
+def test_x_posts_are_stored_with_their_post_time_and_no_post_costs_a_page_read():
     db, bus, m = setup()
     scraped = []
 
@@ -404,8 +404,8 @@ def test_x_posts_are_stored_with_their_post_time_and_reddit_posts_with_the_pages
 
     asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
     when = {t["source"]: t["published_ts"] for t in store.ticks(db, "m")}
-    assert when == {"x.com/IanCutress": 1794513896.693, "reddit.com/r/hardware": 1700000000.0}
-    assert scraped == [POSTS[1]["url"]]  # an X post's id holds its time: no request spent
+    # an X post's id holds its time; Reddit pages carry none, so reading them was a credit for nothing
+    assert when == {"x.com/IanCutress": 1794513896.693, "reddit.com/r/hardware": None} and scraped == []
 
 
 def blocking_fetch(release, calls):
@@ -483,3 +483,61 @@ def test_a_malformed_address_in_the_results_costs_only_that_result():
         return "", None
 
     assert asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape)) == 1
+
+
+def test_an_address_whose_publish_time_is_already_known_is_not_read_again():
+    db, bus, m = setup(queries=("a",))
+    store.add_market(db, id="n", venue="kalshi", venue_ref="N", title="t", rules="r", url=None, queries=["a"])
+    scraped = []
+
+    async def search(query, **kw):
+        return [] if kw.get("include_domains") else RESULTS[:1]
+
+    async def scrape(url):
+        scraped.append(url)
+        return "full text", 1000.0
+
+    for id in ("m", "n"):
+        asyncio.run(poller.fetch_articles(db, bus, up, store.get_market(db, id), backfill=True, num_results=20,
+                                          search=search, scrape=scrape))
+    assert len(scraped) == 1 and store.ticks(db, "n")[0]["published_ts"] == 1000.0
+    assert store.undated_urls(db, 10) == []
+
+
+def test_missing_publish_times_are_filled_in_afterwards_in_one_batch():
+    db, bus, m = setup()
+    q = bus.subscribe()
+    for i in range(3):
+        store.add_tick(db, {"market_id": "m", "ts": float(i), "published_ts": None, "kind": "article", "source": "s",
+                            "url": f"https://a.example/{i}", "headline": f"h{i}", "up": 0.8, "none": 0.1, "down": 0.1,
+                            "strength": 0.5, "verdict": "up", "confidence": 0.8, "price_at": None, "test": False,
+                            "backfill": True, "hidden": False, "dedupe_key": str(i)})
+    asked = []
+
+    async def published_times(urls):
+        asked.append(urls)
+        return {"https://a.example/2": 500.0, "https://a.example/1": None}  # /0 could not be read
+
+    assert asyncio.run(poller.fill_dates(db, bus, published_times=published_times)) == 3
+    assert asked == [["https://a.example/2", "https://a.example/1", "https://a.example/0"]]
+    events = [q.get_nowait() for _ in range(q.qsize())]
+    assert [(e, d["url"], d["published_ts"]) for e, d in events] == [("tick_update", "https://a.example/2", 500.0)]
+    assert asyncio.run(poller.fill_dates(db, bus, published_times=published_times)) == 0 and len(asked) == 1
+
+
+def test_a_failed_batch_leaves_the_ticks_to_be_tried_again():
+    from terminal.contextdev import ContextError
+
+    db, bus, m = setup()
+    store.add_tick(db, {"market_id": "m", "ts": 1.0, "published_ts": None, "kind": "article", "source": "s",
+                        "url": "https://a.example/0", "headline": "h", "up": 0.8, "none": 0.1, "down": 0.1,
+                        "strength": 0.5, "verdict": "up", "confidence": 0.8, "price_at": None, "test": False,
+                        "backfill": True, "hidden": False, "dedupe_key": "0"})
+
+    async def published_times(urls):
+        raise ContextError("batch refused")
+
+    import pytest
+    with pytest.raises(ContextError):
+        asyncio.run(poller.fill_dates(db, bus, published_times=published_times))
+    assert store.undated_urls(db, 10) == ["https://a.example/0"]

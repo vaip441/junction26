@@ -384,3 +384,23 @@ def test_words_that_once_made_a_made_up_market_find_the_real_one_when_it_appears
         plain(monkeypatch, [CONTRACTS], (0, [0.9], [0]))
         real = c.post("/markets", json={"query": "Will it snow?"}).json()
         assert made["made_up"] is True and real["id"] == "pm-m0" and real["matched"] is True
+
+
+def test_deleting_a_market_removes_it_and_tells_the_stream(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        return CONTRACTS
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    with client(path) as c:
+        c.post("/markets", json={"query": "https://polymarket.com/event/e"})
+        q = c.app.state.bus.subscribe()
+        r = c.delete("/markets/pm-m0")
+        assert r.status_code == 200 and r.json() == {"deleted": "pm-m0"}
+        assert q.get_nowait() == ("market", {"market_id": "pm-m0", "status": "deleted"})
+        assert [m["id"] for m in c.get("/markets").json()] == ["mu-demo"]
+        assert c.get("/markets/pm-m1").status_code == 404 and c.delete("/markets/pm-m0").status_code == 404
+        assert c.delete("/markets/mu-demo").status_code == 409  # the demo market is part of the app
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="k")) as c:
+        assert c.delete("/markets/mu-demo").status_code == 401

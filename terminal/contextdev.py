@@ -150,17 +150,69 @@ def parse_search(response: dict) -> list[dict]:
             if r.get("title") and str(r.get("url") or "").startswith(("https://", "http://"))]  # shown as links
 
 
-def parse_scrape(response: dict) -> tuple[str, float | None]:
-    """(main text as markdown, publish time as unix seconds or None)."""
-    text = (response.get("markdown") or {}).get("data") or ""
+def _published(metadata: dict | None) -> float | None:
+    """A page's publish time as unix seconds, or None."""
     try:
-        d = datetime.fromisoformat((response.get("metadata") or {})["publishedTime"])
+        d = datetime.fromisoformat((metadata or {})["publishedTime"])
         published = (d if d.tzinfo else d.replace(tzinfo=UTC)).timestamp()  # a bare date is taken as UTC
         if not 946684800 <= published <= time.time() + 86400:  # pages can claim any date: keep 2000..tomorrow
             published = None
     except (KeyError, TypeError, ValueError, OverflowError):
         published = None
-    return text, published
+    return published
+
+
+def parse_scrape(response: dict) -> tuple[str, float | None]:
+    """(main text as markdown, publish time as unix seconds or None)."""
+    return (response.get("markdown") or {}).get("data") or "", _published(response.get("metadata"))
+
+
+BATCH_POLL_SECONDS, BATCH_WAIT_SECONDS = 5, 600
+_batch_turn = 0
+
+
+async def published_times(urls: list[str]) -> dict[str, float | None]:
+    """Publish time (or None) of each page that could be read, through one batch scrape.
+
+    A batch takes about a minute, costs 1 credit per page read, and has its own rate limit, so it takes
+    nothing from the searches. Keys take turns.
+    """
+    global _client, _batch_turn
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=60)
+    keys = list(limiter().used)
+    headers = {"Authorization": f"Bearer {keys[_batch_turn % len(keys)]}"}
+    _batch_turn += 1
+    try:
+        r = await _client.post(API + "/batch/submit", headers=headers, json={
+            "input": {"mode": "scrape", "data": {"format": "markdown", "urls": [{"url": u} for u in urls]}}})
+        r.raise_for_status()
+        id, deadline = r.json()["id"], time.monotonic() + BATCH_WAIT_SECONDS
+        while True:
+            r = await _client.get(f"{API}/batch/{id}", headers=headers)
+            r.raise_for_status()
+            status = r.json().get("status")
+            if status not in ("pending", "queued", "running"):
+                break
+            if time.monotonic() > deadline:
+                raise ContextError(f"batch {id} did not finish in {BATCH_WAIT_SECONDS}s")
+            await asyncio.sleep(BATCH_POLL_SECONDS)
+        if status != "completed":
+            raise ContextError(f"batch {id} ended as {status}")
+        out, cursor = {}, None
+        while True:
+            r = await _client.get(f"{API}/batch/{id}/results", headers=headers,
+                                  params={"limit": 100, **({"cursor": cursor} if cursor else {})})
+            r.raise_for_status()
+            page = r.json()
+            for d in page.get("data") or []:
+                if d.get("status") == "ok" and d.get("url"):
+                    out[d["url"]] = _published(d.get("metadata"))
+            cursor = page.get("next_cursor")
+            if not page.get("has_more") or not cursor:
+                return out
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as e:
+        raise ContextError(f"batch: {type(e).__name__}: {str(e)[:150]}") from e
 
 
 async def search(query: str, *, freshness: str | None = "last_24_hours", include_domains: list[str] | None = None,

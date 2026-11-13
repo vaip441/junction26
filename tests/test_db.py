@@ -78,3 +78,42 @@ def test_headlines_leave_out_what_people_said_or_typed():
     add_tick(db, tick(key="a", headline="from the web", strength=0.1))
     add_tick(db, tick(key="b", headline="typed by a judge", strength=0.9, test=True))
     assert headlines(db, "m") == ["from the web"]
+
+
+def test_publish_times_are_kept_per_address_across_markets():
+    from terminal.db import date_known, set_published, undated_urls
+
+    db = connect(":memory:")
+    market(db)
+    market(db, "n")
+    add_tick(db, tick(key="a", url="https://a.example/1", ts=1.0))
+    add_tick(db, tick("n", key="a", url="https://a.example/1", ts=2.0, hidden=True))
+    add_tick(db, tick(key="b", url="https://a.example/2", ts=3.0))
+    add_tick(db, tick(key="c", url="https://a.example/3", ts=4.0, published_ts=50.0))
+    add_tick(db, tick(key="d", url="https://x.com/a/status/1", ts=5.0, kind="post"))
+    add_tick(db, tick(key="e", url="https://a.example/hidden", ts=6.0, hidden=True))
+    # shown articles without a time, newest first; posts, hidden and dated ones are left alone
+    assert undated_urls(db, 10) == ["https://a.example/2", "https://a.example/1"]
+    assert date_known(db, "https://a.example/1") is None and date_known(db, "https://a.example/3") == (50.0,)
+    changed = set_published(db, "https://a.example/1", 99.0)
+    assert [(t["market_id"], t["published_ts"]) for t in changed] == [("m", 99.0)]  # only shown ticks are announced
+    assert {t["published_ts"] for t in ticks(db, "n", include_hidden=True)} == {99.0}
+    assert set_published(db, "https://a.example/2", None) == [] and date_known(db, "https://a.example/2") == (None,)
+    assert undated_urls(db, 10) == []  # looked at once, with or without a result
+    set_published(db, "https://a.example/3", 7.0)
+    assert date_known(db, "https://a.example/3") == (50.0,)  # a time already known is kept
+
+
+def test_deleting_a_market_takes_its_contracts_ticks_and_prices_with_it():
+    from terminal.db import delete_market, get_market, prices
+
+    db = connect(":memory:")
+    market(db)
+    market(db, "rel", lead_id="m")
+    market(db, "other")
+    for id in ("m", "rel", "other"):
+        add_price(db, id, 1, 50.0)
+        add_tick(db, tick(id, key="k"))
+    delete_market(db, "m")
+    assert get_market(db, "m") is None and get_market(db, "rel") is None and get_market(db, "other") is not None
+    assert ticks(db, "m") == [] and prices(db, "rel") == [] and len(ticks(db, "other")) == 1

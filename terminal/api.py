@@ -81,8 +81,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         app.state.wake = asyncio.Event()
         app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus)),
-                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake))
-                 ] if poll else []
+                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake)),
+                 asyncio.create_task(poller.date_loop(db, app.state.bus))] if poll else []
         app.state.tasks = tasks
         yield
         for t in tasks:
@@ -107,6 +107,18 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     @app.get("/markets/{id}")
     def market(id: str):
         return detail(app.state.db, market_or_404(id), time.time())
+
+    @app.delete("/markets/{id}", dependencies=[Depends(write_access)])
+    def delete_market(id: str):
+        """Stop tracking a market: it, its related contracts, and their ticks and prices are removed."""
+        m = market_or_404(id)
+        if id == DEMO["id"]:
+            raise HTTPException(409, "the demo market cannot be deleted")
+        if m["lead_id"] is not None:
+            raise HTTPException(404, "no such market")  # a related contract goes with its lead market
+        store.delete_market(app.state.db, id)
+        app.state.bus.publish("market", {"market_id": id, "status": "deleted"})
+        return {"deleted": id}
 
     @app.get("/markets/{id}/ticks")
     def ticks(id: str, limit: int = Query(100, ge=1, le=500)):
