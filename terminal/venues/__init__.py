@@ -3,6 +3,9 @@ import asyncio
 import logging
 
 from terminal.venues import kalshi, polymarket
+from terminal.venues.errors import MarketNotFound, NotAVenueLink, VenueError
+
+__all__ = ["MarketNotFound", "NotAVenueLink", "VenueError", "current_price", "market_id", "resolve"]
 
 log = logging.getLogger(__name__)
 
@@ -10,16 +13,21 @@ log = logging.getLogger(__name__)
 async def resolve(link: str) -> list[dict]:
     """Contracts behind a market link, lead first.
 
-    ValueError if it is not a venue link, LookupError if the venue has no open market there.
+    NotAVenueLink, MarketNotFound, or VenueError when the venue is down or answers unexpectedly.
     """
-    if (ticker := kalshi.parse_link(link)) is not None:
-        contracts = await asyncio.to_thread(kalshi.lookup, ticker, kalshi.canonical(link))
-    elif (slugs := polymarket.parse_link(link)) is not None:
-        contracts = await asyncio.to_thread(polymarket.lookup, *slugs)
-    else:
-        raise ValueError("not a Kalshi or Polymarket market link")
+    try:
+        if (ticker := kalshi.parse_link(link)) is not None:
+            contracts = await asyncio.to_thread(kalshi.lookup, ticker, kalshi.canonical(link))
+        elif (slugs := polymarket.parse_link(link)) is not None:
+            contracts = await asyncio.to_thread(polymarket.lookup, *slugs)
+        else:
+            raise NotAVenueLink("not a Kalshi or Polymarket market link")
+    except (NotAVenueLink, MarketNotFound):
+        raise
+    except Exception as e:
+        raise VenueError(f"{type(e).__name__}: {str(e)[:150]}") from e
     if not contracts:
-        raise LookupError("market not found or already closed")
+        raise MarketNotFound("market not found or already closed")
     return contracts
 
 
@@ -28,10 +36,6 @@ def market_id(contract: dict) -> str:
 
 
 async def current_price(market: dict) -> float | None:
-    """Latest price in percent, or None on any failure."""
+    """Latest price in percent; None when the venue has no usable price. Raises on a venue failure."""
     client = polymarket if market["venue"] == "polymarket" else kalshi
-    try:
-        return await asyncio.to_thread(client.current_price, market["venue_ref"])
-    except Exception as e:  # a venue hiccup must never stop the sampling loop
-        log.warning("no price for %s: %s", market["id"], e)
-        return None
+    return await asyncio.to_thread(client.current_price, market["venue_ref"])

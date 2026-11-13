@@ -39,7 +39,10 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         log.warning("scoring failed for %r on %s: %s", headline[:60], market["id"], e)
         return None
     v, confidence = verdict(s)
-    price = store.price_at(db, market["id"], now)
+    made_up, latest = market["venue"] == "made_up", store.latest_price(db, market["id"])
+    # A made-up price is ours alone, so it always moves from the newest value: two sentences scored
+    # out of order must both count. A real market's tick records the venue price at detection time.
+    price = (latest and latest[1]) if made_up else store.price_at(db, market["id"], now)
     tick = store.add_tick(db, {
         "market_id": market["id"], "ts": now, "published_ts": published_ts, "kind": kind, "source": source,
         "url": url, "headline": headline, "up": s.up, "none": s.none, "down": s.down, "strength": s.strength,
@@ -47,10 +50,10 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
-    if market["venue"] == "made_up" and price is not None:
-        new = nudge(price, s.strength)
-        store.add_price(db, market["id"], now, new)
-        bus.publish("price", {"market_id": market["id"], "ts": now, "price": new})
+    if made_up and latest is not None:
+        new, at = nudge(price, s.strength), max(now, latest[0] + 0.001)
+        store.add_price(db, market["id"], at, new)
+        bus.publish("price", {"market_id": market["id"], "ts": at, "price": new})
     if not tick["hidden"]:
         bus.publish("tick", public(tick))
     return tick

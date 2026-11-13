@@ -115,7 +115,7 @@ def test_post_market_unknown_market_is_404(path, monkeypatch):
     from terminal import venues
 
     async def resolve(link):
-        raise LookupError("market not found")
+        raise venues.MarketNotFound("market not found")
 
     monkeypatch.setattr(venues, "resolve", resolve)
     with client(path) as c:
@@ -132,31 +132,67 @@ def test_writes_need_the_shared_key_when_one_is_set(path):
         assert c.get("/markets").status_code == 200
 
 
-def test_new_market_gets_queries_and_an_instant_fill(path, monkeypatch):
-    from terminal import poller, venues, watch
+def test_pasting_a_related_contract_makes_it_a_market(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        return CONTRACTS if link.endswith("/e") else [CONTRACTS[1], CONTRACTS[0], CONTRACTS[2]]
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    with client(path) as c:
+        c.post("/markets", json={"query": "https://polymarket.com/event/e"})
+        r = c.post("/markets", json={"query": "https://polymarket.com/event/e/m1"})
+        assert r.status_code == 200 and r.json()["id"] == "pm-m1"
+        assert [x["id"] for x in c.get("/markets").json()] == ["mu-demo", "pm-m0", "pm-m1"]
+        assert [x["id"] for x in c.get("/markets/pm-m0").json()["related"]] == ["pm-m2"]
+
+
+def test_venue_outage_is_a_502(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        raise venues.VenueError("kalshi answered with HTML")
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "https://kalshi.com/markets/a/b/c"})
+        assert r.status_code == 502 and "try again" in r.json()["detail"]
+
+
+def test_polling_refuses_to_start_without_a_write_key(path, monkeypatch):
+    monkeypatch.delenv("TERMINAL_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="TERMINAL_KEY"):
+        with TestClient(create_app(db_path=path, scorer=up, poll=True)):
+            pass
+
+
+def test_a_key_header_with_odd_characters_is_a_401_not_a_crash(path):
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="s3cret")) as c:
+        r = c.post("/markets/mu-demo/ticks", content=b'{"text": "hi", "kind": "typed"}',
+                   headers={"content-type": "application/json", "X-Terminal-Key": "k\xe9y".encode("latin-1")})
+        assert r.status_code == 401
+
+
+def test_adding_a_market_wakes_the_article_loop(path, monkeypatch):
+    from terminal import poller, venues
 
     async def resolve(link):
         return CONTRACTS
 
-    async def queries_for(title, rules):
-        return ["q1", "q2"]
+    woken = []
 
-    async def idle(*a, **kw):
+    async def price_loop(db, bus):
         return None
 
-    filled = []
-
-    async def fetch_articles(db, bus, scorer, market, *, backfill, num_results):
-        filled.append((market["id"], market["queries"], backfill, num_results))
-        return 3
+    async def article_loop(db, bus, scorer, wake):
+        await wake.wait()
+        woken.append([m["id"] for m in poller.due(db, {}, now=1e12)])
 
     monkeypatch.setattr(venues, "resolve", resolve)
-    monkeypatch.setattr(watch, "queries_for", queries_for)
-    monkeypatch.setattr(poller, "price_loop", idle)
-    monkeypatch.setattr(poller, "article_loop", idle)
-    monkeypatch.setattr(poller, "fetch_articles", fetch_articles)
-    with TestClient(create_app(db_path=path, scorer=up, poll=True)) as c:
-        m = c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()
-        assert m["queries"] == ["q1", "q2"]
-        c.get("/markets")  # let the background fill run
-    assert filled == [("pm-m0", ["q1", "q2"], True, 20)]
+    monkeypatch.setattr(poller, "price_loop", price_loop)
+    monkeypatch.setattr(poller, "article_loop", article_loop)
+    with TestClient(create_app(db_path=path, scorer=up, poll=True, key="k")) as c:
+        m = c.post("/markets", json={"query": "https://polymarket.com/event/e"}, headers={"X-Terminal-Key": "k"}).json()
+        assert m["queries"] == []
+        c.get("/markets")
+    assert woken == [["pm-m0"]]

@@ -9,6 +9,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS markets (
     id TEXT PRIMARY KEY, venue TEXT NOT NULL, venue_ref TEXT, title TEXT NOT NULL, rules TEXT NOT NULL,
     url TEXT, lead_id TEXT, queries TEXT NOT NULL DEFAULT '[]', poll_seconds INTEGER NOT NULL DEFAULT 900,
+    filled INTEGER NOT NULL DEFAULT 0,
     created_ts REAL NOT NULL DEFAULT (unixepoch('subsec')));
 CREATE TABLE IF NOT EXISTS prices (
     market_id TEXT NOT NULL, ts REAL NOT NULL, price REAL NOT NULL, PRIMARY KEY (market_id, ts));
@@ -29,11 +30,13 @@ def connect(path: str) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
+    if "filled" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores created before 13 Nov
+        db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
     return db
 
 
 def _market(row) -> dict | None:
-    return row and {**row, "queries": json.loads(row["queries"])}
+    return row and {**row, "queries": json.loads(row["queries"]), "filled": bool(row["filled"])}
 
 
 def _tick(row) -> dict:
@@ -49,6 +52,16 @@ def add_market(db, *, id, venue, venue_ref, title, rules, url, lead_id=None, que
 
 def set_queries(db, id: str, queries: list[str]) -> None:
     db.execute("UPDATE markets SET queries = ? WHERE id = ?", (json.dumps(queries), id))
+
+
+def set_filled(db, id: str) -> None:
+    """The market's first article pass (its backfill) has completed; later passes are live."""
+    db.execute("UPDATE markets SET filled = 1 WHERE id = ?", (id,))
+
+
+def promote(db, id: str) -> None:
+    """Turn a related contract into a market of its own."""
+    db.execute("UPDATE markets SET lead_id = NULL WHERE id = ?", (id,))
 
 
 def get_market(db, id: str) -> dict | None:
@@ -75,6 +88,12 @@ def price_at(db, market_id: str, ts: float) -> float | None:
     row = db.execute("SELECT price FROM prices WHERE market_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
                      (market_id, ts)).fetchone()
     return row and row["price"]
+
+
+def latest_price(db, market_id: str) -> tuple[float, float] | None:
+    """(ts, price) of the newest sample."""
+    row = db.execute("SELECT ts, price FROM prices WHERE market_id = ? ORDER BY ts DESC LIMIT 1", (market_id,)).fetchone()
+    return row and (row["ts"], row["price"])
 
 
 def prices(db, market_id: str, since: float = 0) -> list[dict]:

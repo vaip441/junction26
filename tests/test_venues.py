@@ -91,3 +91,74 @@ def test_only_web_links_are_accepted_and_the_stored_address_is_rebuilt():
     link = "HTTP://www.Kalshi.com/markets/kxfed/fed-meeting/kxfed-26dec/?x=<b>#frag"
     assert kalshi.canonical(link) == "https://kalshi.com/markets/kxfed/fed-meeting/kxfed-26dec"
     assert kalshi.canonical("https://example.com/markets/a/b") is None
+
+
+def test_resolve_tells_bad_links_missing_markets_and_outages_apart(monkeypatch):
+    import asyncio
+
+    import pytest
+
+    from terminal import venues
+
+    with pytest.raises(venues.NotAVenueLink):
+        asyncio.run(venues.resolve("will jensen get fired"))
+    monkeypatch.setattr(polymarket, "lookup", lambda *a: [])
+    with pytest.raises(venues.MarketNotFound):
+        asyncio.run(venues.resolve("https://polymarket.com/event/gone"))
+
+    def html_instead_of_json(*a):
+        raise ValueError("Expecting value: line 1 column 1")
+
+    monkeypatch.setattr(polymarket, "lookup", html_instead_of_json)
+    with pytest.raises(venues.VenueError):
+        asyncio.run(venues.resolve("https://polymarket.com/event/e"))
+    monkeypatch.setattr(kalshi, "lookup", lambda *a: (_ for _ in ()).throw(KeyError("event")))
+    with pytest.raises(venues.VenueError):
+        asyncio.run(venues.resolve("https://kalshi.com/markets/a/b/c"))
+
+
+def test_kalshi_lookup_accepts_a_market_ticker(monkeypatch):
+    import io
+    import urllib.error
+
+    def get(path, **params):
+        if path == "/events/KX-M1":
+            raise urllib.error.HTTPError(path, 404, "not found", {}, io.BytesIO(b"{}"))
+        if path == "/markets/KX-M1":
+            return {"market": {"event_ticker": "KX"}}
+        assert path == "/events/KX"
+        return {"event": KALSHI}
+
+    monkeypatch.setattr(kalshi, "get", get)
+    assert len(kalshi.lookup("KX-M1")) == len(KALSHI["markets"])
+
+
+def test_kalshi_lookup_of_nothing_is_market_not_found(monkeypatch):
+    import io
+    import urllib.error
+
+    import pytest
+
+    from terminal import venues
+
+    def get(path, **params):
+        raise urllib.error.HTTPError(path, 404, "not found", {}, io.BytesIO(b"{}"))
+
+    monkeypatch.setattr(kalshi, "get", get)
+    with pytest.raises(venues.MarketNotFound):
+        kalshi.lookup("NOPE")
+
+
+def test_untraded_placeholder_contracts_are_left_out_unless_named():
+    def pm(slug, price, volume):
+        return {**POLY["markets"][0], "slug": slug, "question": slug, "closed": False, "volumeNum": volume,
+                "outcomePrices": json.dumps([str(price), str(1 - price)])}
+    event = {**POLY, "markets": [pm("candidate-s", 0.5, 0), pm("real", 0.2, 900.0), pm("candidate-t", 0.5, None)]}
+    assert [c["slug"] for c in polymarket.parse_event(event, None)] == ["real"]
+    assert [c["slug"] for c in polymarket.parse_event(event, "candidate-s")] == ["candidate-s", "real"]
+
+    def k(ticker, volume):
+        return {**KALSHI["markets"][0], "ticker": ticker, "status": "active", "volume_fp": volume}
+    event = {**KALSHI, "markets": [k("PLACEHOLDER", "0.00"), k("REAL", "12.00")]}
+    assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="x")] == ["REAL"]
+    assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="PLACEHOLDER")] == ["PLACEHOLDER", "REAL"]

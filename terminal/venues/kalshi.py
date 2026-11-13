@@ -7,6 +7,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from terminal.venues.errors import MarketNotFound
+
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
 RATE = 12  # req/s; public limit is ~20/s and 429 backoff collapses throughput, so stay well under
 TICKER = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
@@ -74,7 +76,9 @@ def parse_event(event: dict, wanted: str, url: str | None = None) -> list[dict]:
     """
     slug = event["event_ticker"].lower()
     url = url or f"https://kalshi.com/markets/{event.get('series_ticker', slug).lower()}/e/{slug}"
-    ms = [m for m in event.get("markets") or [] if m.get("status") == "active"]
+    # untraded contracts are placeholders; keep one only if it was asked for by name
+    ms = [m for m in event.get("markets") or []
+          if m.get("status") == "active" and (float(m.get("volume_fp") or 0) > 0 or m["ticker"] == wanted)]
     ms.sort(key=lambda m: (m["ticker"] != wanted, abs((price(m) if price(m) is not None else 1000) - 50)))
     def title(m):
         t, sub = m.get("title") or event["title"], m.get("yes_sub_title") or ""
@@ -97,7 +101,7 @@ def lookup(ticker: str, url: str | None = None) -> list[dict]:
             event = get(f"/events/{event_ticker}", with_nested_markets="true")["event"]
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            raise LookupError("market not found") from e
+            raise MarketNotFound("market not found") from e
         raise
     return parse_event(event, ticker, url)
 

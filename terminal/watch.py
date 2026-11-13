@@ -15,6 +15,10 @@ Write 3 to 5 short web search queries (2 to 6 words each) that would find breaki
 market resolves. Use the names of the people, companies and events involved. Reply with a JSON array of strings only."""
 
 
+class QueryError(Exception):
+    pass
+
+
 async def ask_json(prompt: str):
     model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-3.8-flash")
     async with httpx.AsyncClient(timeout=30) as c:
@@ -27,11 +31,13 @@ async def ask_json(prompt: str):
 
 
 async def queries_for(title: str, rules: str) -> list[str]:
-    """3 to 5 search queries for a market; just its title if the model call fails."""
+    """3 to 5 search queries for a market. QueryError if the model call fails or returns none: the
+    caller retries later rather than tracking a market on a bad query forever."""
     try:
         answer = await ask_json(PROMPT.format(title=title, rules=rules[:1500]))
         queries = [q.strip() for q in answer if isinstance(q, str) and q.strip()][:5]
-        return queries or [title]
     except Exception as e:
-        log.warning("query writing failed for %r: %s", title, e)
-        return [title]
+        raise QueryError(f"{type(e).__name__}: {str(e)[:150]}") from e
+    if not queries:
+        raise QueryError("the model returned no queries")
+    return queries

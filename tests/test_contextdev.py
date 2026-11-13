@@ -56,3 +56,57 @@ def test_limiter_reserve_keeps_capacity_back_for_searches():
     lim = Limiter(["k1"], per_minute=10)
     assert [lim.try_take(now=0, reserve=5) for _ in range(6)] == ["k1"] * 5 + [None]
     assert [lim.try_take(now=0) for _ in range(6)] == ["k1"] * 5 + [None]
+
+
+def client_with(handler, monkeypatch):
+    import httpx
+
+    from terminal import contextdev
+
+    monkeypatch.setenv("CONTEXT_DEV_API_KEY", "k1")
+    monkeypatch.setattr(contextdev, "_limiter", None)
+    monkeypatch.setattr(contextdev, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    return contextdev
+
+
+def test_search_sends_the_filters_and_parses_results(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers["authorization"], json.loads(request.content)))
+        return httpx.Response(200, json=json.load(open("tests/fixtures/search_response.json")))
+
+    cd = client_with(handler, monkeypatch)
+    rows = asyncio.run(cd.search("nvidia ceo", include_domains=["x.com"], num_results=20))
+    assert len(rows) >= 5
+    assert seen == [("/v1/web/search", "Bearer k1", {"query": "nvidia ceo", "freshness": "last_24_hours",
+                                                     "numResults": 20, "includeDomains": ["x.com"]})]
+
+
+def test_a_refused_request_raises_and_rests_the_key(monkeypatch):
+    import asyncio
+
+    import httpx
+    import pytest
+
+    cd = client_with(lambda r: httpx.Response(429, headers={"retry-after": "31"}, json={"error_code": "RATE_LIMITED"}),
+                     monkeypatch)
+    with pytest.raises(cd.ContextError):
+        asyncio.run(cd.search("q"))
+    assert cd.limiter().try_take() is None and 30 < cd.limiter().wait_time() <= 31
+
+
+def test_scrape_without_spare_capacity_is_skipped_not_an_error(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    calls = []
+    cd = client_with(lambda r: calls.append(r) or httpx.Response(200, json={}), monkeypatch)
+    for _ in range(5):
+        cd.limiter().try_take()
+    assert asyncio.run(cd.scrape("https://a.example/x")) == ("", None) and calls == []

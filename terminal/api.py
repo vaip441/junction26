@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import poller, scoring, venues, watch
+from terminal import poller, scoring, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -61,24 +61,28 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
 
     def write_access(x_terminal_key: str = Header("")):
         """Writes cost model calls and Context.dev credits, so a public deployment sets TERMINAL_KEY."""
-        if key and not hmac.compare_digest(x_terminal_key, key):
+        if key and not hmac.compare_digest(x_terminal_key.encode(), key.encode()):
             raise HTTPException(401, "missing or wrong X-Terminal-Key header")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if poll and not key:  # polling means a real deployment: never run one with open writes
+            raise RuntimeError("TERMINAL_KEY is not set; refusing to start with writes open to anyone")
         db = store.connect(db_path or os.environ.get("DB_PATH", "terminal.db"))
         app.state.db, app.state.bus, app.state.scorer = db, Bus(), scorer or scoring.score
         if store.get_market(db, DEMO["id"]) is None:
             store.add_market(db, id=DEMO["id"], venue="made_up", venue_ref=None, title=DEMO["title"],
                              rules=DEMO["rules"], url=None)
             store.add_price(db, DEMO["id"], time.time(), DEMO["start"])
+        app.state.wake = asyncio.Event()
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus)),
-                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer))] if poll else []
-        app.state.tasks, app.state.fills = tasks, set()
+                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake))
+                 ] if poll else []
+        app.state.tasks = tasks
         yield
-        for t in [*tasks, *app.state.fills]:
+        for t in tasks:
             t.cancel()
-        await asyncio.gather(*tasks, *app.state.fills, return_exceptions=True)
+        await asyncio.gather(*tasks, return_exceptions=True)
         db.close()
 
     app = FastAPI(title="Prediction market terminal", lifespan=lifespan)
@@ -118,25 +122,24 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(503, "scoring unavailable, try again")
         return public(tick)
 
-    async def instant_fill(m: dict) -> None:
-        """Score recent coverage in one burst so a new market's tape is full within seconds."""
-        bus = app.state.bus
-        bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
-        n = await poller.fetch_articles(app.state.db, bus, app.state.scorer, m, backfill=True, num_results=20)
-        bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
-
     @app.post("/markets", dependencies=[Depends(write_access)])
     async def add_market(body: MarketIn):
         db = app.state.db
         try:
             contracts = await venues.resolve(body.query)
-        except ValueError:
+        except venues.NotAVenueLink:
             raise HTTPException(422, "paste a Kalshi or Polymarket market link")
-        except LookupError as e:
+        except venues.MarketNotFound as e:
             raise HTTPException(404, str(e))
+        except venues.VenueError as e:
+            raise HTTPException(502, f"the venue did not answer properly, try again ({e})")
         lead, now = contracts[0], time.time()
         lead_id = venues.market_id(lead)
-        if store.get_market(db, lead_id) is None:
+        existing = store.get_market(db, lead_id)
+        if existing is not None and existing["lead_id"] is not None:
+            store.promote(db, lead_id)  # a related contract pasted by its own link becomes a market
+            app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
+        elif existing is None:
             for c in contracts[:1 + MAX_RELATED]:
                 id = venues.market_id(c)
                 store.add_market(db, id=id, venue=c["venue"], venue_ref=c["venue_ref"], title=c["title"],
@@ -145,11 +148,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                 if c["price"] is not None:
                     store.add_price(db, id, now, c["price"])
             app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
-            if poll:  # poll=False means no outbound source fetching at all
-                store.set_queries(db, lead_id, await watch.queries_for(lead["title"], lead["rules"]))
-                fill = asyncio.create_task(instant_fill(store.get_market(db, lead_id)))
-                app.state.fills.add(fill)
-                fill.add_done_callback(app.state.fills.discard)
+        app.state.wake.set()  # the article loop writes the queries and does the instant fill
         return detail(db, store.get_market(db, lead_id), time.time())
 
     @app.get("/record")

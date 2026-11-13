@@ -6,6 +6,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from terminal.venues.errors import MarketNotFound
+
 GAMMA = "https://gamma-api.polymarket.com"
 CLOB = "https://clob.polymarket.com"
 UA = {"User-Agent": "terminal"}  # urllib's default agent gets blocked by some Cloudflare setups
@@ -45,7 +47,9 @@ def parse_link(url: str) -> tuple[str, str | None] | None:
 def parse_event(event: dict, market_slug: str | None) -> list[dict]:
     """Open contracts of an event: the named market first, then the most undecided (nearest 50%)."""
     out = []
-    ms = [m for m in event.get("markets") or [] if not m.get("closed")]
+    # untraded contracts are placeholders ("Candidate S"); keep one only if it was asked for by name
+    ms = [m for m in event.get("markets") or []
+          if not m.get("closed") and ((m.get("volumeNum") or 0) > 0 or m.get("slug") == market_slug)]
     for m in ms:
         try:
             token = json.loads(m["clobTokenIds"])[0]
@@ -63,7 +67,7 @@ def parse_event(event: dict, market_slug: str | None) -> list[dict]:
 def lookup(event_slug: str, market_slug: str | None) -> list[dict]:
     events = get(GAMMA + "/events", slug=event_slug)
     if not events:
-        raise LookupError("market not found")
+        raise MarketNotFound("market not found")
     return parse_event(events[0], market_slug)
 
 

@@ -58,27 +58,124 @@ def test_fetch_articles_survives_a_failing_search_and_a_failing_scrape():
     assert store.ticks(db, "m")[0]["published_ts"] is None
 
 
-def test_queries_fall_back_to_the_title(monkeypatch):
+def test_fetch_articles_raises_when_every_search_fails():
+    import pytest
+
+    db, bus, m = setup()
+
+    async def search(query, **kw):
+        raise RuntimeError("search down")
+
+    async def scrape(url):
+        return "", None
+
+    with pytest.raises(poller.FetchFailed):
+        asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=True, num_results=20, search=search, scrape=scrape))
+
+
+def test_query_writing_failure_raises(monkeypatch):
+    import pytest
+
     async def boom(prompt):
         raise RuntimeError("model down")
 
     monkeypatch.setattr(watch, "ask_json", boom)
-    assert asyncio.run(watch.queries_for("T", "R")) == ["T"]
+    with pytest.raises(watch.QueryError):
+        asyncio.run(watch.queries_for("T", "R"))
 
 
 def test_queries_are_cleaned_and_capped(monkeypatch):
+    import pytest
+
     async def answer(prompt):
         return ["  nvidia ceo  ", "", 7, "a", "b", "c", "d", "e"]
 
     monkeypatch.setattr(watch, "ask_json", answer)
     assert asyncio.run(watch.queries_for("T", "R")) == ["nvidia ceo", "a", "b", "c", "d"]
 
+    async def nothing(prompt):
+        return []
 
-def test_due_markets_are_those_with_queries_whose_interval_has_passed():
+    monkeypatch.setattr(watch, "ask_json", nothing)
+    with pytest.raises(watch.QueryError):
+        asyncio.run(watch.queries_for("T", "R"))
+
+
+def test_due_lists_real_lead_markets_new_and_fast_ones_first():
     db, bus, m = setup()
-    store.add_market(db, id="noq", venue="kalshi", venue_ref="T2", title="t", rules="r", url=None)
+    store.add_market(db, id="fast", venue="kalshi", venue_ref="F", title="t", rules="r", url=None, poll_seconds=60)
+    store.add_market(db, id="new", venue="kalshi", venue_ref="N", title="t", rules="r", url=None)
+    store.add_market(db, id="rel", venue="kalshi", venue_ref="R", title="t", rules="r", url=None, lead_id="m")
+    store.add_market(db, id="mu", venue="made_up", venue_ref=None, title="t", rules="r", url=None)
+    store.set_filled(db, "m")
+    store.set_filled(db, "fast")
     last = {}
-    assert [x["id"] for x in poller.due(db, last, now=1000)] == ["m"]
-    last["m"] = 1000
-    assert poller.due(db, last, now=1000 + 899) == []
-    assert [x["id"] for x in poller.due(db, last, now=1000 + 900)] == ["m"]
+    assert [x["id"] for x in poller.due(db, last, now=1000)] == ["new", "fast", "m"]
+    last.update(m=1000, fast=1000, new=1000)
+    assert [x["id"] for x in poller.due(db, last, now=1060)] == ["fast"]
+    assert [x["id"] for x in poller.due(db, last, now=1900)] == ["new", "fast", "m"]
+
+
+def run_pass(db, bus, last, now, queries_for, fetch):
+    asyncio.run(poller.article_pass(db, bus, up, last, now=now, queries_for=queries_for, fetch=fetch))
+
+
+def test_first_pass_writes_queries_and_is_the_backfill_later_passes_are_live():
+    db, bus, m = setup(queries=())
+    q = bus.subscribe()
+    calls = []
+
+    async def queries_for(title, rules):
+        return ["q1", "q2"]
+
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        calls.append((market["queries"], backfill, num_results))
+        return 3
+
+    last = {}
+    run_pass(db, bus, last, 1000, queries_for, fetch)
+    run_pass(db, bus, last, 1000 + 900, queries_for, fetch)
+    assert calls == [(["q1", "q2"], True, 20), (["q1", "q2"], False, 10)]
+    assert store.get_market(db, "m")["filled"] is True
+    events = []
+    while not q.empty():
+        events.append(q.get_nowait())
+    assert [d["status"] for e, d in events if e == "market"] == ["finding sources", "ready"]
+
+
+def test_a_failed_fill_stays_a_backfill_and_is_retried_within_a_minute():
+    db, bus, m = setup()
+    calls = []
+
+    async def queries_for(title, rules):
+        raise AssertionError("queries already exist")
+
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        calls.append(backfill)
+        if len(calls) == 1:
+            raise poller.FetchFailed("every search failed")
+        return 1
+
+    last = {}
+    run_pass(db, bus, last, 1000, queries_for, fetch)
+    assert store.get_market(db, "m")["filled"] is False
+    run_pass(db, bus, last, 1030, queries_for, fetch)   # too soon
+    run_pass(db, bus, last, 1061, queries_for, fetch)   # retried
+    assert calls == [True, True] and store.get_market(db, "m")["filled"] is True
+
+
+def test_a_market_whose_queries_cannot_be_written_is_retried_not_fetched():
+    db, bus, m = setup(queries=())
+    fetched = []
+
+    async def queries_for(title, rules):
+        raise watch.QueryError("model down")
+
+    async def fetch(*a, **kw):
+        fetched.append(1)
+        return 0
+
+    last = {}
+    run_pass(db, bus, last, 1000, queries_for, fetch)
+    assert fetched == [] and store.get_market(db, "m")["queries"] == []
+    assert [x["id"] for x in poller.due(db, last, now=1061)] == ["m"]

@@ -89,3 +89,26 @@ def test_scorer_failure_stores_nothing_and_can_be_retried():
     assert run(db, bus, broken, m, url="https://a.example/x", now=1) is None
     assert store.ticks(db, "m", include_hidden=True) == []
     assert run(db, bus, up, m, url="https://a.example/x", now=2) is not None
+
+
+def test_two_sentences_scored_out_of_order_both_move_the_price():
+    from terminal.pricing import nudge
+
+    db, bus, q, m = setup()
+
+    async def main():
+        gate = asyncio.Event()
+
+        async def slow(*_):
+            await gate.wait()
+            return UP
+
+        first = asyncio.create_task(ingest(db, bus, slow, m, kind="typed", source="s", headline="one", now=1))
+        await asyncio.sleep(0)
+        await ingest(db, bus, up, m, kind="typed", source="s", headline="two", now=2)
+        gate.set()
+        await first
+
+    asyncio.run(main())
+    assert abs(store.latest_price(db, "m")[1] - nudge(nudge(20, 0.8), 0.8)) < 0.01
+    assert [e for e, _ in drain(q)].count("price") == 2

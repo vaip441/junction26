@@ -1,4 +1,4 @@
-"""Context.dev: web search and page scrape. Failures are logged and return nothing, never raise."""
+"""Context.dev: web search and page scrape. Failures raise ContextError; callers decide what to do."""
 import asyncio
 import logging
 import os
@@ -12,6 +12,10 @@ API = "https://api.context.dev/v1"
 log = logging.getLogger(__name__)
 _client: httpx.AsyncClient | None = None
 _limiter = None
+
+
+class ContextError(Exception):
+    pass
 
 
 class Limiter:
@@ -68,11 +72,14 @@ async def _post(path: str, body: dict, key: str) -> dict:
     global _client
     if _client is None:
         _client = httpx.AsyncClient(timeout=60)
-    r = await _client.post(API + path, json=body, headers={"Authorization": f"Bearer {key}"})
-    if r.status_code == 429:
-        limiter().refused(key, float(r.headers.get("retry-after", 30)))
-    r.raise_for_status()
-    return r.json()
+    try:
+        r = await _client.post(API + path, json=body, headers={"Authorization": f"Bearer {key}"})
+        if r.status_code == 429:
+            limiter().refused(key, float(r.headers.get("retry-after", 30)))
+        r.raise_for_status()
+        return r.json()
+    except (httpx.HTTPError, ValueError) as e:
+        raise ContextError(f"{path}: {type(e).__name__}: {str(e)[:150]}") from e
 
 
 def parse_search(response: dict) -> list[dict]:
@@ -97,21 +104,13 @@ async def search(query: str, *, freshness: str = "last_24_hours", include_domain
     body = {"query": query[:500], "freshness": freshness, "numResults": num_results}
     if include_domains:
         body["includeDomains"] = include_domains
-    try:
-        return parse_search(await _post("/web/search", body, await limiter().take()))  # searches queue for capacity
-    except Exception as e:
-        log.warning("search failed for %r: %s", query, e)
-        return []
+    return parse_search(await _post("/web/search", body, await limiter().take()))  # searches queue for capacity
 
 
 async def scrape(url: str) -> tuple[str, float | None]:
     """Text and publish time of a page, or nothing when there is no spare capacity: searches come first."""
-    try:
-        key = limiter().try_take(reserve=limiter().per_minute // 2)
-        if key is None:
-            return "", None
-        return parse_scrape(await _post("/web/scrape", {"url": url, "formats": {"markdown": True},
-                                                        "sharedParams": {"mainContentOnly": True}}, key))
-    except Exception as e:
-        log.warning("scrape failed for %s: %s", url, e)
+    key = limiter().try_take(reserve=limiter().per_minute // 2)
+    if key is None:
         return "", None
+    return parse_scrape(await _post("/web/scrape", {"url": url, "formats": {"markdown": True},
+                                                    "sharedParams": {"mainContentOnly": True}}, key))

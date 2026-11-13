@@ -4,7 +4,7 @@ import logging
 import time
 from urllib.parse import urlsplit
 
-from terminal import contextdev, venues
+from terminal import contextdev, venues, watch
 from terminal import db as store
 from terminal.pipeline import dedupe_key, ingest
 
@@ -41,21 +41,28 @@ async def price_loop(db, bus, interval: float = 60) -> None:
     await forever("price", interval, lambda: sample_prices(db, bus))
 
 
+class FetchFailed(Exception):
+    """Every search for a market failed, so nothing is known about its coverage."""
+
+
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
                          search=None, scrape=None) -> int:
     """Search every query of a market and ingest results not seen before. Returns how many ticks were stored."""
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
     found = await asyncio.gather(*(search(q, num_results=num_results) for q in market["queries"]),
                                  return_exceptions=True)
-    fresh = {}
+    fresh, failed = {}, 0
     for q, results in zip(market["queries"], found):
         if isinstance(results, BaseException):
             log.warning("search failed for %r on %s: %s", q, market["id"], results)
+            failed += 1
             continue
         for r in results:
             key = dedupe_key("article", r["url"], r["title"], 0)
             if key not in fresh and not store.has_tick(db, market["id"], key):
                 fresh[key] = r
+    if failed and failed == len(market["queries"]):
+        raise FetchFailed(f"all {failed} searches failed for {market['id']}")
     limit = asyncio.Semaphore(10)
 
     async def one(r) -> bool:
@@ -73,21 +80,50 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     return sum(await asyncio.gather(*(one(r) for r in fresh.values())))
 
 
+RETRY_SECONDS = 60
+
+
 def due(db, last_fetch: dict, now: float) -> list[dict]:
-    """Lead markets with search queries whose polling interval has passed."""
-    return [m for m in store.list_markets(db)
-            if m["queries"] and now - last_fetch.get(m["id"], 0) >= m["poll_seconds"]]
+    """Real lead markets whose polling interval has passed: not-yet-filled ones first, then the fastest."""
+    ms = [m for m in store.list_markets(db)
+          if m["venue"] != "made_up" and now - last_fetch.get(m["id"], 0) >= m["poll_seconds"]]
+    return sorted(ms, key=lambda m: (m["filled"], m["poll_seconds"]))
 
 
-async def article_loop(db, bus, scorer) -> None:
+async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *,
+                       queries_for=None, fetch=None) -> None:
+    """One round over the due markets. This is the only place articles are fetched, so a market's
+    first completed pass is its backfill and every later pass is live; the two can never race."""
+    queries_for, fetch = queries_for or watch.queries_for, fetch or fetch_articles
+    for m in due(db, last_fetch, time.time() if now is None else now):
+        started = time.time() if now is None else now
+        last_fetch[m["id"]] = started
+        try:
+            if not m["queries"]:
+                store.set_queries(db, m["id"], await queries_for(m["title"], m["rules"]))
+                m = store.get_market(db, m["id"])
+            first = not m["filled"]
+            if first:
+                bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
+            n = await fetch(db, bus, scorer, m, backfill=first, num_results=20 if first else 10)
+            if first:
+                store.set_filled(db, m["id"])
+                bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
+        except Exception as e:
+            log.warning("article pass failed for %s, retrying in %ss: %s", m["id"], RETRY_SECONDS, e)
+            last_fetch[m["id"]] = started - m["poll_seconds"] + RETRY_SECONDS
+
+
+async def article_loop(db, bus, scorer, wake: asyncio.Event) -> None:
+    """Run article passes forever. `wake` starts the next pass at once, for a newly added market."""
     last_fetch: dict[str, float] = {}
-
-    async def step():
-        for m in due(db, last_fetch, time.time()):
-            last_fetch[m["id"]] = time.time()
-            try:
-                await fetch_articles(db, bus, scorer, m, backfill=False, num_results=10)
-            except Exception:
-                log.exception("article fetch failed for %s", m["id"])
-
-    await forever("article", 15, step)
+    while True:
+        try:
+            await article_pass(db, bus, scorer, last_fetch)
+        except Exception:
+            log.exception("article pass failed")
+        try:
+            await asyncio.wait_for(wake.wait(), 15)
+        except asyncio.TimeoutError:
+            pass
+        wake.clear()

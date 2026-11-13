@@ -24,3 +24,45 @@ def test_parse_decision1_fixture_is_a_strong_up():
     s = parse_decision1(json.load(open("tests/fixtures/decision1_response.json")))
     assert abs(s.up + s.none + s.down - 1) < 0.01 and -1 <= s.strength <= 1
     assert verdict(s)[0] == "up" and s.strength > 0.8
+
+
+def scored_with(handler, monkeypatch):
+    import asyncio
+
+    import httpx
+
+    from terminal import scoring
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    monkeypatch.setattr(scoring, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    return asyncio.run(scoring.score("title", "rules", "text"))
+
+
+def test_score_parses_a_real_response(monkeypatch):
+    import httpx
+
+    body = json.load(open("tests/fixtures/decision1_response.json"))
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=body)
+
+    s = scored_with(handler, monkeypatch)
+    assert verdict(s)[0] == "up"
+    assert seen[0]["model"] == "gemini-decision-1" and seen[0]["questions"]["move"]["type"] == "score"
+
+
+def test_score_turns_api_failures_into_scoring_errors(monkeypatch):
+    import httpx
+    import pytest
+
+    from terminal.scoring import ScoringError
+
+    def boom(request):
+        raise httpx.ReadTimeout("slow")
+
+    for handler in (lambda r: httpx.Response(500, text="oops"), lambda r: httpx.Response(200, text="<html>"),
+                    lambda r: httpx.Response(200, json={"prompt_feedback": {"block_reason": "x"}}), boom):
+        with pytest.raises(ScoringError):
+            scored_with(handler, monkeypatch)
