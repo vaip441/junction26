@@ -112,3 +112,42 @@ def test_two_sentences_scored_out_of_order_both_move_the_price():
     asyncio.run(main())
     assert abs(store.latest_price(db, "m")[1] - nudge(nudge(20, 0.8), 0.8)) < 0.01
     assert [e for e, _ in drain(q)].count("price") == 2
+
+
+def test_scorer_is_told_the_date_price_rivals_and_what_was_already_reported():
+    db, bus, q, m = setup(venue="kalshi", price=40.0)
+    store.add_market(db, id="rival", venue="kalshi", venue_ref="R", title="Will the rival win?", rules="r", url=None, lead_id="m")
+    store.add_price(db, "rival", 0, 9.0)
+    seen = []
+
+    async def spy(context, item, gate):
+        seen.append((context, item, gate))
+        return UP
+
+    run(db, bus, spy, m, headline="Board backs the CEO", source="reuters.com", url="https://a.example/1", now=1794600000)
+    run(db, bus, spy, m, headline="Second story", source="apnews.com", body="Full passage.", url="https://a.example/2",
+        published_ts=1794590000, now=1794600100)
+    context, item, gate = seen[1]
+    assert gate is True
+    assert "Today is 13 November 2026." in context and "Market: t" in context and "Rules: r" in context
+    assert "currently prices YES at 40%" in context
+    assert "Will the rival win? (9%)" in context
+    assert "Already reported" in context and "- Board backs the CEO" in context
+    assert "Second story" not in context
+    assert item.startswith("apnews.com: Second story") and "Full passage." in item and "Published 13 November 2026" in item
+    assert "Already reported" not in seen[0][0]
+
+
+def test_spoken_and_typed_ticks_are_scored_without_the_newness_check_or_history():
+    db, bus, q, m = setup()
+    seen = []
+
+    async def spy(context, item, gate):
+        seen.append((context, gate))
+        return UP
+
+    run(db, bus, spy, m, kind="typed", headline="great idea", now=1)
+    run(db, bus, spy, m, kind="mic", headline="great idea again", now=2)
+    assert [g for _, g in seen] == [False, False]
+    assert all("Already reported" not in c and "Traders already know" not in c for c, _ in seen)
+    assert "currently prices YES at 20%" in seen[0][0]

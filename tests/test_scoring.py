@@ -35,7 +35,7 @@ def scored_with(handler, monkeypatch):
 
     monkeypatch.setenv("GEMINI_API_KEY", "k")
     monkeypatch.setattr(scoring, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
-    return asyncio.run(scoring.score("title", "rules", "text"))
+    return asyncio.run(scoring.score("Market: title", "text", True))
 
 
 def test_score_parses_a_real_response(monkeypatch):
@@ -51,6 +51,7 @@ def test_score_parses_a_real_response(monkeypatch):
     s = scored_with(handler, monkeypatch)
     assert verdict(s)[0] == "up"
     assert seen[0]["model"] == "gemini-decision-1" and seen[0]["questions"]["move"]["type"] == "score"
+    assert seen[0]["input"] == "Market: title"
 
 
 def test_score_turns_api_failures_into_scoring_errors(monkeypatch):
@@ -66,3 +67,43 @@ def test_score_turns_api_failures_into_scoring_errors(monkeypatch):
                     lambda r: httpx.Response(200, json={"prompt_feedback": {"block_reason": "x"}}), boom):
         with pytest.raises(ScoringError):
             scored_with(handler, monkeypatch)
+
+
+def answers(score, probs, new=None):
+    a = {"move": {"type": "score", "score": score, "probabilities": {str(i): p for i, p in enumerate(probs)}}}
+    if new is not None:
+        a["new"] = {"type": "noul", "noul": new}
+    return {"answers": a}
+
+
+def test_request_puts_the_market_context_in_the_input_and_asks_two_questions():
+    from terminal.scoring import build_request
+
+    r = build_request("Today is 13 November 2026.\nMarket: M", "reuters.com: Board meets", True)
+    assert r["input"] == "Today is 13 November 2026.\nMarket: M"
+    assert set(r["questions"]) == {"move", "new"}
+    assert r["questions"]["move"]["type"] == "score" and len(r["questions"]["move"]["criteria"]) == 5
+    assert "not new" in r["questions"]["move"]["criteria"][2]
+    assert "reuters.com: Board meets" in r["questions"]["move"]["instructions"]
+    assert r["questions"]["new"]["type"] == "noul" and "reuters.com: Board meets" in r["questions"]["new"]["instructions"]
+
+
+def test_spoken_and_typed_items_are_not_asked_whether_they_are_new():
+    from terminal.scoring import build_request
+
+    r = build_request("ctx", "typed: that is clever", False)
+    assert set(r["questions"]) == {"move"}
+    # a sentence someone says is taken as true and new; opinions count, unlike in a news article
+    assert r["questions"]["move"]["criteria"][2] == "No effect on the price"
+    assert "Treat it as true and new" in r["questions"]["move"]["instructions"]
+
+
+def test_an_item_that_is_not_new_loses_its_strength_and_becomes_no_effect():
+    strong_up = [0.0, 0.0, 0.05, 0.15, 0.80]
+    fresh = parse_decision1(answers(3.75, strong_up, new=0.9))
+    stale = parse_decision1(answers(3.75, strong_up, new=0.1))
+    ungated = parse_decision1(answers(3.75, strong_up))
+    assert abs(ungated.strength - 0.875) < 1e-9 and verdict(ungated)[0] == "up"
+    assert abs(fresh.strength - 0.875 * 0.9) < 1e-9 and verdict(fresh)[0] == "up"
+    assert abs(stale.strength - 0.0875) < 1e-9 and verdict(stale)[0] == "none"
+    assert abs(stale.up - 0.095) < 1e-9 and abs(stale.up + stale.none + stale.down - 1) < 1e-9

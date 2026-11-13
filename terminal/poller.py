@@ -41,6 +41,11 @@ async def price_loop(db, bus, interval: float = 60) -> None:
     await forever("price", interval, lambda: sample_prices(db, bus))
 
 
+# Reference pages and the venues' own pages are not news: an encyclopedia entry or a report of the
+# market's odds says nothing the price does not already hold.
+NOT_NEWS = ["wikipedia.org", "polymarket.com", "kalshi.com"]
+
+
 class FetchFailed(Exception):
     """Every search for a market failed, so nothing is known about its coverage."""
 
@@ -49,8 +54,8 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                          search=None, scrape=None) -> int:
     """Search every query of a market and ingest results not seen before. Returns how many ticks were stored."""
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
-    found = await asyncio.gather(*(search(q, num_results=num_results) for q in market["queries"]),
-                                 return_exceptions=True)
+    found = await asyncio.gather(*(search(q, num_results=num_results, exclude_domains=NOT_NEWS)
+                                   for q in market["queries"]), return_exceptions=True)
     fresh, failed = {}, 0
     for q, results in zip(market["queries"], found):
         if isinstance(results, BaseException):
@@ -68,13 +73,14 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     async def one(r) -> bool:
         async with limit:
             try:
-                text, published = await scrape(r["url"])  # 1 credit: full text scores better and carries the date
+                text, published = await scrape(r["url"])  # only with spare capacity; it carries the publish date
             except Exception as e:
                 log.warning("scrape failed for %s: %s", r["url"], e)
                 text, published = "", None
             host = urlsplit(r["url"]).netloc.lower().removeprefix("www.")
             tick = await ingest(db, bus, scorer, market, kind="article", source=host, headline=r["title"],
-                                url=r["url"], body=text or r["description"], published_ts=published, backfill=backfill)
+                                url=r["url"], body=(text or r.get("text") or r["description"])[:2000],
+                                published_ts=published, backfill=backfill)
             return tick is not None
 
     return sum(await asyncio.gather(*(one(r) for r in fresh.values())))

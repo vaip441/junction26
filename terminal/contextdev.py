@@ -83,7 +83,8 @@ async def _post(path: str, body: dict, key: str) -> dict:
 
 
 def parse_search(response: dict) -> list[dict]:
-    return [{"url": r["url"], "title": r["title"], "description": r.get("description") or ""}
+    return [{"url": r["url"], "title": r["title"], "description": r.get("description") or "",
+             "text": "\n".join((r.get("highlights") or {}).get("highlights") or [])}  # passages relevant to the query
             for r in response.get("results") or []
             if r.get("title") and str(r.get("url") or "").startswith(("https://", "http://"))]  # shown as links
 
@@ -100,10 +101,14 @@ def parse_scrape(response: dict) -> tuple[str, float | None]:
 
 
 async def search(query: str, *, freshness: str = "last_24_hours", include_domains: list[str] | None = None,
-                 num_results: int = 10) -> list[dict]:
-    body = {"query": query[:500], "freshness": freshness, "numResults": num_results}
+                 exclude_domains: list[str] | None = None, num_results: int = 10) -> list[dict]:
+    """Search results with the passages of each page that are relevant to the query (one request, 2 credits)."""
+    body = {"query": query[:500], "freshness": freshness, "numResults": num_results,
+            "highlightsOptions": {"enabled": True}}
     if include_domains:
         body["includeDomains"] = include_domains
+    if exclude_domains:
+        body["excludeDomains"] = exclude_domains
     return parse_search(await _post("/web/search", body, await limiter().take()))  # searches queue for capacity
 
 

@@ -179,3 +179,23 @@ def test_a_market_whose_queries_cannot_be_written_is_retried_not_fetched():
     run_pass(db, bus, last, 1000, queries_for, fetch)
     assert fetched == [] and store.get_market(db, "m")["queries"] == []
     assert [x["id"] for x in poller.due(db, last, now=1061)] == ["m"]
+
+
+def test_articles_are_scored_on_their_passages_and_reference_sites_are_excluded():
+    db, bus, m = setup(queries=("a",))
+    seen, searched = [], []
+
+    async def spy(context, item, gate):
+        seen.append(item)
+        return Score(0.84, 0.12, 0.04, 0.8)
+
+    async def search(query, **kw):
+        searched.append(kw)
+        return [{"url": "https://news.example.com/x", "title": "Story X", "description": "short", "text": "The long passage."}]
+
+    async def scrape(url):
+        return "", None
+
+    asyncio.run(poller.fetch_articles(db, bus, spy, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    assert "The long passage." in seen[0] and "short" not in seen[0]
+    assert set(searched[0]["exclude_domains"]) >= {"wikipedia.org", "polymarket.com", "kalshi.com"}

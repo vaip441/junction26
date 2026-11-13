@@ -121,6 +121,13 @@ def ticks(db, market_id: str, limit: int = 100, include_hidden: bool = False) ->
         f"SELECT * FROM ticks WHERE market_id = ? {hidden} ORDER BY ts DESC, id DESC LIMIT ?", (market_id, limit))]
 
 
+def recent_headlines(db, market_id: str, limit: int = 12) -> list[str]:
+    """Headlines of the latest shown, real (not spoken or typed) ticks, newest first."""
+    return [r["headline"] for r in db.execute(
+        "SELECT headline FROM ticks WHERE market_id = ? AND hidden = 0 AND test = 0 ORDER BY ts DESC, id DESC LIMIT ?",
+        (market_id, limit))]
+
+
 def count_shown(db, market_id: str, since: float) -> int:
     return db.execute("SELECT COUNT(*) FROM ticks WHERE market_id = ? AND hidden = 0 AND ts >= ?",
                       (market_id, since)).fetchone()[0]

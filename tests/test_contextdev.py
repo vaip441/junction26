@@ -14,7 +14,7 @@ def test_parse_search_drops_results_without_address_or_title():
     rows = parse_search({"results": [{"url": "https://a.example/x", "title": "T", "description": None},
                                      {"url": "", "title": "no address"}, {"url": "https://a.example/y"},
                                      {"url": "javascript:alert(1)", "title": "not a web address"}]})
-    assert rows == [{"url": "https://a.example/x", "title": "T", "description": ""}]
+    assert rows == [{"url": "https://a.example/x", "title": "T", "description": "", "text": ""}]
     assert parse_search({"error": "nope"}) == []
 
 
@@ -84,7 +84,8 @@ def test_search_sends_the_filters_and_parses_results(monkeypatch):
     rows = asyncio.run(cd.search("nvidia ceo", include_domains=["x.com"], num_results=20))
     assert len(rows) >= 5
     assert seen == [("/v1/web/search", "Bearer k1", {"query": "nvidia ceo", "freshness": "last_24_hours",
-                                                     "numResults": 20, "includeDomains": ["x.com"]})]
+                                                     "numResults": 20, "highlightsOptions": {"enabled": True},
+                                                     "includeDomains": ["x.com"]})]
 
 
 def test_a_refused_request_raises_and_rests_the_key(monkeypatch):
@@ -110,3 +111,25 @@ def test_scrape_without_spare_capacity_is_skipped_not_an_error(monkeypatch):
     for _ in range(5):
         cd.limiter().try_take()
     assert asyncio.run(cd.scrape("https://a.example/x")) == ("", None) and calls == []
+
+
+def test_search_results_carry_the_passages_as_text():
+    rows = parse_search(json.load(open("tests/fixtures/search_highlights_response.json")))
+    assert rows and sum(len(r["text"]) > 200 for r in rows) >= 3
+    assert parse_search({"results": [{"url": "https://a.example/x", "title": "T", "highlights": {"highlights": None}}]})[0]["text"] == ""
+
+
+def test_search_asks_for_passages_and_can_exclude_sites(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"results": []})
+
+    cd = client_with(handler, monkeypatch)
+    asyncio.run(cd.search("q", exclude_domains=["wikipedia.org"]))
+    assert seen[0]["highlightsOptions"] == {"enabled": True} and seen[0]["excludeDomains"] == ["wikipedia.org"]
