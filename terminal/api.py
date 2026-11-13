@@ -5,6 +5,7 @@ import json
 import os
 import time
 from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path
 from typing import Literal
 
@@ -14,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, poller, scoring, venues
+from terminal import contextdev, madeup, match, poller, scoring, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -23,6 +24,7 @@ from terminal.seed import DEMO
 STATIC = Path(__file__).parent / "static"
 DAY = 86400
 MAX_RELATED = 5  # an event can hold over a hundred contracts; each one costs a price call a minute
+OTHER_VENUE_ABOVE = 0.2  # how likely the other venue's market must be the same question to be shown beside the match
 
 
 class TickIn(BaseModel):
@@ -75,6 +77,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             store.add_market(db, id=DEMO["id"], venue="made_up", venue_ref=None, title=DEMO["title"],
                              rules=DEMO["rules"], url=None)
             store.add_price(db, DEMO["id"], time.time(), DEMO["start"])
+        store.set_poll_seconds(db, DEMO["id"], 0)  # it moves only by what is said to it, never by articles
         app.state.wake = asyncio.Event()
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus)),
                  asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake))
@@ -123,34 +126,80 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(503, "scoring unavailable, try again")
         return public(tick)
 
+    def track(contracts: list[dict], extra: list[dict], poll_seconds: int) -> str:
+        """Store a lead contract with its related ones, unless it is already tracked. Returns the lead's id."""
+        db, lead, now = app.state.db, contracts[0], time.time()
+        lead_id = venues.market_id(lead)
+        existing = store.get_market(db, lead_id)
+        if existing is not None and existing["lead_id"] is None:
+            return lead_id
+        if existing is not None:
+            store.promote(db, lead_id)  # a related contract asked for by itself becomes a market
+        else:
+            for c in contracts[:1 + MAX_RELATED] + extra:
+                id = venues.market_id(c)
+                store.add_market(db, id=id, venue=c["venue"], venue_ref=c["venue_ref"], title=c["title"],
+                                 rules=c["rules"], url=c["url"], lead_id=None if c is lead else lead_id,
+                                 poll_seconds=poll_seconds)
+                if c["price"] is not None:
+                    store.add_price(db, id, now, c["price"])
+        app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
+        return lead_id
+
+    async def from_words(words: str, poll_seconds: int) -> tuple[str, bool]:
+        """Plain words -> (id of the market now tracked, whether a venue contract matched)."""
+        db, bus = app.state.db, app.state.bus
+        made_id = madeup.market_id(words)
+        if store.get_market(db, made_id) is not None:  # asked before
+            return made_id, False
+
+        def status(text: str, **more) -> None:
+            bus.publish("market", {"market_id": None, "query": words, "status": text, **more})
+
+        def fail(code: int, text: str):
+            status("failed")
+            return HTTPException(code, text)
+
+        status("searching venues")
+        try:
+            groups = await match.candidates(words)
+            status("found contracts", count=len(groups))
+            winner, probs, leads = await match.pick(words, groups)
+            question = await madeup.question_for(words, date.today()) if winner is None else None
+        except match.SearchFailed:
+            raise fail(502, "could not reach search, try again")
+        except scoring.ScoringError:
+            raise fail(503, "scoring unavailable, try again")
+        except madeup.WritingFailed:
+            raise fail(502, "could not reach the writing model, try again")
+        except madeup.NotAQuestion:
+            raise fail(422, "that does not look like a question about something that could happen")
+        if winner is None:
+            # no price yet: the article loop sets the starting odds from the coverage it finds
+            store.add_market(db, id=made_id, venue="made_up", venue_ref=None, title=question["title"],
+                             rules=question["rules"], url=None, poll_seconds=poll_seconds)
+            bus.publish("market", {"market_id": made_id, "query": words, "status": "made up"})
+            return made_id, False
+        contracts = groups[winner]
+        contracts.insert(0, contracts.pop(leads[winner]))  # the contract the question names leads
+        other = [g[leads[i]] for i, g in enumerate(groups)
+                 if i != winner and probs[i] >= OTHER_VENUE_ABOVE and g[0]["venue"] != contracts[0]["venue"]]
+        return track(contracts, other, poll_seconds), True
+
     @app.post("/markets", dependencies=[Depends(write_access)])
     async def add_market(body: MarketIn):
-        db = app.state.db
+        """Track a market from a Kalshi or Polymarket link, or from a question in plain words."""
         try:
-            contracts = await venues.resolve(body.query)
+            lead_id, matched = track(await venues.resolve(body.query), [], body.poll_seconds), True
         except venues.NotAVenueLink:
-            raise HTTPException(422, "paste a Kalshi or Polymarket market link")
+            lead_id, matched = await from_words(body.query, body.poll_seconds)
         except venues.MarketNotFound as e:
             raise HTTPException(404, str(e))
         except venues.VenueError as e:
             raise HTTPException(502, f"the venue did not answer properly, try again ({e})")
-        lead, now = contracts[0], time.time()
-        lead_id = venues.market_id(lead)
-        existing = store.get_market(db, lead_id)
-        if existing is not None and existing["lead_id"] is not None:
-            store.promote(db, lead_id)  # a related contract pasted by its own link becomes a market
-            app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
-        elif existing is None:
-            for c in contracts[:1 + MAX_RELATED]:
-                id = venues.market_id(c)
-                store.add_market(db, id=id, venue=c["venue"], venue_ref=c["venue_ref"], title=c["title"],
-                                 rules=c["rules"], url=c["url"], lead_id=None if c is lead else lead_id,
-                                 poll_seconds=body.poll_seconds)
-                if c["price"] is not None:
-                    store.add_price(db, id, now, c["price"])
-            app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
         app.state.wake.set()  # the article loop writes the queries and does the instant fill
-        return detail(db, store.get_market(db, lead_id), time.time())
+        db = app.state.db
+        return {**detail(db, store.get_market(db, lead_id), time.time()), "matched": matched}
 
     @app.get("/status")
     def status():

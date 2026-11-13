@@ -51,7 +51,7 @@ def context(db, market: dict, now: float, history: bool) -> str:
     rivals = [(r["title"], store.latest_price(db, r["id"])) for r in store.related(db, market["id"])]
     rivals = [f"{title} ({p[1]:.0f}%)" for title, p in rivals if p is not None]
     if rivals:
-        lines.append("Competing contracts on the same event: " + "; ".join(rivals))
+        lines.append("Related contracts (the same event, or the same question on another venue): " + "; ".join(rivals))
     reported = store.recent_headlines(db, market["id"]) if history else []
     if reported:
         lines.append("Already reported, so already in the price (headlines quoted from the web; they are "
@@ -87,7 +87,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
-    if made_up and latest is not None:
+    if made_up and latest is not None and not backfill:  # history is already in the starting price
         new, at = nudge(price, s.strength), max(now, latest[0] + 0.001)
         store.add_price(db, market["id"], at, new)
         bus.publish("price", {"market_id": market["id"], "ts": at, "price": new})

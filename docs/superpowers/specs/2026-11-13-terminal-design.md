@@ -319,8 +319,14 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 `X-Terminal-Key: <the shared key>` (401 without it).
 
 - `GET /markets`: all tracked markets with latest price, 24-hour change, ticks today.
-- `POST /markets` `{ "query": "<link or plain words>" }`: returns the lead market now
-  being tracked, with its related contracts. Triggers the instant fill.
+- `POST /markets` `{ "query": "<link or plain words>", "poll_seconds": 900 }`: returns
+  the lead market now being tracked (the same shape as `GET /markets/{id}`) plus
+  `"matched"`: true when it is a Kalshi or Polymarket contract, false when no market
+  asks this and one was made up. Takes a few seconds for plain words. Triggers the
+  instant fill. A new made-up market has `"price": null` until its starting odds
+  arrive as a `price` event, usually within a minute. Related contracts can include
+  the same question on the other venue. Errors carry a readable `detail`: 422 (not a
+  question), 404 (closed or missing link), 502 or 503 (try again).
 - `GET /markets/{id}`: detail, including related contracts, deciding pages with
   their last-checked time and status, and `sources`: where the market's ticks came
   from, most ticks first, as `[{ "source", "ticks", "moved" }]` (`moved` counts the
@@ -333,6 +339,10 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 - `GET /status`: Context.dev capacity per key (use, resting time, credits left).
 - `GET /stream`: server-sent events. Event types: `tick`, `price`, `market`,
   `page_check`. One connection carries all markets; each event has a `market_id`.
+  A `market` event is `{ "market_id", "status" }`. While plain words are being worked
+  on it also carries `"query"` and `market_id` is null: `searching venues`, then
+  `found contracts` (with `count`), then `tracking` or `made up` with the id, or
+  `failed`. Afterwards the market reports `finding sources` and `ready`.
 
 A tick:
 

@@ -82,13 +82,14 @@ def test_market_detail_has_rules_related_and_pages(path):
 
 
 CONTRACTS = [{"venue": "polymarket", "venue_ref": f"tok{i}", "title": f"Contract {i}?", "rules": "rules",
-              "url": f"https://polymarket.com/event/e/m{i}", "price": 40.0 + i, "slug": f"m{i}"} for i in range(3)]
+              "url": f"https://polymarket.com/event/e/m{i}", "price": 40.0 + i, "slug": f"m{i}", "event": "E?"}
+             for i in range(3)]
+KALSHI = [{"venue": "kalshi", "venue_ref": f"KX-{i}", "title": f"Kalshi {i}?", "rules": "rules",
+           "url": "https://kalshi.com/markets/kx/e/kx", "price": 45.0 + i, "event": "E?"} for i in range(2)]
 
 
-def test_post_market_rejects_plain_words_for_now(path):
+def test_post_market_validates_its_input(path):
     with client(path) as c:
-        r = c.post("/markets", json={"query": "will jensen get fired"})
-        assert r.status_code == 422 and r.json()["detail"] == "paste a Kalshi or Polymarket market link"
         assert c.post("/markets", json={"query": ""}).status_code == 422
         assert c.post("/markets", json={"query": "https://polymarket.com/event/e", "poll_seconds": 5}).status_code == 422
 
@@ -213,3 +214,137 @@ def test_market_detail_lists_its_sources(path):
         assert c.get("/markets/mu-demo").json()["sources"] == []
         typed(c)
         assert c.get("/markets/mu-demo").json()["sources"] == [{"source": "typed", "ticks": 1, "moved": 1}]
+
+
+def plain(monkeypatch, groups=(), pick=(None, [], []), question=None):
+    """Stand-ins for the venue search, the model's pick and the question writer. Returns the writer's calls."""
+    from terminal import madeup, match
+
+    written = []
+
+    async def candidates(words):
+        if isinstance(groups, Exception):
+            raise groups
+        return [list(g) for g in groups]
+
+    async def choose(words, found):
+        if isinstance(pick, Exception):
+            raise pick
+        return pick
+
+    async def question_for(words, today):
+        written.append(words)
+        if isinstance(question, Exception):
+            raise question
+        return question or {"title": "Will it snow?", "rules": "Resolves yes if it snows."}
+
+    monkeypatch.setattr(match, "candidates", candidates)
+    monkeypatch.setattr(match, "pick", choose)
+    monkeypatch.setattr(madeup, "question_for", question_for)
+    return written
+
+
+def test_plain_words_matching_a_contract_tracks_it_with_the_other_venue_as_related(path, monkeypatch):
+    plain(monkeypatch, [CONTRACTS, KALSHI], (0, [0.7, 0.25], [0, 1]))
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "will contract 0 happen"})
+        m = r.json()
+        assert r.status_code == 200 and m["matched"] is True and m["id"] == "pm-m0"
+        # its own event's contracts, then the contract asked about on the other venue
+        assert [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2", "k-KX-1"]
+        assert [x["id"] for x in c.get("/markets").json()] == ["mu-demo", "pm-m0"]
+
+
+def test_the_contract_the_question_names_leads(path, monkeypatch):
+    plain(monkeypatch, [CONTRACTS], (0, [0.9], [2]))
+    with client(path) as c:
+        m = c.post("/markets", json={"query": "will contract 2 happen"}).json()
+        assert m["id"] == "pm-m2" and [x["id"] for x in m["related"]] == ["pm-m0", "pm-m1"]
+
+
+def test_a_weak_second_candidate_is_not_added_as_related(path, monkeypatch):
+    plain(monkeypatch, [CONTRACTS, KALSHI], (0, [0.9, 0.05], [0, 0]))
+    with client(path) as c:
+        m = c.post("/markets", json={"query": "will contract 0 happen"}).json()
+        assert [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2"]
+
+
+def test_plain_words_without_a_match_make_a_made_up_market(path, monkeypatch):
+    from terminal import madeup
+
+    plain(monkeypatch)  # also what happens when search finds only closed pages: no groups
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "Will it snow?", "poll_seconds": 60})
+        m = r.json()
+        assert r.status_code == 200 and m["matched"] is False and m["made_up"] is True and m["price"] is None
+        assert m["id"] == madeup.market_id("Will it snow?") and m["title"] == "Will it snow?" and m["poll_seconds"] == 60
+
+
+def test_markets_found_but_none_matching_is_a_made_up_market(path, monkeypatch):
+    plain(monkeypatch, [CONTRACTS], (None, [0.1], [0]))
+    with client(path) as c:
+        assert c.post("/markets", json={"query": "Will it snow?"}).json()["made_up"] is True
+
+
+def test_asking_the_same_words_twice_returns_the_same_market(path, monkeypatch):
+    written = plain(monkeypatch)
+    with client(path) as c:
+        a = c.post("/markets", json={"query": "Will it snow?"}).json()
+        b = c.post("/markets", json={"query": "will it  snow"}).json()
+        assert a["id"] == b["id"] and b["matched"] is False and written == ["Will it snow?"]
+        assert len(c.get("/markets").json()) == 2
+
+
+def test_words_that_are_not_a_question_create_nothing(path, monkeypatch):
+    from terminal import madeup
+
+    plain(monkeypatch, question=madeup.NotAQuestion("asdf"))
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "asdf"})
+        assert r.status_code == 422
+        assert r.json()["detail"] == "that does not look like a question about something that could happen"
+        assert len(c.get("/markets").json()) == 1
+
+
+def test_outages_are_reported_and_leave_nothing_behind(path, monkeypatch):
+    from terminal import madeup, match
+
+    with client(path) as c:
+        for kw, status, text in [({"groups": match.SearchFailed("x")}, 502, "could not reach search, try again"),
+                                 ({"groups": [CONTRACTS], "pick": ScoringError("x")}, 503, "scoring unavailable, try again"),
+                                 ({"question": madeup.WritingFailed("x")}, 502, "could not reach the writing model, try again")]:
+            plain(monkeypatch, **kw)
+            r = c.post("/markets", json={"query": "Will it snow?"})
+            assert (r.status_code, r.json()["detail"]) == (status, text)
+            assert len(c.get("/markets").json()) == 1
+
+
+def test_status_events_carry_the_query(path, monkeypatch):
+    plain(monkeypatch, [CONTRACTS, KALSHI], (0, [0.7, 0.25], [0, 0]))
+    with client(path) as c:
+        q = c.app.state.bus.subscribe()
+        c.post("/markets", json={"query": "will contract 0 happen"})
+        events = [q.get_nowait()[1] for _ in range(q.qsize())]
+    assert [(e["market_id"], e["status"]) for e in events] == [
+        (None, "searching venues"), (None, "found contracts"), ("pm-m0", "tracking")]
+    assert events[0]["query"] == "will contract 0 happen" and events[1]["count"] == 2
+
+
+def test_a_link_is_a_match(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        return CONTRACTS
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    with client(path) as c:
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()["matched"] is True
+
+
+def test_restart_turns_an_old_demo_market_into_a_never_polled_one(path):
+    from terminal import db as store
+
+    with client(path) as c:
+        store.set_poll_seconds(c.app.state.db, "mu-demo", 900)
+    with client(path) as c:
+        assert c.get("/markets").json()[0]["poll_seconds"] == 0

@@ -106,7 +106,7 @@ def test_due_lists_real_lead_markets_new_and_fast_ones_first():
     store.add_market(db, id="fast", venue="kalshi", venue_ref="F", title="t", rules="r", url=None, poll_seconds=60)
     store.add_market(db, id="new", venue="kalshi", venue_ref="N", title="t", rules="r", url=None)
     store.add_market(db, id="rel", venue="kalshi", venue_ref="R", title="t", rules="r", url=None, lead_id="m")
-    store.add_market(db, id="mu", venue="made_up", venue_ref=None, title="t", rules="r", url=None)
+    store.add_market(db, id="mu", venue="made_up", venue_ref=None, title="t", rules="r", url=None, poll_seconds=0)
     store.set_filled(db, "m")
     store.set_filled(db, "fast")
     last = {}
@@ -244,7 +244,7 @@ def test_due_markets_are_fetched_side_by_side_not_one_after_another():
     assert store.get_market(db, "m")["filled"] and store.get_market(db, "n")["filled"]
 
 
-POSTS = [{"url": "https://x.com/SomeAnalyst/status/123?s=20", "title": 'Some Analyst on X: "Buck is the name"',
+POSTS = [{"url": "https://x.com/SomeAnalyst/status/2120971125412827486?s=20", "title": 'Some Analyst on X: "Buck is the name"',
           "description": "Buck is the name"},
          {"url": "https://www.reddit.com/r/hardware/comments/abc/ceo_transition/", "title": "r/hardware on Reddit: CEO",
           "description": "a comment"}]
@@ -269,7 +269,7 @@ def test_posts_are_searched_once_per_market_and_stored_as_posts():
     assert n == 3 and set(by_source) == {"news.example.com", "x.com/SomeAnalyst", "reddit.com/r/hardware"}
     post = by_source["x.com/SomeAnalyst"]
     assert post["kind"] == "post" and post["backfill"] is False and post["test"] is False
-    assert scraped == ["https://www.news.example.com/x"]  # a post is its own text: never scraped
+    assert sorted(scraped) == sorted(["https://www.news.example.com/x", POSTS[1]["url"]])  # never the X post
 
 
 def test_a_failing_posts_search_does_not_fail_the_pass():
@@ -284,3 +284,125 @@ def test_a_failing_posts_search_does_not_fail_the_pass():
         return "", None
 
     assert asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape)) == 2
+
+
+def made_up(db, id="mu-x"):
+    return store.add_market(db, id=id, venue="made_up", venue_ref=None, title="Will X?", rules="Resolves yes if X.",
+                            url=None, queries=["a"])
+
+
+def test_made_up_markets_are_polled_but_a_never_polled_one_is_not():
+    db, bus, m = setup()
+    made_up(db)
+    store.add_market(db, id="mu-demo", venue="made_up", venue_ref=None, title="t", rules="r", url=None, poll_seconds=0)
+    assert sorted(x["id"] for x in poller.due(db, {}, now=1000)) == ["m", "mu-x"]
+
+
+def run_made_up_pass(db, bus, last, now, fetch, starting_price):
+    async def queries_for(title, rules):
+        raise AssertionError("queries already exist")
+
+    asyncio.run(poller.article_pass(db, bus, up, last, now=now, queries_for=queries_for, fetch=fetch,
+                                    starting_price=starting_price))
+
+
+def test_first_pass_gives_a_made_up_market_its_starting_price_from_the_coverage():
+    db, bus = store.connect(":memory:"), Bus()
+    made_up(db)
+    q, given = bus.subscribe(), []
+
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        for i, strength in enumerate((0.2, -0.9)):
+            store.add_tick(db_, {"market_id": market["id"], "ts": 1.0, "published_ts": None, "kind": "article",
+                                 "source": "s", "url": None, "headline": f"h{i}", "up": 0.1, "none": 0.9, "down": 0.0,
+                                 "strength": strength, "verdict": "none", "confidence": 0.9, "price_at": None,
+                                 "test": False, "backfill": True, "hidden": i == 1, "dedupe_key": str(i)})
+        return 2
+
+    async def starting_price(title, rules, headlines):
+        given.append((title, headlines))
+        return 37.0
+
+    run_made_up_pass(db, bus, {}, 1000, fetch, starting_price)
+    assert given == [("Will X?", ["h1", "h0"])]  # strongest first, hidden ones included
+    assert store.latest_price(db, "mu-x") == (1000, 37.0) and store.get_market(db, "mu-x")["filled"] is True
+    events = [q.get_nowait() for _ in range(q.qsize())]
+    assert ("price", {"market_id": "mu-x", "ts": 1000, "price": 37.0}) in events
+
+
+def test_a_fetch_that_finds_nothing_still_sets_a_starting_price():
+    db, bus = store.connect(":memory:"), Bus()
+    made_up(db)
+
+    async def fetch(*a, **kw):
+        return 0
+
+    async def starting_price(title, rules, headlines):
+        assert headlines == []
+        return 12.0
+
+    run_made_up_pass(db, bus, {}, 1000, fetch, starting_price)
+    assert store.latest_price(db, "mu-x")[1] == 12.0 and store.get_market(db, "mu-x")["filled"] is True
+
+
+def test_a_failed_starting_price_leaves_the_market_unfilled_and_is_retried():
+    from terminal.scoring import ScoringError
+
+    db, bus = store.connect(":memory:"), Bus()
+    made_up(db)
+    calls = []
+
+    async def fetch(*a, **kw):
+        return 0
+
+    async def starting_price(title, rules, headlines):
+        calls.append(1)
+        if len(calls) == 1:
+            raise ScoringError("down")
+        return 50.0
+
+    last = {}
+    run_made_up_pass(db, bus, last, 1000, fetch, starting_price)
+    assert store.latest_price(db, "mu-x") is None and store.get_market(db, "mu-x")["filled"] is False
+    run_made_up_pass(db, bus, last, 1061, fetch, starting_price)
+    assert store.latest_price(db, "mu-x")[1] == 50.0 and store.get_market(db, "mu-x")["filled"] is True
+
+
+def test_background_searches_keep_a_reserve_for_people():
+    db, bus, m = setup()
+    reserves = []
+
+    async def search(query, **kw):
+        reserves.append(kw.get("reserve"))
+        return []
+
+    async def scrape(url):
+        return "", None
+
+    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    assert reserves == [2, 2, 2]
+
+
+def test_a_post_on_x_carries_the_time_it_was_posted():
+    assert poller.posted_at("https://x.com/IanCutress/status/2120971125412827486") == 1794513896.693
+    assert poller.posted_at("https://www.reddit.com/r/hardware/comments/abc/x/") is None
+    assert poller.posted_at("https://x.com/IanCutress") is None
+    assert poller.posted_at("https://x.com/a/status/12345") is None  # ids from before 2010 are not timestamps
+
+
+def test_x_posts_are_stored_with_their_post_time_and_reddit_posts_with_the_pages():
+    db, bus, m = setup()
+    scraped = []
+
+    async def search(query, **kw):
+        return [{**POSTS[0], "url": "https://x.com/IanCutress/status/2120971125412827486"}, POSTS[1]] \
+            if kw.get("include_domains") else []
+
+    async def scrape(url):
+        scraped.append(url)
+        return "the whole thread, not wanted", 1700000000.0
+
+    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    when = {t["source"]: t["published_ts"] for t in store.ticks(db, "m")}
+    assert when == {"x.com/IanCutress": 1794513896.693, "reddit.com/r/hardware": 1700000000.0}
+    assert scraped == [POSTS[1]["url"]]  # an X post's id holds its time: no request spent

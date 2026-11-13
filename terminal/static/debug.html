@@ -10,6 +10,8 @@
 </style>
 <h1>Terminal debug page</h1>
 <p>Not the real screen. It shows that ticks flow from the pipeline to the stream.</p>
+<form id="add"><input id="query" placeholder="Ask a question, or paste a Kalshi or Polymarket link" maxlength="500" required><button>Track</button></form>
+<p id="status" role="status"></p>
 <label>Market <select id="market"></select></label>
 <div id="price">–</div>
 <form id="form"><input id="text" placeholder="Type a sentence or headline" maxlength="500" required><button>Send as tick</button></form>
@@ -41,23 +43,40 @@ async function load() {
   $("tape").replaceChildren(...ticks.map(row));
 }
 $("market").onchange = () => { current = $("market").value; load(); };
-const send = () => fetch(`/markets/${current}/ticks`, {method: "POST", headers: {"content-type": "application/json", "X-Terminal-Key": KEY},
-    body: JSON.stringify({text: $("text").value, kind: "typed"})});
-$("form").onsubmit = async e => {
-  e.preventDefault();
+// POST with the write key; asks for the key once if the server refuses.
+async function post(path, body) {
+  const send = () => fetch(path, {method: "POST", headers: {"content-type": "application/json", "X-Terminal-Key": KEY},
+    body: JSON.stringify(body)});
   let r = await send();
   if (r.status === 401) {
     KEY = (prompt("Write key (TERMINAL_KEY from the .env file on the server)") || "").trim();
     r = await send();
     if (r.ok) localStorage.setItem("terminalKey", KEY);
   }
-  $("error").textContent = r.ok ? "" : `Error ${r.status}: ${(await r.json()).detail?.toString?.() ?? ""}`;
-  if (r.ok) $("text").value = "";
+  $("error").textContent = r.ok ? "" : `Error ${r.status}: ${(await r.clone().json()).detail?.toString?.() ?? ""}`;
+  return r;
+}
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  if ((await post(`/markets/${current}/ticks`, {text: $("text").value, kind: "typed"})).ok) $("text").value = "";
+};
+$("add").onsubmit = async e => {
+  e.preventDefault();
+  const r = await post("/markets", {query: $("query").value, poll_seconds: 60});
+  if (!r.ok) return;
+  const m = await r.json();
+  current = m.id; $("query").value = "";
+  $("status").textContent = (m.matched ? "Found on " + m.venue : "No market exists, made one up") + ": " + m.title;
+  load();
 };
 const es = new EventSource("/stream");
 es.addEventListener("tick", e => { const t = JSON.parse(e.data); if (t.market_id === current) $("tape").prepend(row(t)); });
 es.addEventListener("price", e => { const p = JSON.parse(e.data); if (p.market_id === current) $("price").textContent = pct(p.price); });
-es.addEventListener("market", load);
+es.addEventListener("market", e => {
+  const m = JSON.parse(e.data);
+  if (m.query) $("status").textContent = `${m.query}: ${m.status}${m.count == null ? "" : " (" + m.count + ")"}`;
+  load();
+});
 load();
 </script>
 </html>

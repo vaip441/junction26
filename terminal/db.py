@@ -59,6 +59,11 @@ def set_filled(db, id: str) -> None:
     db.execute("UPDATE markets SET filled = 1 WHERE id = ?", (id,))
 
 
+def set_poll_seconds(db, id: str, seconds: int) -> None:
+    """0 means the market is never polled for articles."""
+    db.execute("UPDATE markets SET poll_seconds = ? WHERE id = ?", (seconds, id))
+
+
 def promote(db, id: str) -> None:
     """Turn a related contract into a market of its own."""
     db.execute("UPDATE markets SET lead_id = NULL WHERE id = ?", (id,))
@@ -73,7 +78,7 @@ def list_markets(db) -> list[dict]:
 
 
 def related(db, lead_id: str) -> list[dict]:
-    return [_market(r) for r in db.execute("SELECT * FROM markets WHERE lead_id = ? ORDER BY created_ts, id", (lead_id,))]
+    return [_market(r) for r in db.execute("SELECT * FROM markets WHERE lead_id = ? ORDER BY rowid", (lead_id,))]  # as added
 
 
 def all_priced(db) -> list[dict]:
@@ -133,6 +138,12 @@ def sources(db, market_id: str, limit: int = 20) -> list[dict]:
     return [dict(r) for r in db.execute(
         "SELECT source, COUNT(*) AS ticks, SUM(verdict IN ('up', 'down')) AS moved FROM ticks"
         " WHERE market_id = ? AND hidden = 0 GROUP BY source ORDER BY ticks DESC, source LIMIT ?", (market_id, limit))]
+
+
+def headlines(db, market_id: str, limit: int = 20) -> list[str]:
+    """Headlines of a market's ticks, strongest first, hidden ones included: its coverage in brief."""
+    return [r["headline"] for r in db.execute(
+        "SELECT headline FROM ticks WHERE market_id = ? ORDER BY ABS(strength) DESC, id LIMIT ?", (market_id, limit))]
 
 
 def count_shown(db, market_id: str, since: float) -> int:

@@ -1,10 +1,11 @@
 """Background loops: price sampling, article polling, instant fill."""
 import asyncio
 import logging
+import re
 import time
 from urllib.parse import urlsplit
 
-from terminal import contextdev, venues, watch
+from terminal import contextdev, madeup, venues, watch
 from terminal import db as store
 from terminal.pipeline import dedupe_key, ingest
 
@@ -60,6 +61,18 @@ def post_source(url: str) -> str:
     return "/".join([host] + parts[:2 if host.endswith("reddit.com") else 1])
 
 
+def posted_at(url: str) -> float | None:
+    """When a post on X was made: its id holds the time (ids since late 2010)."""
+    u = urlsplit(url)
+    m = re.search(r"/status/(\d+)", u.path)
+    if u.netloc.lower().removeprefix("www.") not in ("x.com", "twitter.com") or not m or int(m[1]) < 10**15:
+        return None
+    return ((int(m[1]) >> 22) + 1288834974657) / 1000
+
+
+BACKGROUND_RESERVE = 2  # requests a minute per key left free, so a person's question is not queued behind polling
+
+
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
                          search=None, scrape=None) -> int:
     """Search every query of a market, plus X and Reddit once, and ingest results not seen before.
@@ -69,8 +82,9 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     # shortcut: posts are searched with the first query only, to spend one request per pass; search
     # every query once there are enough keys
     *found, posts = await asyncio.gather(
-        *(search(q, num_results=num_results, exclude_domains=NOT_NEWS) for q in queries),
-        search(queries[0], num_results=num_results, include_domains=POST_SITES), return_exceptions=True)
+        *(search(q, num_results=num_results, exclude_domains=NOT_NEWS, reserve=BACKGROUND_RESERVE) for q in queries),
+        search(queries[0], num_results=num_results, include_domains=POST_SITES, reserve=BACKGROUND_RESERVE),
+        return_exceptions=True)
     fresh, failed = {}, 0
 
     def keep(results, kind: str) -> None:
@@ -95,10 +109,11 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
 
     async def one(kind: str, r: dict) -> bool:
         async with limit:
-            text, published = "", None
-            if kind == "article":  # a post is its own text; an article's page carries the publish date
+            text, published = "", posted_at(r["url"]) if kind == "post" else None
+            if published is None:  # the page carries the publish date; fetched only with spare capacity
                 try:
-                    text, published = await scrape(r["url"])  # only with spare capacity
+                    page, published = await scrape(r["url"])
+                    text = page if kind == "article" else ""  # a post is its own text
                 except Exception as e:
                     log.warning("scrape failed for %s: %s", r["url"], e)
             source = post_source(r["url"]) if kind == "post" else urlsplit(r["url"]).netloc.lower().removeprefix("www.")
@@ -118,9 +133,10 @@ RETRY_SECONDS = 60
 
 
 def due(db, last_fetch: dict, now: float) -> list[dict]:
-    """Real lead markets whose polling interval has passed: not-yet-filled ones first, then the fastest."""
+    """Lead markets whose polling interval has passed: not-yet-filled ones first, then the fastest.
+    A poll interval of 0 means never (the demo market moves only by what is said to it)."""
     ms = [m for m in store.list_markets(db)
-          if m["venue"] != "made_up" and now - last_fetch.get(m["id"], 0) >= m["poll_seconds"]]
+          if m["poll_seconds"] > 0 and now - last_fetch.get(m["id"], 0) >= m["poll_seconds"]]
     return sorted(ms, key=lambda m: (m["filled"], m["poll_seconds"]))
 
 
@@ -128,10 +144,11 @@ MARKETS_AT_ONCE = 4
 
 
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *,
-                       queries_for=None, fetch=None) -> None:
+                       queries_for=None, fetch=None, starting_price=None) -> None:
     """One round over the due markets, a few side by side. This is the only place articles are fetched,
     so a market's first completed pass is its backfill and every later pass is live; the two never race."""
     queries_for, fetch = queries_for or watch.queries_for, fetch or fetch_articles
+    starting_price = starting_price or madeup.starting_price
     limit = asyncio.Semaphore(MARKETS_AT_ONCE)
 
     async def one(m: dict) -> None:
@@ -146,6 +163,11 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                 if first:
                     bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
                 n = await fetch(db, bus, scorer, m, backfill=first, num_results=20 if first else 10)
+                if first and m["venue"] == "made_up" and store.latest_price(db, m["id"]) is None:
+                    # a made-up market opens at the model's odds given the coverage just found
+                    price = await starting_price(m["title"], m["rules"], store.headlines(db, m["id"]))
+                    store.add_price(db, m["id"], started, price)
+                    bus.publish("price", {"market_id": m["id"], "ts": started, "price": price})
                 if first:
                     store.set_filled(db, m["id"])
                     bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
