@@ -70,7 +70,9 @@ def posted_at(url: str) -> float | None:
     return ((int(m[1]) >> 22) + 1288834974657) / 1000
 
 
-BACKGROUND_RESERVE = 2  # requests a minute per key left free, so a person's question is not queued behind polling
+# Requests a minute per key that routine polling leaves free, so a person's question, and the first
+# fill of the market it creates, are not queued behind it.
+BACKGROUND_RESERVE = 2
 
 
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
@@ -78,12 +80,12 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     """Search every query of a market, plus X and Reddit once, and ingest results not seen before.
     Returns how many ticks were stored."""
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
-    queries = market["queries"]
+    queries, reserve = market["queries"], 0 if backfill else BACKGROUND_RESERVE
     # shortcut: posts are searched with the first query only, to spend one request per pass; search
     # every query once there are enough keys
     *found, posts = await asyncio.gather(
-        *(search(q, num_results=num_results, exclude_domains=NOT_NEWS, reserve=BACKGROUND_RESERVE) for q in queries),
-        search(queries[0], num_results=num_results, include_domains=POST_SITES, reserve=BACKGROUND_RESERVE),
+        *(search(q, num_results=num_results, exclude_domains=NOT_NEWS, reserve=reserve) for q in queries),
+        search(queries[0], num_results=num_results, include_domains=POST_SITES, reserve=reserve),
         return_exceptions=True)
     fresh, failed = {}, 0
 
@@ -146,15 +148,17 @@ MARKETS_AT_ONCE = 4
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *,
                        queries_for=None, fetch=None, starting_price=None) -> None:
     """One round over the due markets, a few side by side. This is the only place articles are fetched,
-    so a market's first completed pass is its backfill and every later pass is live; the two never race."""
+    so a market's first completed pass is its backfill and every later pass is live; the two never race.
+    Passes may overlap: every due market is claimed before any is fetched, so none is fetched twice."""
     queries_for, fetch = queries_for or watch.queries_for, fetch or fetch_articles
     starting_price = starting_price or madeup.starting_price
     limit = asyncio.Semaphore(MARKETS_AT_ONCE)
+    started = time.time() if now is None else now
+    markets = due(db, last_fetch, started)
+    last_fetch.update({m["id"]: started for m in markets})
 
     async def one(m: dict) -> None:
         async with limit:
-            started = time.time() if now is None else now
-            last_fetch[m["id"]] = started
             try:
                 if not m["queries"]:
                     store.set_queries(db, m["id"], await queries_for(m["title"], m["rules"]))
@@ -175,19 +179,31 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                 log.warning("article pass failed for %s, retrying in %ss: %s", m["id"], RETRY_SECONDS, e)
                 last_fetch[m["id"]] = started - m["poll_seconds"] + RETRY_SECONDS
 
-    await asyncio.gather(*(one(m) for m in due(db, last_fetch, time.time() if now is None else now)))
+    await asyncio.gather(*(one(m) for m in markets))
 
 
 async def article_loop(db, bus, scorer, wake: asyncio.Event) -> None:
     """Run article passes forever. `wake` starts the next pass at once, for a newly added market."""
     last_fetch: dict[str, float] = {}
-    while True:
+    running: set[asyncio.Task] = set()
+
+    async def one_pass() -> None:
         try:
             await article_pass(db, bus, scorer, last_fetch)
         except Exception:
             log.exception("article pass failed")
-        try:
-            await asyncio.wait_for(wake.wait(), 15)
-        except asyncio.TimeoutError:
-            pass
-        wake.clear()
+
+    try:
+        while True:
+            # a pass over a dozen markets takes minutes; a market added meanwhile gets its own pass now
+            task = asyncio.create_task(one_pass())
+            running.add(task)
+            task.add_done_callback(running.discard)
+            try:
+                await asyncio.wait_for(wake.wait(), 15)
+            except asyncio.TimeoutError:
+                pass
+            wake.clear()
+    finally:
+        for task in running:
+            task.cancel()

@@ -406,3 +406,46 @@ def test_x_posts_are_stored_with_their_post_time_and_reddit_posts_with_the_pages
     when = {t["source"]: t["published_ts"] for t in store.ticks(db, "m")}
     assert when == {"x.com/IanCutress": 1794513896.693, "reddit.com/r/hardware": 1700000000.0}
     assert scraped == [POSTS[1]["url"]]  # an X post's id holds its time: no request spent
+
+
+def test_a_market_added_mid_pass_is_fetched_at_once_and_none_is_fetched_twice(monkeypatch):
+    db, bus, m = setup()
+    store.add_market(db, id="n", venue="kalshi", venue_ref="N", title="t", rules="r", url=None, queries=["q"])
+    monkeypatch.setattr(poller, "MARKETS_AT_ONCE", 1)
+
+    async def go():
+        release, calls = asyncio.Event(), []
+
+        async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+            calls.append(market["id"])
+            if market["id"] != "new":
+                await release.wait()
+            return 0
+
+        last = {}
+        first = asyncio.create_task(poller.article_pass(db, bus, up, last, now=1000, fetch=fetch))
+        await asyncio.sleep(0.01)  # the first market is being fetched, the second waits its turn
+        store.add_market(db, id="new", venue="kalshi", venue_ref="X", title="t", rules="r", url=None, queries=["q"])
+        await poller.article_pass(db, bus, up, last, now=1001, fetch=fetch)
+        seen = list(calls)
+        release.set()
+        await first
+        return seen, calls
+
+    seen, calls = asyncio.run(go())
+    assert seen == ["m", "new"] and sorted(calls) == ["m", "n", "new"]
+
+
+def test_a_new_markets_first_fill_does_not_wait_behind_the_reserve():
+    db, bus, m = setup()
+    reserves = []
+
+    async def search(query, **kw):
+        reserves.append(kw.get("reserve"))
+        return []
+
+    async def scrape(url):
+        return "", None
+
+    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=True, num_results=20, search=search, scrape=scrape))
+    assert reserves == [0, 0, 0]
