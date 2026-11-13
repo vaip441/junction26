@@ -197,3 +197,49 @@ def test_status_without_any_key_configured_is_empty_not_an_error(monkeypatch):
     monkeypatch.delenv("CONTEXT_DEV_API_KEY", raising=False)
     monkeypatch.setattr(contextdev, "_limiter", None)
     assert contextdev.status() == {"keys": [], "per_minute": 0, "used_last_minute": 0}
+
+
+def test_search_can_leave_freshness_out(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json={"results": []})
+
+    cd = client_with(handler, monkeypatch)
+    asyncio.run(cd.search("q", freshness=None))
+    asyncio.run(cd.search("q"))
+    assert "freshness" not in seen[0] and seen[1]["freshness"] == "last_24_hours"
+
+
+def test_background_searches_leave_room_for_a_person_asking(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    cd = client_with(lambda request: httpx.Response(200, json={"results": []}), monkeypatch)
+
+    async def go():
+        for _ in range(8):
+            await cd.search("background", reserve=2)
+        late = asyncio.create_task(cd.search("background", reserve=2))
+        await cd.search("a person asking")          # goes straight out
+        await asyncio.sleep(0.2)
+        waiting = not late.done()                   # the ninth background search is held back
+        late.cancel()
+        return waiting
+
+    assert asyncio.run(go()) is True
+
+
+def test_wait_time_counts_the_reserve():
+    from terminal.contextdev import Limiter
+
+    lim = Limiter(["k"], per_minute=10)
+    for t in range(8):
+        lim.try_take(now=t)
+    assert lim.wait_time(now=10) == 0 and lim.wait_time(now=10, reserve=2) == 50  # the first request ages out at 60

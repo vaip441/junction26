@@ -162,3 +162,8 @@ def test_untraded_placeholder_contracts_are_left_out_unless_named():
     event = {**KALSHI, "markets": [k("PLACEHOLDER", "0.00"), k("REAL", "12.00")]}
     assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="x")] == ["REAL"]
     assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="PLACEHOLDER")] == ["PLACEHOLDER", "REAL"]
+
+
+def test_every_contract_carries_its_events_title():
+    assert {c["event"] for c in kalshi.parse_event(KALSHI, wanted="x")} == {KALSHI["title"]}
+    assert {c["event"] for c in polymarket.parse_event(POLY, None)} == {POLY["title"]}

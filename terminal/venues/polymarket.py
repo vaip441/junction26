@@ -59,7 +59,7 @@ def parse_event(event: dict, market_slug: str | None) -> list[dict]:
         out.append({"venue": "polymarket", "venue_ref": token, "title": m.get("question") or event["title"],
                     "rules": m.get("description") or event.get("description") or "",
                     "url": f"https://polymarket.com/event/{event['slug']}/{m['slug']}", "price": price,
-                    "slug": m["slug"]})
+                    "slug": m["slug"], "event": event["title"]})
     out.sort(key=lambda c: (c["slug"] != market_slug, abs(c["price"] - 50)))
     return out
 

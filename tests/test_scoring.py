@@ -123,3 +123,29 @@ def test_an_out_of_range_newness_answer_cannot_inflate_the_score():
         parse_decision1(answers(3.75, strong_up, new=float("nan")))
     with pytest.raises(ScoringError):
         parse_decision1(answers(float("inf"), strong_up))
+
+
+def test_decide_returns_answers_and_maps_failures(monkeypatch):
+    import asyncio
+
+    import httpx
+    import pytest
+
+    from terminal import scoring
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    seen = []
+
+    def ask(response):
+        def handler(request):
+            seen.append(json.loads(request.content))
+            return response
+        monkeypatch.setattr(scoring, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+        return asyncio.run(scoring.decide("the input", {"q": {"type": "noul", "instructions": "i"}}))
+
+    assert ask(httpx.Response(200, json={"answers": {"q": {"noul": 0.4}}})) == {"q": {"noul": 0.4}}
+    assert seen[0] == {"model": "gemini-decision-1", "input": "the input",
+                       "questions": {"q": {"type": "noul", "instructions": "i"}}}
+    for bad in (httpx.Response(500), httpx.Response(200, json={"error": "blocked"}), httpx.Response(200, text="x")):
+        with pytest.raises(scoring.ScoringError):
+            ask(bad)

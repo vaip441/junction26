@@ -44,7 +44,7 @@ class Limiter:
         used = self.used[key]
         while used and used[0] <= now - 60:
             used.popleft()
-        return now >= self.blocked[key] and len(used) < self.per_minute - reserve
+        return now >= self.blocked[key] and len(used) < max(1, self.per_minute - reserve)
 
     def try_take(self, now: float | None = None, reserve: int = 0) -> str | None:
         """A key with capacity right now (and count the request against it), else None.
@@ -59,10 +59,11 @@ class Limiter:
         self.used[key].append(now)
         return key
 
-    def wait_time(self, now: float | None = None) -> float:
-        """Seconds until some key has capacity."""
+    def wait_time(self, now: float | None = None, reserve: int = 0) -> float:
+        """Seconds until some key has capacity beyond the reserve."""
         now = time.monotonic() if now is None else now
-        return max(0.0, min(max(self.blocked[k], u[0] + 60 if len(u) >= self.per_minute else now) - now
+        cap = max(1, self.per_minute - reserve)
+        return max(0.0, min(max(self.blocked[k], u[len(u) - cap] + 60 if len(u) >= cap else now) - now
                             for k, u in self.used.items()))
 
     def refused(self, key: str, retry_after: float, now: float | None = None) -> None:
@@ -79,9 +80,9 @@ class Limiter:
                         "credits_remaining": self.credits[key]})
         return out
 
-    async def take(self) -> str:
-        while (key := self.try_take()) is None:
-            await asyncio.sleep(self.wait_time() + 0.05)
+    async def take(self, reserve: int = 0) -> str:
+        while (key := self.try_take(reserve=reserve)) is None:
+            await asyncio.sleep(self.wait_time(reserve=reserve) + 0.05)
         return key
 
 
@@ -122,7 +123,7 @@ async def _call(path: str, body: dict, *, wait: bool, reserve: int = 0) -> dict 
     """
     lim, last = limiter(), None
     for _ in range(len(lim.used)):
-        key = await lim.take() if wait else lim.try_take(reserve=reserve)
+        key = await lim.take(reserve) if wait else lim.try_take(reserve=reserve)
         if key is None:
             return None
         try:
@@ -162,16 +163,20 @@ def parse_scrape(response: dict) -> tuple[str, float | None]:
     return text, published
 
 
-async def search(query: str, *, freshness: str = "last_24_hours", include_domains: list[str] | None = None,
-                 exclude_domains: list[str] | None = None, num_results: int = 10) -> list[dict]:
-    """Search results with the passages of each page that are relevant to the query (one request, 2 credits)."""
-    body = {"query": query[:500], "freshness": freshness, "numResults": num_results,
-            "highlightsOptions": {"enabled": True}}
+async def search(query: str, *, freshness: str | None = "last_24_hours", include_domains: list[str] | None = None,
+                 exclude_domains: list[str] | None = None, num_results: int = 10, reserve: int = 0) -> list[dict]:
+    """Search results with the passages of each page that are relevant to the query (one request, 2 credits).
+
+    Background callers pass `reserve` to leave that many requests a minute per key for a person asking.
+    """
+    body = {"query": query[:500], "numResults": num_results, "highlightsOptions": {"enabled": True}}
+    if freshness:
+        body["freshness"] = freshness
     if include_domains:
         body["includeDomains"] = include_domains
     if exclude_domains:
         body["excludeDomains"] = exclude_domains
-    return parse_search(await _call("/web/search", body, wait=True))  # searches queue for capacity
+    return parse_search(await _call("/web/search", body, wait=True, reserve=reserve))  # searches queue for capacity
 
 
 async def scrape(url: str) -> tuple[str, float | None]:

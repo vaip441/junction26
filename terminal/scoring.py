@@ -88,14 +88,20 @@ def parse_decision1(response: dict) -> Score:
         raise ScoringError(f"unexpected Decision 1 response: {str(response)[:200]}") from e
 
 
-async def score(context: str, item: str, gate: bool = True) -> Score:
+async def decide(input: str, questions: dict) -> dict:
+    """One Decision 1 call: the answers to `questions` about `input`, keyed like the questions."""
     global _client
     if _client is None:
         _client = httpx.AsyncClient(timeout=20)
     try:
         r = await _client.post(URL, headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-                               json=build_request(context, item, gate))
+                               json={"model": "gemini-decision-1", "input": input, "questions": questions})
         r.raise_for_status()
-        return parse_decision1(r.json())
-    except (httpx.HTTPError, KeyError, ValueError) as e:
+        return r.json()["answers"]
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as e:
         raise ScoringError(f"Decision 1 call failed: {type(e).__name__}: {str(e)[:200]}") from e
+
+
+async def score(context: str, item: str, gate: bool = True) -> Score:
+    request = build_request(context, item, gate)
+    return parse_decision1({"answers": await decide(request["input"], request["questions"])})

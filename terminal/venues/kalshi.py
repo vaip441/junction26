@@ -86,7 +86,7 @@ def parse_event(event: dict, wanted: str, url: str | None = None) -> list[dict]:
 
     return [{"venue": "kalshi", "venue_ref": m["ticker"], "title": title(m),
              "rules": (m.get("rules_primary") or "") + " " + (m.get("rules_secondary") or ""), "url": url,
-             "price": price(m)} for m in ms]
+             "price": price(m), "event": event["title"]} for m in ms]
 
 
 def lookup(ticker: str, url: str | None = None) -> list[dict]:
