@@ -22,12 +22,26 @@ def check(contracts, venue):
         assert c["price"] is None or 0 <= c["price"] <= 100
 
 
-def test_kalshi_fixture_yields_contracts_with_the_busiest_first():
+def undecided(prices):
+    return sorted(prices, key=lambda p: abs(p - 50))
+
+
+def test_kalshi_fixture_yields_contracts_with_the_most_undecided_first():
     contracts = kalshi.parse_event(KALSHI, wanted=KALSHI["event_ticker"])
     check(contracts, "kalshi")
-    busiest = max(KALSHI["markets"], key=lambda m: float(m["volume_fp"] or 0))
-    assert contracts[0]["venue_ref"] == busiest["ticker"]
     assert len(contracts) == len(KALSHI["markets"])
+    prices = [c["price"] for c in contracts]
+    assert prices == undecided(prices)
+
+
+def test_the_most_undecided_contract_leads_not_the_busiest():
+    def m(ticker, bid, ask, volume):
+        return {**KALSHI["markets"][0], "ticker": ticker, "yes_bid_dollars": bid, "yes_ask_dollars": ask,
+                "volume_fp": volume}
+    event = {**KALSHI, "markets": [m("LONGSHOT", "0.0100", "0.0200", "9000000"), m("LIVE", "0.3000", "0.3400", "5"),
+                                   m("NOPRICE", "0.0000", "1.0000", "50")]}
+    event["markets"][2]["last_price_dollars"] = "0.0000"
+    assert [c["venue_ref"] for c in kalshi.parse_event(event, wanted="x")] == ["LIVE", "LONGSHOT", "NOPRICE"]
 
 
 def test_kalshi_wanted_ticker_leads():
@@ -38,8 +52,8 @@ def test_kalshi_wanted_ticker_leads():
 def test_polymarket_fixture_yields_contracts_and_the_named_market_leads():
     contracts = polymarket.parse_event(POLY, None)
     check(contracts, "polymarket")
-    busiest = max((m for m in POLY["markets"] if not m["closed"]), key=lambda m: m.get("volumeNum") or 0)
-    assert contracts[0]["title"] == busiest["question"]
+    prices = [c["price"] for c in contracts]
+    assert prices == undecided(prices)
     named = [m for m in POLY["markets"] if not m["closed"]][-1]
     assert polymarket.parse_event(POLY, named["slug"])[0]["title"] == named["question"]
 

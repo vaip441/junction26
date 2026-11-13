@@ -43,10 +43,9 @@ def parse_link(url: str) -> tuple[str, str | None] | None:
 
 
 def parse_event(event: dict, market_slug: str | None) -> list[dict]:
-    """Open contracts of an event, the named market first, else the busiest first."""
+    """Open contracts of an event: the named market first, then the most undecided (nearest 50%)."""
     out = []
     ms = [m for m in event.get("markets") or [] if not m.get("closed")]
-    ms.sort(key=lambda m: (m.get("slug") != market_slug, -(m.get("volumeNum") or 0)))
     for m in ms:
         try:
             token = json.loads(m["clobTokenIds"])[0]
@@ -57,6 +56,7 @@ def parse_event(event: dict, market_slug: str | None) -> list[dict]:
                     "rules": m.get("description") or event.get("description") or "",
                     "url": f"https://polymarket.com/event/{event['slug']}/{m['slug']}", "price": price,
                     "slug": m["slug"]})
+    out.sort(key=lambda c: (c["slug"] != market_slug, abs(c["price"] - 50)))
     return out
 
 

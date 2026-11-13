@@ -68,11 +68,14 @@ def price(m: dict) -> float | None:
 
 
 def parse_event(event: dict, wanted: str, url: str | None = None) -> list[dict]:
-    """Open contracts of an event, the wanted ticker first, else the busiest first."""
+    """Open contracts of an event: the wanted ticker first, then the most undecided (nearest 50%).
+
+    Total volume is a poor guide: in a many-candidate event the busiest contract is often a 0.1% longshot.
+    """
     slug = event["event_ticker"].lower()
     url = url or f"https://kalshi.com/markets/{event.get('series_ticker', slug).lower()}/e/{slug}"
     ms = [m for m in event.get("markets") or [] if m.get("status") == "active"]
-    ms.sort(key=lambda m: (m["ticker"] != wanted, -float(m.get("volume_fp") or 0)))
+    ms.sort(key=lambda m: (m["ticker"] != wanted, abs((price(m) if price(m) is not None else 1000) - 50)))
     def title(m):
         t, sub = m.get("title") or event["title"], m.get("yes_sub_title") or ""
         return t if not sub or sub.lower() in t.lower() else f"{t} ({sub})"  # outcomes of one event share a title
