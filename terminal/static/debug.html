@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>Terminal debug page</title>
+<style>
+  body { font: 14px/1.4 system-ui, sans-serif; max-width: 760px; margin: 24px auto; padding: 0 16px; }
+  #price { font-size: 40px; font-variant-numeric: tabular-nums; }
+  form { display: flex; gap: 8px; margin: 12px 0; } input { flex: 1; padding: 8px; font: inherit; }
+  li { margin: 6px 0; } .up { color: #1565c0; } .down { color: #b3541e; } .none { color: #666; } small { color: #666; }
+</style>
+<h1>Terminal debug page</h1>
+<p>Not the real screen. It shows that ticks flow from the pipeline to the stream.</p>
+<label>Market <select id="market"></select></label>
+<div id="price">–</div>
+<form id="form"><input id="text" placeholder="Type a sentence or headline" maxlength="500" required><button>Send as tick</button></form>
+<p id="error" role="alert"></p>
+<ul id="tape"></ul>
+<script>
+const $ = id => document.getElementById(id);
+let current = null;
+const pct = p => p == null ? "–" : p.toFixed(1) + "%";
+function row(t) {
+  const li = document.createElement("li");
+  const label = {up: "Up", down: "Down", none: "No effect"}[t.verdict];
+  const b = document.createElement("b"); b.className = t.verdict;
+  b.textContent = `${label} ${Math.round(t.confidence * 100)}% (strength ${t.strength.toFixed(2)})`;
+  const s = document.createElement("small");
+  s.textContent = ` ${new Date(t.ts * 1000).toLocaleTimeString()} · ${t.source}${t.test ? " · test" : ""}${t.backfill ? " · backfill" : ""}`;
+  li.append(b, s, document.createElement("br"), document.createTextNode(t.headline));
+  return li;
+}
+async function load() {
+  const markets = await (await fetch("/markets")).json();
+  $("market").replaceChildren(...markets.map(m => new Option(`${m.title} (${pct(m.price)})`, m.id)));
+  if (current) $("market").value = current;
+  current = $("market").value;
+  $("price").textContent = pct(markets.find(m => m.id === current)?.price);
+  const ticks = await (await fetch(`/markets/${current}/ticks?limit=50`)).json();
+  $("tape").replaceChildren(...ticks.map(row));
+}
+$("market").onchange = () => { current = $("market").value; load(); };
+$("form").onsubmit = async e => {
+  e.preventDefault();
+  const r = await fetch(`/markets/${current}/ticks`, {method: "POST", headers: {"content-type": "application/json"},
+    body: JSON.stringify({text: $("text").value, kind: "typed"})});
+  $("error").textContent = r.ok ? "" : `Error ${r.status}: ${(await r.json()).detail?.toString?.() ?? ""}`;
+  if (r.ok) $("text").value = "";
+};
+const es = new EventSource("/stream");
+es.addEventListener("tick", e => { const t = JSON.parse(e.data); if (t.market_id === current) $("tape").prepend(row(t)); });
+es.addEventListener("price", e => { const p = JSON.parse(e.data); if (p.market_id === current) $("price").textContent = pct(p.price); });
+es.addEventListener("market", load);
+load();
+</script>
+</html>

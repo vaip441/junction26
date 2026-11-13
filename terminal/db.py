@@ -100,3 +100,8 @@ def ticks(db, market_id: str, limit: int = 100, include_hidden: bool = False) ->
     hidden = "" if include_hidden else "AND hidden = 0"
     return [_tick(r) for r in db.execute(
         f"SELECT * FROM ticks WHERE market_id = ? {hidden} ORDER BY ts DESC, id DESC LIMIT ?", (market_id, limit))]
+
+
+def count_shown(db, market_id: str, since: float) -> int:
+    return db.execute("SELECT COUNT(*) FROM ticks WHERE market_id = ? AND hidden = 0 AND ts >= ?",
+                      (market_id, since)).fetchone()[0]

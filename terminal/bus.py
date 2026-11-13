@@ -14,6 +14,9 @@ class Bus:
     def unsubscribe(self, q: asyncio.Queue) -> None:
         self._subscribers.discard(q)
 
+    def alive(self, q: asyncio.Queue) -> bool:
+        return q in self._subscribers
+
     def publish(self, event: str, data: dict) -> None:
         """Never blocks or raises. A subscriber that has stopped reading is dropped."""
         for q in list(self._subscribers):

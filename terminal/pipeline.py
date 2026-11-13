@@ -52,5 +52,10 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         store.add_price(db, market["id"], now, new)
         bus.publish("price", {"market_id": market["id"], "ts": now, "price": new})
     if not tick["hidden"]:
-        bus.publish("tick", {k: v for k, v in tick.items() if k not in ("dedupe_key", "hidden")})
+        bus.publish("tick", public(tick))
     return tick
+
+
+def public(tick: dict) -> dict:
+    """A tick as the frontend sees it."""
+    return {k: v for k, v in tick.items() if k not in ("dedupe_key", "hidden")}
