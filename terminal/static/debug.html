@@ -62,7 +62,7 @@ $("form").onsubmit = async e => {
 };
 $("add").onsubmit = async e => {
   e.preventDefault();
-  const r = await post("/markets", {query: $("query").value, poll_seconds: 60});
+  const r = await post("/markets", {query: $("query").value, poll_seconds: 300});
   if (!r.ok) return;
   const m = await r.json();
   current = m.id; $("query").value = "";

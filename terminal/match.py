@@ -15,7 +15,7 @@ VENUE_SITES = ["polymarket.com", "kalshi.com"]
 log = logging.getLogger(__name__)
 MAX_EVENTS, OWN_RESULTS = 8, 3  # events weighed in all; how many of them may come from Polymarket's own search
 SHOWN, MAX_CONTRACTS = 6, 30  # contracts named when describing an event; contracts offered when choosing one
-SEARCH_SECONDS = 20  # a person is waiting: with every key resting, fail rather than queue for minutes
+SEARCH_SECONDS = 10  # a person is waiting: a search that is queued or slow is given up on, not waited out
 
 
 class SearchFailed(Exception):
