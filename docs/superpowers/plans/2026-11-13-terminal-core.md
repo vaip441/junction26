@@ -481,8 +481,11 @@ Filled in by Task 1.
 | Verdicts matching the label, out of 12 | 12 of 12, both batched and one by one. The headlines were hand-written and easy; real articles will be harder. Confidence was above 0.87 on every one, so a three-way choice says almost nothing about how big a move is. |
 | Graded moves | A `score` question with five levels (down a lot, down a little, no effect, up a little, up a lot) separates sizes: "officially announces he has resigned" scored 3.95 of 4, "board calls emergency meeting" 3.74, "analyst says succession is worth watching" 2.42, irrelevant items 1.93 to 2.00, "signs new five-year contract" 0.36. Proposed to Georg as a replacement for the three-way choice; Task 3 is unchanged until he agrees. |
 | `SCORER` | `decision1` |
-| Credits per search of 10 results; per scrape | |
-| Search restricted to reddit.com: results, freshness | |
-| Search restricted to x.com: results, freshness | |
-| Search restricted to polymarket.com and kalshi.com: finds the market? | |
-| Scrape metadata carries a publish date? | |
+| Credits per search of 10 results; per scrape | 1 credit each. A search takes 1 to 2 s, a scrape about 1 s. |
+| Search result fields | `url`, `title`, `description`, `relevance`; `markdown` and `highlights` are present but empty unless requested. No date. Fixture saved in `tests/fixtures/search_response.json`. |
+| Search restricted to reddit.com: results, freshness | Works. 10 threads from the last day, across r/stocks, r/investing, r/nvidia, r/wallstreetbets and others. |
+| Search restricted to x.com: results, freshness | Works. 10 posts from the last day (CNBC, Reuters, The Information and others). X is reachable through Context.dev search with no X API. |
+| Search restricted to polymarket.com and kalshi.com: finds the market? | Yes for "will jensen get fired": it returned the Polymarket event page and the Kalshi market page, plus Kalshi news pages to filter out by path. One query only; test more before dropping the local index in plan 2. |
+| Search restricted to wikipedia.org | Finds the article, with other-language and `#fragment` duplicates to filter. |
+| Scrape metadata carries a publish date? | Yes: `metadata.publishedTime` (ISO 8601), also `canonicalUrl`, `siteName`. Task 7 scrapes each new article for its text and date. |
+| Headline market | The searches show Jensen Huang resigned on 12 November ("NVIDIA Announces CEO Transition" on nvidianews.nvidia.com), so the CEO-exit market is settled or nearly so. Georg must pick a new headline market; Kalshi's "next Nvidia CEO" market is the natural successor. |
