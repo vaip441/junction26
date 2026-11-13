@@ -34,7 +34,8 @@ def parse_link(url: str) -> tuple[str, str | None] | None:
     """(event slug, market slug or None) from a polymarket.com/event/... address."""
     u = urllib.parse.urlsplit(url.strip())
     parts = [p for p in u.path.split("/") if p]
-    if u.netloc.lower().removeprefix("www.") != "polymarket.com" or len(parts) < 2 or parts[0] != "event":
+    if (u.scheme.lower() not in ("http", "https") or u.netloc.lower().removeprefix("www.") != "polymarket.com"
+            or len(parts) < 2 or parts[0] != "event"):
         return None
     if not all(SLUG.match(p) for p in parts[1:3]):
         return None

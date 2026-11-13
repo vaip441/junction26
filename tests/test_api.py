@@ -130,3 +130,33 @@ def test_writes_need_the_shared_key_when_one_is_set(path):
         assert c.post("/markets", json={"query": "https://polymarket.com/event/e"}).status_code == 401
         assert c.post("/markets/mu-demo/ticks", json=body, headers={"X-Terminal-Key": "s3cret"}).status_code == 200
         assert c.get("/markets").status_code == 200
+
+
+def test_new_market_gets_queries_and_an_instant_fill(path, monkeypatch):
+    from terminal import poller, venues, watch
+
+    async def resolve(link):
+        return CONTRACTS
+
+    async def queries_for(title, rules):
+        return ["q1", "q2"]
+
+    async def idle(*a, **kw):
+        return None
+
+    filled = []
+
+    async def fetch_articles(db, bus, scorer, market, *, backfill, num_results):
+        filled.append((market["id"], market["queries"], backfill, num_results))
+        return 3
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    monkeypatch.setattr(watch, "queries_for", queries_for)
+    monkeypatch.setattr(poller, "price_loop", idle)
+    monkeypatch.setattr(poller, "article_loop", idle)
+    monkeypatch.setattr(poller, "fetch_articles", fetch_articles)
+    with TestClient(create_app(db_path=path, scorer=up, poll=True)) as c:
+        m = c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()
+        assert m["queries"] == ["q1", "q2"]
+        c.get("/markets")  # let the background fill run
+    assert filled == [("pm-m0", ["q1", "q2"], True, 20)]

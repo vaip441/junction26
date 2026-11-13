@@ -13,7 +13,7 @@ async def resolve(link: str) -> list[dict]:
     ValueError if it is not a venue link, LookupError if the venue has no open market there.
     """
     if (ticker := kalshi.parse_link(link)) is not None:
-        contracts = await asyncio.to_thread(kalshi.lookup, ticker, link.strip())
+        contracts = await asyncio.to_thread(kalshi.lookup, ticker, kalshi.canonical(link))
     elif (slugs := polymarket.parse_link(link)) is not None:
         contracts = await asyncio.to_thread(polymarket.lookup, *slugs)
     else:

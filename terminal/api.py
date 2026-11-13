@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import poller, scoring, venues
+from terminal import poller, scoring, venues, watch
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.seed import DEMO
@@ -71,12 +71,13 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             store.add_market(db, id=DEMO["id"], venue="made_up", venue_ref=None, title=DEMO["title"],
                              rules=DEMO["rules"], url=None)
             store.add_price(db, DEMO["id"], time.time(), DEMO["start"])
-        tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus))] if poll else []
-        app.state.tasks = tasks
+        tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus)),
+                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer))] if poll else []
+        app.state.tasks, app.state.fills = tasks, set()
         yield
-        for t in tasks:
+        for t in [*tasks, *app.state.fills]:
             t.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*tasks, *app.state.fills, return_exceptions=True)
         db.close()
 
     app = FastAPI(title="Prediction market terminal", lifespan=lifespan)
@@ -116,6 +117,13 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(503, "scoring unavailable, try again")
         return public(tick)
 
+    async def instant_fill(m: dict) -> None:
+        """Score recent coverage in one burst so a new market's tape is full within seconds."""
+        bus = app.state.bus
+        bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
+        n = await poller.fetch_articles(app.state.db, bus, app.state.scorer, m, backfill=True, num_results=20)
+        bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
+
     @app.post("/markets", dependencies=[Depends(write_access)])
     async def add_market(body: MarketIn):
         db = app.state.db
@@ -136,6 +144,11 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                 if c["price"] is not None:
                     store.add_price(db, id, now, c["price"])
             app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
+            if poll:  # poll=False means no outbound source fetching at all
+                store.set_queries(db, lead_id, await watch.queries_for(lead["title"], lead["rules"]))
+                fill = asyncio.create_task(instant_fill(store.get_market(db, lead_id)))
+                app.state.fills.add(fill)
+                fill.add_done_callback(app.state.fills.discard)
         return detail(db, store.get_market(db, lead_id), time.time())
 
     @app.get("/stream")

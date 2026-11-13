@@ -35,13 +35,23 @@ def get(path, **params):
     raise RuntimeError(f"giving up on {url}")
 
 
-def parse_link(url: str) -> str | None:
-    """The ticker at the end of a kalshi.com/markets/... address, upper-cased."""
+def canonical(url: str) -> str | None:
+    """A kalshi.com/markets/... link rebuilt from its validated parts; None for anything else.
+
+    The pasted text is never stored or echoed: the frontend renders this address as a link.
+    """
     u = urllib.parse.urlsplit(url.strip())
     parts = [p for p in u.path.split("/") if p]
-    if u.netloc.lower().removeprefix("www.") != "kalshi.com" or len(parts) < 2 or parts[0] != "markets":
+    if (u.scheme.lower() not in ("http", "https") or u.netloc.lower().removeprefix("www.") != "kalshi.com"
+            or len(parts) < 2 or parts[0] != "markets" or not all(TICKER.match(p) for p in parts)):
         return None
-    return parts[-1].upper() if TICKER.match(parts[-1]) else None
+    return "https://kalshi.com/" + "/".join(parts)
+
+
+def parse_link(url: str) -> str | None:
+    """The ticker at the end of a kalshi.com/markets/... address, upper-cased."""
+    link = canonical(url)
+    return link and link.rsplit("/", 1)[1].upper()
 
 
 def price(m: dict) -> float | None:

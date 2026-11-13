@@ -68,3 +68,12 @@ def test_kalshi_contracts_sharing_a_title_are_told_apart_by_their_outcome():
 def test_kalshi_title_is_left_alone_when_it_already_names_the_outcome():
     m = {**KALSHI["markets"][0], "title": "Will X leave before Nov 12, 2026?", "yes_sub_title": "Before Nov 12, 2026"}
     assert kalshi.parse_event({**KALSHI, "markets": [m]}, wanted="x")[0]["title"] == "Will X leave before Nov 12, 2026?"
+
+
+def test_only_web_links_are_accepted_and_the_stored_address_is_rebuilt():
+    assert kalshi.parse_link("javascript://kalshi.com/markets/a/b/c") is None
+    assert polymarket.parse_link("javascript://polymarket.com/event/a-b") is None
+    assert kalshi.parse_link("https://kalshi.com/markets/a/<script>/c") is None
+    link = "HTTP://www.Kalshi.com/markets/kxfed/fed-meeting/kxfed-26dec/?x=<b>#frag"
+    assert kalshi.canonical(link) == "https://kalshi.com/markets/kxfed/fed-meeting/kxfed-26dec"
+    assert kalshi.canonical("https://example.com/markets/a/b") is None
