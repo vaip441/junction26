@@ -1,16 +1,19 @@
 """Plain words -> the Kalshi or Polymarket market that asks the same thing, if there is one.
 
-Context.dev search restricted to the two venues finds market pages from the raw words; each page is
-resolved through the venue (search also returns closed and last-year pages) and Decision 1 picks.
+Context.dev search restricted to the two venues, and Polymarket's own search, find market pages from
+the raw words; each is resolved through the venue (web search also returns closed and last-year pages)
+and Decision 1 picks.
 """
 import asyncio
+import logging
 import math
 
 from terminal import contextdev, scoring, venues
 from terminal.venues import kalshi, polymarket
 
 VENUE_SITES = ["polymarket.com", "kalshi.com"]
-MAX_EVENTS = 6
+log = logging.getLogger(__name__)
+MAX_EVENTS, OWN_RESULTS = 8, 3  # events weighed in all; how many of them may come from Polymarket's own search
 SHOWN, MAX_CONTRACTS = 6, 30  # contracts named when describing an event; contracts offered when choosing one
 SEARCH_SECONDS = 20  # a person is waiting: with every key resting, fail rather than queue for minutes
 
@@ -19,26 +22,43 @@ class SearchFailed(Exception):
     pass
 
 
-def market_links(results: list[dict]) -> list[str]:
-    """Event pages among search results, in rank order, one per event. A page naming one contract is
-    taken as its event: which contract leads is decided by the question, not by search rank."""
+def _links(results: list[dict]) -> dict[str, str]:
     links = {}
     for r in results:
         if (ticker := kalshi.parse_link(r["url"])) is not None:
             links.setdefault("k:" + ticker, kalshi.canonical(r["url"]))
         elif (slugs := polymarket.parse_link(r["url"])) is not None:
             links.setdefault("pm:" + slugs[0], f"https://polymarket.com/event/{slugs[0]}")
-    return list(links.values())[:MAX_EVENTS]
+    return links
 
 
-async def candidates(words: str, *, search=None, resolve=None) -> list[list[dict]]:
-    """One list of open contracts per event the search found, most undecided contract first."""
-    try:
-        results = await asyncio.wait_for((search or contextdev.search)(
-            words, freshness=None, include_domains=VENUE_SITES, num_results=10), SEARCH_SECONDS)
-    except (contextdev.ContextError, asyncio.TimeoutError) as e:
-        raise SearchFailed(str(e)) from e
-    found = await asyncio.gather(*((resolve or venues.resolve)(link) for link in market_links(results)),
+def market_links(results: list[dict]) -> list[str]:
+    """Event pages among search results, in rank order, one per event. A page naming one contract is
+    taken as its event: which contract leads is decided by the question, not by search rank."""
+    return list(_links(results).values())[:MAX_EVENTS]
+
+
+async def candidates(words: str, *, search=None, resolve=None, venue_search=None) -> list[list[dict]]:
+    """One list of open contracts per event found, most undecided contract first.
+
+    Two searches side by side: Polymarket's own (it knows markets listed today) and the web search
+    restricted to both venues (it also finds Kalshi). SearchFailed only when both fail.
+    """
+    web, own = await asyncio.gather(
+        asyncio.wait_for((search or contextdev.search)(words, freshness=None, include_domains=VENUE_SITES,
+                                                       num_results=10), SEARCH_SECONDS),
+        asyncio.wait_for(asyncio.to_thread(venue_search or polymarket.search, words), SEARCH_SECONDS),
+        return_exceptions=True)
+    for name, found in (("web", web), ("Polymarket", own)):
+        if isinstance(found, BaseException):
+            log.warning("%s search failed for %r: %s: %s", name, words[:60], type(found).__name__, found)
+    if isinstance(web, BaseException) and isinstance(own, BaseException):
+        raise SearchFailed(str(web))
+    links = {} if isinstance(own, BaseException) else {
+        "pm:" + slug: f"https://polymarket.com/event/{slug}" for slug in own[:OWN_RESULTS]}
+    for key, link in ({} if isinstance(web, BaseException) else _links(web)).items():
+        links.setdefault(key, link)
+    found = await asyncio.gather(*((resolve or venues.resolve)(link) for link in list(links.values())[:MAX_EVENTS]),
                                  return_exceptions=True)
     return [g for g in found if isinstance(g, list) and g]  # closed, missing or unreachable ones drop out
 

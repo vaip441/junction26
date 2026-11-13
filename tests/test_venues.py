@@ -167,3 +167,17 @@ def test_untraded_placeholder_contracts_are_left_out_unless_named():
 def test_every_contract_carries_its_events_title():
     assert {c["event"] for c in kalshi.parse_event(KALSHI, wanted="x")} == {KALSHI["title"]}
     assert {c["event"] for c in polymarket.parse_event(POLY, None)} == {POLY["title"]}
+
+
+def test_polymarket_search_returns_open_event_slugs_in_rank_order(monkeypatch):
+    asked = []
+
+    def get(url, **params):
+        asked.append((url, params))
+        return {"events": [{"slug": "unl-est-bul-2026-11-16", "closed": False}, {"slug": "old-game", "closed": True},
+                           {"slug": "bad slug!"}, {"slug": "estonia-kml-2027-champion"}]}
+
+    monkeypatch.setattr(polymarket, "get", get)
+    assert polymarket.search("will estonia win at home") == ["unl-est-bul-2026-11-16", "estonia-kml-2027-champion"]
+    assert asked[0][0].endswith("/public-search") and asked[0][1]["q"] == "will estonia win at home"
+    assert asked[0][1]["events_status"] == "active"

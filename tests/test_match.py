@@ -44,7 +44,7 @@ def test_candidates_skips_links_that_do_not_resolve():
             raise venues.VenueError("down")
         return [contract("polymarket", "a"), contract("polymarket", "b")]
 
-    groups = asyncio.run(match.candidates("will a win", search=search, resolve=resolve))
+    groups = asyncio.run(match.candidates("will a win", search=search, resolve=resolve, venue_search=venue_search([])))
     assert [[c["slug"] for c in g] for g in groups] == [["a", "b"]]
     assert asked == [("will a win", {"freshness": None, "include_domains": ["polymarket.com", "kalshi.com"],
                                      "num_results": 10})]
@@ -55,7 +55,7 @@ def test_candidates_raises_when_the_search_fails():
         raise ContextError("down")
 
     with pytest.raises(match.SearchFailed):
-        asyncio.run(match.candidates("x", search=search))
+        asyncio.run(match.candidates("x", search=search, venue_search=venue_search(RuntimeError("down"))))
 
 
 def decider(answers, seen=None):
@@ -143,4 +143,41 @@ def test_a_search_that_hangs_is_a_failed_search_not_a_hung_request(monkeypatch):
         await asyncio.sleep(5)
 
     with pytest.raises(match.SearchFailed):
-        asyncio.run(match.candidates("x", search=search))
+        asyncio.run(match.candidates("x", search=search, venue_search=venue_search(RuntimeError("down"))))
+
+
+def venue_search(slugs):
+    def search(words):
+        if isinstance(slugs, Exception):
+            raise slugs
+        return slugs
+    return search
+
+
+async def resolve_all(link):
+    return [contract("polymarket", link.rsplit("/", 1)[1])]
+
+
+def test_the_venues_own_search_finds_markets_the_web_search_has_not_indexed_yet():
+    async def search(query, **kw):
+        return [{"url": "https://polymarket.com/event/old-game", "title": "t", "description": ""},
+                {"url": "https://polymarket.com/event/new-game", "title": "t", "description": ""}]
+
+    groups = asyncio.run(match.candidates("will estonia win at home", search=search, resolve=resolve_all,
+                                          venue_search=venue_search(["new-game", "other", "third", "fourth"])))
+    # the venue's own top three first, then the web results, each event once
+    assert [g[0]["slug"] for g in groups] == ["new-game", "other", "third", "old-game"]
+
+
+def test_one_search_failing_still_leaves_the_other():
+    async def down(query, **kw):
+        raise ContextError("down")
+
+    async def web(query, **kw):
+        return [{"url": "https://polymarket.com/event/a", "title": "t", "description": ""}]
+
+    run = lambda **kw: asyncio.run(match.candidates("x", resolve=resolve_all, **kw))
+    assert [g[0]["slug"] for g in run(search=down, venue_search=venue_search(["b"]))] == ["b"]
+    assert [g[0]["slug"] for g in run(search=web, venue_search=venue_search(RuntimeError("down")))] == ["a"]
+    with pytest.raises(match.SearchFailed):
+        run(search=down, venue_search=venue_search(RuntimeError("down")))

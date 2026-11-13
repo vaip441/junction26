@@ -153,8 +153,6 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         """Plain words -> (id of the market now tracked, whether a venue contract matched)."""
         db, bus = app.state.db, app.state.bus
         made_id = madeup.market_id(words)
-        if store.get_market(db, made_id) is not None:  # asked before
-            return made_id, False
         if store.get_market(db, app.state.asked.get(made_id, "")) is not None:
             return app.state.asked[made_id], True
 
@@ -170,7 +168,9 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             groups = await match.candidates(words)
             status("found contracts", count=len(groups))
             winner, probs, leads = await match.pick(words, groups)
-            question = await madeup.question_for(words, date.today()) if winner is None else None
+            # words asked before that found no market keep their made-up one, unless a real one now exists
+            made = store.get_market(db, made_id)
+            question = await madeup.question_for(words, date.today()) if winner is None and made is None else None
         except match.SearchFailed:
             raise fail(502, "could not reach search, try again")
         except scoring.ScoringError:
@@ -180,9 +180,9 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         except madeup.NotAQuestion:
             raise fail(422, "that does not look like a question about something that could happen")
         if winner is None:
-            # no price yet: the article loop sets the starting odds from the coverage it finds
-            store.add_market(db, id=made_id, venue="made_up", venue_ref=None, title=question["title"],
-                             rules=question["rules"], url=None, poll_seconds=poll_seconds)
+            if made is None:  # no price yet: the article loop sets the starting odds from the coverage it finds
+                store.add_market(db, id=made_id, venue="made_up", venue_ref=None, title=question["title"],
+                                 rules=question["rules"], url=None, poll_seconds=poll_seconds)
             bus.publish("market", {"market_id": made_id, "query": words, "status": "made up"})
             return made_id, False
         contracts = groups[winner]

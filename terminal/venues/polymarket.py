@@ -44,6 +44,14 @@ def parse_link(url: str) -> tuple[str, str | None] | None:
     return parts[1], parts[2] if len(parts) > 2 else None
 
 
+def search(words: str, limit: int = 10) -> list[str]:
+    """Slugs of open events matching plain words, best first: Polymarket's own search. It knows markets
+    listed today, which a web search engine has not indexed yet."""
+    data = get(GAMMA + "/public-search", q=words[:200], events_status="active", limit_per_type=limit) or {}
+    return [e["slug"] for e in data.get("events") or []
+            if not e.get("closed") and SLUG.match(str(e.get("slug") or ""))]
+
+
 def parse_event(event: dict, market_slug: str | None) -> list[dict]:
     """Open contracts of an event: the named market first, then the most undecided (nearest 50%)."""
     out = []

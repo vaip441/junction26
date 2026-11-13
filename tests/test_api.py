@@ -375,3 +375,12 @@ def test_a_sentence_sent_to_a_market_that_has_no_price_yet_is_turned_away(path, 
         r = typed(c, market=id)
         assert r.status_code == 409 and "still opening" in r.json()["detail"]
         assert c.get(f"/markets/{id}/ticks").json() == []
+
+
+def test_words_that_once_made_a_made_up_market_find_the_real_one_when_it_appears(path, monkeypatch):
+    with client(path) as c:
+        plain(monkeypatch)
+        made = c.post("/markets", json={"query": "Will it snow?"}).json()
+        plain(monkeypatch, [CONTRACTS], (0, [0.9], [0]))
+        real = c.post("/markets", json={"query": "Will it snow?"}).json()
+        assert made["made_up"] is True and real["id"] == "pm-m0" and real["matched"] is True
