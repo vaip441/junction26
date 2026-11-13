@@ -17,6 +17,7 @@ from terminal import db as store
 from terminal import poller, scoring, venues, watch
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
+from terminal.record import record
 from terminal.seed import DEMO
 
 STATIC = Path(__file__).parent / "static"
@@ -150,6 +151,10 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                 app.state.fills.add(fill)
                 fill.add_done_callback(app.state.fills.discard)
         return detail(db, store.get_market(db, lead_id), time.time())
+
+    @app.get("/record")
+    def weekend_record():
+        return record(app.state.db)
 
     @app.get("/stream")
     async def stream(request: Request):
