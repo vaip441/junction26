@@ -68,3 +68,13 @@ def test_sources_count_shown_ticks_and_how_many_moved():
     add_tick(db, tick("n", key="e", source="c.example"))
     assert sources(db, "m") == [{"source": "a.example", "ticks": 2, "moved": 1},
                                 {"source": "b.example", "ticks": 1, "moved": 1}]
+
+
+def test_headlines_leave_out_what_people_said_or_typed():
+    from terminal.db import headlines
+
+    db = connect(":memory:")
+    market(db)
+    add_tick(db, tick(key="a", headline="from the web", strength=0.1))
+    add_tick(db, tick(key="b", headline="typed by a judge", strength=0.9, test=True))
+    assert headlines(db, "m") == ["from the web"]

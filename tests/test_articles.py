@@ -469,3 +469,17 @@ def test_a_new_markets_first_fill_does_not_wait_behind_the_reserve():
 
     asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=True, num_results=20, search=search, scrape=scrape))
     assert reserves == [0, 0, 0]
+
+
+def test_a_malformed_address_in_the_results_costs_only_that_result():
+    db, bus, m = setup(queries=("a",))
+
+    async def search(query, **kw):
+        if kw.get("include_domains"):
+            return [{"url": "https://[x.com/a/status/1", "title": "odd post", "description": ""}]
+        return [{"url": "https://[bad/x", "title": "odd page", "description": ""}, RESULTS[0]]
+
+    async def scrape(url):
+        return "", None
+
+    assert asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape)) == 1

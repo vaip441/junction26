@@ -178,3 +178,14 @@ def test_backfilled_ticks_do_not_nudge_a_made_up_price():
     assert store.latest_price(db, "m")[1] == 40.0 and not [e for e in drain(q) if e[0] == "price"]
     run(db, bus, up, m, headline="fresh news", now=11)
     assert store.latest_price(db, "m")[1] > 40.0
+
+
+def test_history_that_cannot_be_scored_is_kept_hidden_so_it_is_never_taken_for_fresh_news():
+    db, bus, q, m = setup()
+    tick = run(db, bus, broken, m, headline="old story", url="https://a.example/old", backfill=True)
+    assert tick["hidden"] is True and tick["verdict"] == "none" and tick["strength"] == 0
+    assert run(db, bus, up, m, headline="old story", url="https://a.example/old") is None  # seen: not news later
+    assert store.latest_price(db, "m")[1] == 20.0 and drain(q) == []
+    # a live item that cannot be scored is not stored, so the next pass tries it again
+    assert run(db, bus, broken, m, headline="new story", url="https://a.example/new") is None
+    assert run(db, bus, up, m, headline="new story", url="https://a.example/new") is not None

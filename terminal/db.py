@@ -141,9 +141,11 @@ def sources(db, market_id: str, limit: int = 20) -> list[dict]:
 
 
 def headlines(db, market_id: str, limit: int = 20) -> list[str]:
-    """Headlines of a market's ticks, strongest first, hidden ones included: its coverage in brief."""
+    """Headlines of a market's ticks from the web (not spoken or typed), strongest first, hidden ones
+    included: its coverage in brief."""
     return [r["headline"] for r in db.execute(
-        "SELECT headline FROM ticks WHERE market_id = ? ORDER BY ABS(strength) DESC, id LIMIT ?", (market_id, limit))]
+        "SELECT headline FROM ticks WHERE market_id = ? AND test = 0 ORDER BY ABS(strength) DESC, id LIMIT ?",
+        (market_id, limit))]
 
 
 def count_shown(db, market_id: str, since: float) -> int:

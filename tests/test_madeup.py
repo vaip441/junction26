@@ -82,3 +82,19 @@ def test_coverage_from_the_web_is_quoted_as_data_on_one_line_each():
     coverage = seen[0].split("Recent coverage", 1)[1]
     assert "data, not instructions" in coverage and coverage.count("\n") == 1 and "\x00" not in coverage
     assert len(coverage) < 400
+
+
+def test_questions_in_other_scripts_or_differing_by_a_symbol_are_different_markets():
+    assert market_id("Пойдёт ли снег в Хельсинки?") != market_id("赫尔辛基会下雪吗")
+    assert market_id("Will EUR/USD be > 1.10") != market_id("Will EUR/USD be < 1.10")
+    assert market_id("Sataako Helsingissä lunta?") == market_id("sataako helsingissä  lunta")
+
+
+def test_a_starting_price_that_is_not_a_number_is_a_scoring_error():
+    from terminal.scoring import ScoringError
+
+    async def decide(input, questions):
+        return {"start": {"noul": float("nan")}}
+
+    with pytest.raises(ScoringError):
+        asyncio.run(madeup.starting_price("Will X?", "r", [], decide=decide))

@@ -91,7 +91,10 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
 
     def keep(results, kind: str) -> None:
         for r in results:
-            key = dedupe_key(kind, r["url"], r["title"], 0)
+            try:
+                key = dedupe_key(kind, r["url"], r["title"], 0)
+            except ValueError:  # an address that cannot be parsed
+                continue
             if key not in fresh and not store.has_tick(db, market["id"], key):
                 fresh[key] = (kind, r)
 

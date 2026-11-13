@@ -79,6 +79,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             store.add_price(db, DEMO["id"], time.time(), DEMO["start"])
         store.set_poll_seconds(db, DEMO["id"], 0)  # it moves only by what is said to it, never by articles
         app.state.wake = asyncio.Event()
+        app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus)),
                  asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake))
                  ] if poll else []
@@ -120,6 +121,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     @app.post("/markets/{id}/ticks", dependencies=[Depends(write_access)])
     async def add_tick(id: str, body: TickIn):
         m = market_or_404(id)
+        if m["venue"] == "made_up" and store.latest_price(app.state.db, id) is None:
+            raise HTTPException(409, "this market is still opening, try again in a moment")
         tick = await ingest(app.state.db, app.state.bus, app.state.scorer, m, kind=body.kind,
                             source="microphone" if body.kind == "mic" else "typed", headline=body.text)
         if tick is None:
@@ -152,6 +155,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         made_id = madeup.market_id(words)
         if store.get_market(db, made_id) is not None:  # asked before
             return made_id, False
+        if store.get_market(db, app.state.asked.get(made_id, "")) is not None:
+            return app.state.asked[made_id], True
 
         def status(text: str, **more) -> None:
             bus.publish("market", {"market_id": None, "query": words, "status": text, **more})
@@ -184,7 +189,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         contracts.insert(0, contracts.pop(leads[winner]))  # the contract the question names leads
         other = [g[leads[i]] for i, g in enumerate(groups)
                  if i != winner and probs[i] >= OTHER_VENUE_ABOVE and g[0]["venue"] != contracts[0]["venue"]]
-        return track(contracts, other, poll_seconds), True
+        app.state.asked[made_id] = track(contracts, other, poll_seconds)
+        return app.state.asked[made_id], True
 
     @app.post("/markets", dependencies=[Depends(write_access)])
     async def add_market(body: MarketIn):

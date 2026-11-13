@@ -113,3 +113,34 @@ def test_pick_with_no_groups_does_not_call_the_model():
 def test_pick_turns_an_odd_answer_into_a_scoring_error():
     with pytest.raises(ScoringError):
         asyncio.run(match.pick("x", [[contract("kalshi", "a")]], decide=decider({"match": {"type": "choice"}})))
+
+
+def test_a_longshot_far_down_a_big_event_can_still_be_the_contract_asked_about():
+    group = [contract("kalshi", f"n{i}") for i in range(40)]
+    seen = []
+    answers = {"match": choice(c0=0.9, none=0.1), "g0": choice(k17=0.9, any=0.1)}
+    assert asyncio.run(match.pick("will n17 win", [group], decide=decider(answers, seen))) == (0, [0.9], [17])
+    assert len(seen[0][1]["g0"]["criteria"]) == 31  # 30 contracts and "any"
+
+
+def test_a_contract_answer_that_points_nowhere_keeps_the_groups_own_lead():
+    groups = [[contract("kalshi", "a"), contract("kalshi", "b")]]
+    for odd in ("k9", "k-1"):
+        answers = {"match": choice(c0=0.9, none=0.1), "g0": choice(**{odd: 0.9, "any": 0.1})}
+        assert asyncio.run(match.pick("x", groups, decide=decider(answers))) == (0, [0.9], [0])
+
+
+def test_probabilities_that_are_not_numbers_are_a_scoring_error():
+    answers = {"match": choice(c0=float("nan"), none=0.1)}
+    with pytest.raises(ScoringError):
+        asyncio.run(match.pick("x", [[contract("kalshi", "a")]], decide=decider(answers)))
+
+
+def test_a_search_that_hangs_is_a_failed_search_not_a_hung_request(monkeypatch):
+    monkeypatch.setattr(match, "SEARCH_SECONDS", 0.05)
+
+    async def search(query, **kw):
+        await asyncio.sleep(5)
+
+    with pytest.raises(match.SearchFailed):
+        asyncio.run(match.candidates("x", search=search))

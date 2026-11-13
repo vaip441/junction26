@@ -348,3 +348,30 @@ def test_restart_turns_an_old_demo_market_into_a_never_polled_one(path):
         store.set_poll_seconds(c.app.state.db, "mu-demo", 900)
     with client(path) as c:
         assert c.get("/markets").json()[0]["poll_seconds"] == 0
+
+
+def test_matching_words_asked_again_return_the_same_market_without_searching_again(path, monkeypatch):
+    from terminal import match
+
+    plain(monkeypatch, [CONTRACTS], (0, [0.9], [0]))
+    searches = []
+    found = match.candidates
+
+    async def counted(words):
+        searches.append(words)
+        return await found(words)
+
+    monkeypatch.setattr(match, "candidates", counted)
+    with client(path) as c:
+        a = c.post("/markets", json={"query": "Will contract 0 happen?"}).json()
+        b = c.post("/markets", json={"query": "will contract 0  happen"}).json()
+        assert a["id"] == b["id"] == "pm-m0" and b["matched"] is True and len(searches) == 1
+
+
+def test_a_sentence_sent_to_a_market_that_has_no_price_yet_is_turned_away(path, monkeypatch):
+    plain(monkeypatch)
+    with client(path) as c:
+        id = c.post("/markets", json={"query": "Will it snow?"}).json()["id"]
+        r = typed(c, market=id)
+        assert r.status_code == 409 and "still opening" in r.json()["detail"]
+        assert c.get(f"/markets/{id}/ticks").json() == []
