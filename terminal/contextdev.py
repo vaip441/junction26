@@ -1,4 +1,9 @@
-"""Context.dev: web search and page scrape. Failures raise ContextError; callers decide what to do."""
+"""Context.dev: web search and page scrape over a pool of API keys.
+
+Each key (account) is limited to a number of requests a minute, so capacity is added by adding keys:
+CONTEXT_DEV_API_KEY=key1,key2,key3. Requests are spread evenly, a key the server refuses is rested and
+the request goes out on the next one. Failures raise ContextError; callers decide what to do.
+"""
 import asyncio
 import logging
 import os
@@ -18,13 +23,22 @@ class ContextError(Exception):
     pass
 
 
+class Refused(ContextError):
+    """The server turned this key away (rate limit, bad key, no credits). Another key may still work."""
+
+
+REST_SECONDS = 600  # a key that is invalid or out of credits is left alone this long before it is tried again
+
+
 class Limiter:
     """Sliding one-minute window per API key. Context.dev refuses more than `per_minute` requests a key."""
 
     def __init__(self, keys: list[str], per_minute: int):
+        keys = list(dict.fromkeys(keys))             # the same key twice is still one allowance
         self.per_minute = per_minute
         self.used = {k: deque() for k in keys}       # request times within the last minute
         self.blocked = {k: 0.0 for k in keys}        # do not use a key before this time
+        self.credits = {k: None for k in keys}       # credits left, as last reported by the server
 
     def _free(self, key: str, now: float, reserve: int = 0) -> bool:
         used = self.used[key]
@@ -38,11 +52,12 @@ class Limiter:
         `reserve` leaves that many requests a minute untouched, for callers that must not starve others.
         """
         now = time.monotonic() if now is None else now
-        for key in self.used:
-            if self._free(key, now, reserve):
-                self.used[key].append(now)
-                return key
-        return None
+        free = [k for k in self.used if self._free(k, now, reserve)]
+        if not free:
+            return None
+        key = min(free, key=lambda k: len(self.used[k]))  # least used this minute: accounts drain evenly
+        self.used[key].append(now)
+        return key
 
     def wait_time(self, now: float | None = None) -> float:
         """Seconds until some key has capacity."""
@@ -52,6 +67,17 @@ class Limiter:
 
     def refused(self, key: str, retry_after: float, now: float | None = None) -> None:
         self.blocked[key] = (time.monotonic() if now is None else now) + retry_after
+
+    def status(self, now: float | None = None) -> list[dict]:
+        """Per key, numbered from 1 (the keys themselves are never shown)."""
+        now = time.monotonic() if now is None else now
+        out = []
+        for i, key in enumerate(self.used, 1):
+            self._free(key, now)  # drops requests older than a minute
+            out.append({"key": i, "used_last_minute": len(self.used[key]), "per_minute": self.per_minute,
+                        "resting_seconds": round(max(0.0, self.blocked[key] - now)),
+                        "credits_remaining": self.credits[key]})
+        return out
 
     async def take(self) -> str:
         while (key := self.try_take()) is None:
@@ -72,14 +98,48 @@ async def _post(path: str, body: dict, key: str) -> dict:
     global _client
     if _client is None:
         _client = httpx.AsyncClient(timeout=60)
+    lim = limiter()
     try:
         r = await _client.post(API + path, json=body, headers={"Authorization": f"Bearer {key}"})
-        if r.status_code == 429:
-            limiter().refused(key, float(r.headers.get("retry-after", 30)))
+        if r.status_code in (401, 402, 403, 429):
+            rest = float(r.headers.get("retry-after", 30)) if r.status_code == 429 else REST_SECONDS
+            lim.refused(key, rest)
+            number = list(lim.used).index(key) + 1
+            log.warning("Context.dev key %d refused with HTTP %d; resting it %.0fs", number, r.status_code, rest)
+            raise Refused(f"{path}: key {number} refused with HTTP {r.status_code}")
         r.raise_for_status()
-        return r.json()
+        data = r.json()
+        lim.credits[key] = (data.get("key_metadata") or {}).get("credits_remaining", lim.credits[key])
+        return data
     except (httpx.HTTPError, ValueError) as e:
         raise ContextError(f"{path}: {type(e).__name__}: {str(e)[:150]}") from e
+
+
+async def _call(path: str, body: dict, *, wait: bool, reserve: int = 0) -> dict | None:
+    """Send on a key with capacity; if the server refuses that key, try the others once each.
+
+    wait=True queues until some key has capacity. wait=False returns None when none has any to spare.
+    """
+    lim, last = limiter(), None
+    for _ in range(len(lim.used)):
+        key = await lim.take() if wait else lim.try_take(reserve=reserve)
+        if key is None:
+            return None
+        try:
+            return await _post(path, body, key)
+        except Refused as e:
+            last = e
+    raise last
+
+
+def status() -> dict:
+    """Capacity and use across the key pool, for GET /status."""
+    try:
+        keys = limiter().status()
+    except KeyError:  # no key configured
+        keys = []
+    return {"keys": keys, "per_minute": sum(k["per_minute"] for k in keys),
+            "used_last_minute": sum(k["used_last_minute"] for k in keys)}
 
 
 def parse_search(response: dict) -> list[dict]:
@@ -111,13 +171,12 @@ async def search(query: str, *, freshness: str = "last_24_hours", include_domain
         body["includeDomains"] = include_domains
     if exclude_domains:
         body["excludeDomains"] = exclude_domains
-    return parse_search(await _post("/web/search", body, await limiter().take()))  # searches queue for capacity
+    return parse_search(await _call("/web/search", body, wait=True))  # searches queue for capacity
 
 
 async def scrape(url: str) -> tuple[str, float | None]:
     """Text and publish time of a page, or nothing when there is no spare capacity: searches come first."""
-    key = limiter().try_take(reserve=limiter().per_minute // 2)
-    if key is None:
-        return "", None
-    return parse_scrape(await _post("/web/scrape", {"url": url, "formats": {"markdown": True},
-                                                    "sharedParams": {"mainContentOnly": True}}, key))
+    data = await _call("/web/scrape", {"url": url, "formats": {"markdown": True},
+                                       "sharedParams": {"mainContentOnly": True}},
+                       wait=False, reserve=limiter().per_minute // 2)
+    return ("", None) if data is None else parse_scrape(data)

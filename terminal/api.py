@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import poller, scoring, venues
+from terminal import contextdev, poller, scoring, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -150,6 +150,11 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
         app.state.wake.set()  # the article loop writes the queries and does the instant fill
         return detail(db, store.get_market(db, lead_id), time.time())
+
+    @app.get("/status")
+    def status():
+        """How much Context.dev capacity the key pool has and is using. Keys are numbered, never shown."""
+        return {"context_dev": contextdev.status()}
 
     @app.get("/record")
     def weekend_record():

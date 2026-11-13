@@ -196,3 +196,13 @@ def test_adding_a_market_wakes_the_article_loop(path, monkeypatch):
         assert m["queries"] == []
         c.get("/markets")
     assert woken == [["pm-m0"]]
+
+
+def test_status_reports_context_dev_capacity(path, monkeypatch):
+    from terminal import contextdev
+
+    monkeypatch.setenv("CONTEXT_DEV_API_KEY", "k1, k2 ,k3")
+    monkeypatch.setattr(contextdev, "_limiter", None)
+    with client(path) as c:
+        s = c.get("/status").json()["context_dev"]
+    assert s["per_minute"] == 30 and len(s["keys"]) == 3 and s["used_last_minute"] == 0

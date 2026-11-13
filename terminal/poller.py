@@ -100,28 +100,36 @@ def due(db, last_fetch: dict, now: float) -> list[dict]:
     return sorted(ms, key=lambda m: (m["filled"], m["poll_seconds"]))
 
 
+MARKETS_AT_ONCE = 4
+
+
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *,
                        queries_for=None, fetch=None) -> None:
-    """One round over the due markets. This is the only place articles are fetched, so a market's
-    first completed pass is its backfill and every later pass is live; the two can never race."""
+    """One round over the due markets, a few side by side. This is the only place articles are fetched,
+    so a market's first completed pass is its backfill and every later pass is live; the two never race."""
     queries_for, fetch = queries_for or watch.queries_for, fetch or fetch_articles
-    for m in due(db, last_fetch, time.time() if now is None else now):
-        started = time.time() if now is None else now
-        last_fetch[m["id"]] = started
-        try:
-            if not m["queries"]:
-                store.set_queries(db, m["id"], await queries_for(m["title"], m["rules"]))
-                m = store.get_market(db, m["id"])
-            first = not m["filled"]
-            if first:
-                bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
-            n = await fetch(db, bus, scorer, m, backfill=first, num_results=20 if first else 10)
-            if first:
-                store.set_filled(db, m["id"])
-                bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
-        except Exception as e:
-            log.warning("article pass failed for %s, retrying in %ss: %s", m["id"], RETRY_SECONDS, e)
-            last_fetch[m["id"]] = started - m["poll_seconds"] + RETRY_SECONDS
+    limit = asyncio.Semaphore(MARKETS_AT_ONCE)
+
+    async def one(m: dict) -> None:
+        async with limit:
+            started = time.time() if now is None else now
+            last_fetch[m["id"]] = started
+            try:
+                if not m["queries"]:
+                    store.set_queries(db, m["id"], await queries_for(m["title"], m["rules"]))
+                    m = store.get_market(db, m["id"])
+                first = not m["filled"]
+                if first:
+                    bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
+                n = await fetch(db, bus, scorer, m, backfill=first, num_results=20 if first else 10)
+                if first:
+                    store.set_filled(db, m["id"])
+                    bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
+            except Exception as e:
+                log.warning("article pass failed for %s, retrying in %ss: %s", m["id"], RETRY_SECONDS, e)
+                last_fetch[m["id"]] = started - m["poll_seconds"] + RETRY_SECONDS
+
+    await asyncio.gather(*(one(m) for m in due(db, last_fetch, time.time() if now is None else now)))
 
 
 async def article_loop(db, bus, scorer, wake: asyncio.Event) -> None:

@@ -217,3 +217,28 @@ def test_one_article_that_blows_up_does_not_lose_the_rest():
 
     assert asyncio.run(poller.fetch_articles(db, bus, touchy, m, backfill=False, num_results=10, search=search, scrape=scrape)) == 1
     assert [t["headline"] for t in store.ticks(db, "m")] == ["Story Y"]
+
+
+def test_due_markets_are_fetched_side_by_side_not_one_after_another():
+    db, bus, m = setup()
+    store.add_market(db, id="n", venue="kalshi", venue_ref="N", title="t", rules="r", url=None, queries=["q"])
+    started = []
+
+    async def main():
+        both = asyncio.Event()
+
+        async def queries_for(title, rules):
+            raise AssertionError("queries already exist")
+
+        async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+            started.append(market["id"])
+            if len(started) == 2:
+                both.set()
+            await asyncio.wait_for(both.wait(), 1)  # only returns once the other market's fetch has started
+            return 0
+
+        await poller.article_pass(db, bus, up, {}, now=1000, queries_for=queries_for, fetch=fetch)
+
+    asyncio.run(main())
+    assert sorted(started) == ["m", "n"]
+    assert store.get_market(db, "m")["filled"] and store.get_market(db, "n")["filled"]

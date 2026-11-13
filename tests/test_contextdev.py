@@ -138,3 +138,62 @@ def test_search_asks_for_passages_and_can_exclude_sites(monkeypatch):
 def test_absurd_publish_times_are_ignored():
     for bad in ("9999-12-31T23:59:59+00:00", "0001-01-01T00:00:00+00:00", "1970-01-01T00:00:00+00:00", "2126-11-13"):
         assert parse_scrape({"markdown": {"data": "x"}, "metadata": {"publishedTime": bad}}) == ("x", None)
+
+
+def test_load_is_spread_evenly_over_the_keys_and_duplicates_count_once():
+    from terminal.contextdev import Limiter
+
+    lim = Limiter(["k1", "k2", "k1", "k3"], per_minute=10)
+    assert [lim.try_take(now=0) for _ in range(6)] == ["k1", "k2", "k3", "k1", "k2", "k3"]
+    assert sum(lim.try_take(now=0) is not None for _ in range(30)) == 24  # 3 keys x 10 a minute, 6 already used
+
+
+def pool(handler, monkeypatch, keys="k1,k2"):
+    cd = client_with(handler, monkeypatch)
+    monkeypatch.setenv("CONTEXT_DEV_API_KEY", keys)
+    return cd
+
+
+def test_a_refused_key_rests_and_the_request_goes_out_on_the_next_key(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    used = []
+
+    def handler(request):
+        key = request.headers["authorization"].removeprefix("Bearer ")
+        used.append(key)
+        if key == "k1":
+            return httpx.Response(403, json={"error_code": "INSUFFICIENT_CREDITS"})
+        return httpx.Response(200, json={"results": [{"url": "https://a.example/x", "title": "T"}],
+                                         "key_metadata": {"credits_remaining": 4321}})
+
+    cd = pool(handler, monkeypatch)
+    assert len(asyncio.run(cd.search("q"))) == 1 and used == ["k1", "k2"]
+    assert len(asyncio.run(cd.search("q"))) == 1 and used == ["k1", "k2", "k2"]  # k1 is resting
+    status = cd.status()
+    assert status["per_minute"] == 20 and status["used_last_minute"] == 3
+    assert [k["key"] for k in status["keys"]] == [1, 2]
+    assert status["keys"][0]["resting_seconds"] > 590 and status["keys"][0]["credits_remaining"] is None
+    assert status["keys"][1]["resting_seconds"] == 0 and status["keys"][1]["credits_remaining"] == 4321
+    assert "k1" not in str(status) and "k2" not in str(status)
+
+
+def test_when_every_key_is_refused_the_error_reaches_the_caller(monkeypatch):
+    import asyncio
+
+    import httpx
+    import pytest
+
+    cd = pool(lambda r: httpx.Response(429, headers={"retry-after": "30"}, json={}), monkeypatch)
+    with pytest.raises(cd.ContextError):
+        asyncio.run(cd.search("q"))
+
+
+def test_status_without_any_key_configured_is_empty_not_an_error(monkeypatch):
+    from terminal import contextdev
+
+    monkeypatch.delenv("CONTEXT_DEV_API_KEY", raising=False)
+    monkeypatch.setattr(contextdev, "_limiter", None)
+    assert contextdev.status() == {"keys": [], "per_minute": 0, "used_last_minute": 0}
