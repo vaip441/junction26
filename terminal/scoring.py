@@ -21,6 +21,11 @@ class ScoringError(Exception):
     pass
 
 
+class Rejected(ScoringError):
+    """Decision 1 refused the request itself (HTTP 400, e.g. content it will not process). Asking again
+    will not help, unlike an outage."""
+
+
 class Score(NamedTuple):
     up: float
     none: float
@@ -94,6 +99,8 @@ async def decide(input: str, questions: dict) -> dict:
     try:
         r = await _client.post(URL, headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
                                json={"model": "gemini-decision-1", "input": input, "questions": questions})
+        if r.status_code == 400:
+            raise Rejected(f"Decision 1 rejected the request: {r.text[:200]}")
         r.raise_for_status()
         return r.json()["answers"]
     except (httpx.HTTPError, KeyError, TypeError, ValueError) as e:

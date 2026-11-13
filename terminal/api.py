@@ -60,6 +60,8 @@ def detail(db, m: dict, now: float) -> dict:
 
 
 def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: str | None = None) -> FastAPI:
+    # Every route is `async def`: the store is one sqlite connection, and a plain `def` route would use it
+    # from a worker thread while the background loops use it from the event loop.
     key = key if key is not None else os.environ.get("TERMINAL_KEY", "")
 
     def write_access(x_terminal_key: str = Header("")):
@@ -100,16 +102,16 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         return m
 
     @app.get("/markets")
-    def markets():
+    async def markets():
         now = time.time()
         return [summary(app.state.db, m, now) for m in store.list_markets(app.state.db)]
 
     @app.get("/markets/{id}")
-    def market(id: str):
+    async def market(id: str):
         return detail(app.state.db, market_or_404(id), time.time())
 
     @app.delete("/markets/{id}", dependencies=[Depends(write_access)])
-    def delete_market(id: str):
+    async def delete_market(id: str):
         """Stop tracking a market: it, its related contracts, and their ticks and prices are removed."""
         m = market_or_404(id)
         if id == DEMO["id"]:
@@ -121,12 +123,12 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         return {"deleted": id}
 
     @app.get("/markets/{id}/ticks")
-    def ticks(id: str, limit: int = Query(100, ge=1, le=500)):
+    async def ticks(id: str, limit: int = Query(100, ge=1, le=500)):
         market_or_404(id)
         return [public(t) for t in store.ticks(app.state.db, id, limit)]
 
     @app.get("/markets/{id}/prices")
-    def prices(id: str, since: float = 0):
+    async def prices(id: str, since: float = 0):
         market_or_404(id)
         return store.prices(app.state.db, id, since)
 
@@ -220,12 +222,12 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         return {**detail(db, store.get_market(db, lead_id), time.time()), "matched": matched}
 
     @app.get("/status")
-    def status():
+    async def status():
         """How much Context.dev capacity the key pool has and is using. Keys are numbered, never shown."""
         return {"context_dev": contextdev.status()}
 
     @app.get("/record")
-    def weekend_record():
+    async def weekend_record():
         return record(app.state.db)
 
     @app.get("/stream")
@@ -249,7 +251,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
     @app.get("/", include_in_schema=False)
-    def debug_page():
+    async def debug_page():
         return FileResponse(STATIC / "debug.html")
 
     return app

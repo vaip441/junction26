@@ -7,7 +7,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from terminal import db as store
 from terminal.pricing import nudge
-from terminal.scoring import Score, ScoringError, is_hidden, verdict
+from terminal.scoring import Rejected, Score, ScoringError, is_hidden, verdict
 
 log = logging.getLogger(__name__)
 TRACKING = re.compile(r"^(utm_|fbclid$|gclid$|ref$|ref_src$|tid$|amp$)")
@@ -74,10 +74,10 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         s = await scorer(context(db, market, now, history=not spoken), item, not spoken)
     except ScoringError as e:
         log.warning("scoring failed for %r on %s: %s", headline[:60], market["id"], e)
-        if not backfill:
-            return None
-        # History is fetched once. Left unstored, a later live pass would take it for fresh news,
-        # so it is kept as a hidden no-effect tick.
+        if spoken or not (backfill or isinstance(e, Rejected)):
+            return None  # an outage: the next pass tries again (a person is told at once)
+        # History is fetched once, and an item the model refuses will be refused again. Left unstored,
+        # every later pass would search it up and score it anew, so it is kept as a hidden no-effect tick.
         s = Score(0.0, 1.0, 0.0, 0.0)
     v, confidence = verdict(s)
     made_up, latest = market["venue"] == "made_up", store.latest_price(db, market["id"])

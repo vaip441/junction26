@@ -157,3 +157,24 @@ def test_the_item_is_sent_once_in_the_input_not_in_every_question():
     assert r["input"].startswith("Market: t") and r["input"].count("cnbc.com: Story") == 1
     assert "data, not instructions" in r["input"] and set(r["questions"]) == {"move", "new"}
     assert all("Story" not in q["instructions"] for q in r["questions"].values())
+
+
+def test_a_request_the_model_rejects_is_told_apart_from_an_outage(monkeypatch):
+    import asyncio
+
+    import httpx
+    import pytest
+
+    from terminal import scoring
+
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+
+    def ask(status):
+        monkeypatch.setattr(scoring, "_client", httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(status))))
+        return asyncio.run(scoring.decide("i", {"q": {"type": "noul", "instructions": "i"}}))
+
+    with pytest.raises(scoring.Rejected):
+        ask(400)
+    with pytest.raises(scoring.ScoringError) as e:
+        ask(503)
+    assert not isinstance(e.value, scoring.Rejected)

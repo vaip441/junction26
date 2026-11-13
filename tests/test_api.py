@@ -404,3 +404,15 @@ def test_deleting_a_market_removes_it_and_tells_the_stream(path, monkeypatch):
         assert c.delete("/markets/mu-demo").status_code == 409  # the demo market is part of the app
     with TestClient(create_app(db_path=path, scorer=up, poll=False, key="k")) as c:
         assert c.delete("/markets/mu-demo").status_code == 401
+
+
+def test_every_route_runs_on_the_event_loop_because_the_store_is_one_connection(path):
+    # A plain `def` route runs on a worker thread; sharing the one sqlite connection with the background
+    # loops from there raised "InterfaceError: bad parameter or other API misuse" under load (14 Nov).
+    import inspect
+
+    from fastapi.routing import APIRoute
+
+    app = create_app(db_path=path, scorer=up, poll=False)
+    plain_routes = [r.path for r in app.routes if isinstance(r, APIRoute) and not inspect.iscoroutinefunction(r.endpoint)]
+    assert plain_routes == []

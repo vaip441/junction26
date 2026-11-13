@@ -189,3 +189,18 @@ def test_history_that_cannot_be_scored_is_kept_hidden_so_it_is_never_taken_for_f
     # a live item that cannot be scored is not stored, so the next pass tries it again
     assert run(db, bus, broken, m, headline="new story", url="https://a.example/new") is None
     assert run(db, bus, up, m, headline="new story", url="https://a.example/new") is not None
+
+
+def test_an_item_the_model_refuses_outright_is_stored_hidden_not_retried_every_pass():
+    from terminal.scoring import Rejected
+
+    async def refuses(*_):
+        raise Rejected("400 Bad Request")
+
+    db, bus, q, m = setup()
+    tick = run(db, bus, refuses, m, headline="refused story", url="https://a.example/refused")
+    assert tick["hidden"] is True and tick["strength"] == 0
+    assert run(db, bus, up, m, headline="refused story", url="https://a.example/refused") is None
+    assert store.latest_price(db, "m")[1] == 20.0
+    # a spoken or typed sentence is never stored as a silent no-effect: the person is told
+    assert run(db, bus, refuses, m, kind="typed", headline="refused sentence") is None
