@@ -54,3 +54,17 @@ def test_add_market_twice_keeps_the_first():
     market(db, queries=["a", "b"])
     again = market(db, title="other")
     assert again["title"] == "t" and again["queries"] == ["a", "b"]
+
+
+def test_sources_count_shown_ticks_and_how_many_moved():
+    from terminal.db import sources
+
+    db = connect(":memory:")
+    market(db)
+    add_tick(db, tick(key="a", source="a.example"))
+    add_tick(db, tick(key="b", source="a.example", verdict="none"))
+    add_tick(db, tick(key="c", source="a.example", verdict="none", hidden=True))
+    add_tick(db, tick(key="d", source="b.example", verdict="down"))
+    add_tick(db, tick("n", key="e", source="c.example"))
+    assert sources(db, "m") == [{"source": "a.example", "ticks": 2, "moved": 1},
+                                {"source": "b.example", "ticks": 1, "moved": 1}]

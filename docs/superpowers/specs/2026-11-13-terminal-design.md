@@ -315,31 +315,37 @@ every tick, the backfill flag, and the minute-level prices. The starting rule
 
 ### Interface for the frontend
 
-JSON over HTTP, open CORS, no auth.
+JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the header
+`X-Terminal-Key: <the shared key>` (401 without it).
 
 - `GET /markets`: all tracked markets with latest price, 24-hour change, ticks today.
 - `POST /markets` `{ "query": "<link or plain words>" }`: returns the lead market now
   being tracked, with its related contracts. Triggers the instant fill.
-- `GET /markets/{id}`: detail, including related contracts and deciding pages with
-  their last-checked time and status.
+- `GET /markets/{id}`: detail, including related contracts, deciding pages with
+  their last-checked time and status, and `sources`: where the market's ticks came
+  from, most ticks first, as `[{ "source", "ticks", "moved" }]` (`moved` counts the
+  ticks called up or down).
 - `GET /markets/{id}/ticks?limit=` and `GET /markets/{id}/prices?since=`: history for
   first paint.
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
 - `GET /record`: the weekend record numbers.
+- `GET /status`: Context.dev capacity per key (use, resting time, credits left).
 - `GET /stream`: server-sent events. Event types: `tick`, `price`, `market`,
   `page_check`. One connection carries all markets; each event has a `market_id`.
 
 A tick:
 
     { "id", "market_id", "ts", "published_ts",
-      "kind": "article|filing|page|mic|typed",
+      "kind": "article|post|filing|page|mic|typed",
       "source", "url", "headline",
       "up", "none", "down", "strength", "verdict": "up|none|down", "confidence",
       "price_at", "test": false, "backfill": false }
 
 `ts` is when we detected the tick and `price_at` is the price at that moment,
 as a percentage from 0 to 100, like every other price in the interface.
+A `post` is from X or Reddit; its `source` names who posted, as `x.com/<handle>` or
+`reddit.com/r/<subreddit>`, and its `headline` is the post's text.
 `published_ts` is when the item was published, where known. Instant-fill ticks carry
 `backfill: true` and are drawn on the chart at `published_ts`.
 

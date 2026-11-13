@@ -53,7 +53,8 @@ def summary(db, m: dict, now: float) -> dict:
 
 def detail(db, m: dict, now: float) -> dict:
     return {**summary(db, m, now), "rules": m["rules"], "queries": m["queries"],
-            "related": [summary(db, r, now) for r in store.related(db, m["id"])], "pages": []}
+            "related": [summary(db, r, now) for r in store.related(db, m["id"])], "pages": [],
+            "sources": store.sources(db, m["id"])}
 
 
 def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: str | None = None) -> FastAPI:

@@ -242,3 +242,45 @@ def test_due_markets_are_fetched_side_by_side_not_one_after_another():
     asyncio.run(main())
     assert sorted(started) == ["m", "n"]
     assert store.get_market(db, "m")["filled"] and store.get_market(db, "n")["filled"]
+
+
+POSTS = [{"url": "https://x.com/SomeAnalyst/status/123?s=20", "title": 'Some Analyst on X: "Buck is the name"',
+          "description": "Buck is the name"},
+         {"url": "https://www.reddit.com/r/hardware/comments/abc/ceo_transition/", "title": "r/hardware on Reddit: CEO",
+          "description": "a comment"}]
+
+
+def test_posts_are_searched_once_per_market_and_stored_as_posts():
+    db, bus, m = setup()
+    calls, scraped = [], []
+
+    async def search(query, **kw):
+        calls.append((query, kw.get("include_domains")))
+        return POSTS if kw.get("include_domains") else RESULTS[:1]
+
+    async def scrape(url):
+        scraped.append(url)
+        return "full text", None
+
+    n = asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    assert sorted(calls, key=str) == sorted([("a", None), ("b", None), ("a", poller.POST_SITES)], key=str)
+    assert poller.POST_SITES == ["x.com", "twitter.com", "reddit.com"]
+    by_source = {t["source"]: t for t in store.ticks(db, "m")}
+    assert n == 3 and set(by_source) == {"news.example.com", "x.com/SomeAnalyst", "reddit.com/r/hardware"}
+    post = by_source["x.com/SomeAnalyst"]
+    assert post["kind"] == "post" and post["backfill"] is False and post["test"] is False
+    assert scraped == ["https://www.news.example.com/x"]  # a post is its own text: never scraped
+
+
+def test_a_failing_posts_search_does_not_fail_the_pass():
+    db, bus, m = setup()
+
+    async def search(query, **kw):
+        if kw.get("include_domains"):
+            raise RuntimeError("posts search down")
+        return RESULTS
+
+    async def scrape(url):
+        return "", None
+
+    assert asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape)) == 2

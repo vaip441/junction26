@@ -128,6 +128,13 @@ def recent_headlines(db, market_id: str, limit: int = 12) -> list[str]:
         (market_id, limit))]
 
 
+def sources(db, market_id: str, limit: int = 20) -> list[dict]:
+    """Where a market's shown ticks came from, and how many of each source's ticks called a move."""
+    return [dict(r) for r in db.execute(
+        "SELECT source, COUNT(*) AS ticks, SUM(verdict IN ('up', 'down')) AS moved FROM ticks"
+        " WHERE market_id = ? AND hidden = 0 GROUP BY source ORDER BY ticks DESC, source LIMIT ?", (market_id, limit))]
+
+
 def count_shown(db, market_id: str, since: float) -> int:
     return db.execute("SELECT COUNT(*) FROM ticks WHERE market_id = ? AND hidden = 0 AND ts >= ?",
                       (market_id, since)).fetchone()[0]

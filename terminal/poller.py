@@ -50,36 +50,60 @@ class FetchFailed(Exception):
     """Every search for a market failed, so nothing is known about its coverage."""
 
 
+POST_SITES = ["x.com", "twitter.com", "reddit.com"]
+
+
+def post_source(url: str) -> str:
+    """Who posted: x.com/<handle> or reddit.com/r/<subreddit>."""
+    u = urlsplit(url)
+    host, parts = u.netloc.lower().removeprefix("www."), [p for p in u.path.split("/") if p]
+    return "/".join([host] + parts[:2 if host.endswith("reddit.com") else 1])
+
+
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
                          search=None, scrape=None) -> int:
-    """Search every query of a market and ingest results not seen before. Returns how many ticks were stored."""
+    """Search every query of a market, plus X and Reddit once, and ingest results not seen before.
+    Returns how many ticks were stored."""
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
-    found = await asyncio.gather(*(search(q, num_results=num_results, exclude_domains=NOT_NEWS)
-                                   for q in market["queries"]), return_exceptions=True)
+    queries = market["queries"]
+    # shortcut: posts are searched with the first query only, to spend one request per pass; search
+    # every query once there are enough keys
+    *found, posts = await asyncio.gather(
+        *(search(q, num_results=num_results, exclude_domains=NOT_NEWS) for q in queries),
+        search(queries[0], num_results=num_results, include_domains=POST_SITES), return_exceptions=True)
     fresh, failed = {}, 0
-    for q, results in zip(market["queries"], found):
+
+    def keep(results, kind: str) -> None:
+        for r in results:
+            key = dedupe_key(kind, r["url"], r["title"], 0)
+            if key not in fresh and not store.has_tick(db, market["id"], key):
+                fresh[key] = (kind, r)
+
+    for q, results in zip(queries, found):
         if isinstance(results, BaseException):
             log.warning("search failed for %r on %s: %s", q, market["id"], results)
             failed += 1
-            continue
-        for r in results:
-            key = dedupe_key("article", r["url"], r["title"], 0)
-            if key not in fresh and not store.has_tick(db, market["id"], key):
-                fresh[key] = r
-    if failed and failed == len(market["queries"]):
+        else:
+            keep(results, "article")
+    if failed and failed == len(queries):
         raise FetchFailed(f"all {failed} searches failed for {market['id']}")
+    if isinstance(posts, BaseException):
+        log.warning("posts search failed on %s: %s", market["id"], posts)
+    else:
+        keep(posts, "post")
     limit = asyncio.Semaphore(10)
 
-    async def one(r) -> bool:
+    async def one(kind: str, r: dict) -> bool:
         async with limit:
+            text, published = "", None
+            if kind == "article":  # a post is its own text; an article's page carries the publish date
+                try:
+                    text, published = await scrape(r["url"])  # only with spare capacity
+                except Exception as e:
+                    log.warning("scrape failed for %s: %s", r["url"], e)
+            source = post_source(r["url"]) if kind == "post" else urlsplit(r["url"]).netloc.lower().removeprefix("www.")
             try:
-                text, published = await scrape(r["url"])  # only with spare capacity; it carries the publish date
-            except Exception as e:
-                log.warning("scrape failed for %s: %s", r["url"], e)
-                text, published = "", None
-            host = urlsplit(r["url"]).netloc.lower().removeprefix("www.")
-            try:
-                tick = await ingest(db, bus, scorer, market, kind="article", source=host, headline=r["title"],
+                tick = await ingest(db, bus, scorer, market, kind=kind, source=source, headline=r["title"],
                                     url=r["url"], body=(text or r.get("text") or r["description"])[:2000],
                                     published_ts=published, backfill=backfill)
             except Exception:  # one odd page must not cost the market the rest of the batch
@@ -87,7 +111,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 return False
             return tick is not None
 
-    return sum(await asyncio.gather(*(one(r) for r in fresh.values())))
+    return sum(await asyncio.gather(*(one(kind, r) for kind, r in fresh.values())))
 
 
 RETRY_SECONDS = 60

@@ -206,3 +206,10 @@ def test_status_reports_context_dev_capacity(path, monkeypatch):
     with client(path) as c:
         s = c.get("/status").json()["context_dev"]
     assert s["per_minute"] == 30 and len(s["keys"]) == 3 and s["used_last_minute"] == 0
+
+
+def test_market_detail_lists_its_sources(path):
+    with client(path) as c:
+        assert c.get("/markets/mu-demo").json()["sources"] == []
+        typed(c)
+        assert c.get("/markets/mu-demo").json()["sources"] == [{"source": "typed", "ticks": 1, "moved": 1}]
