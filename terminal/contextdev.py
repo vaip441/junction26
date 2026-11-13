@@ -95,7 +95,9 @@ def parse_scrape(response: dict) -> tuple[str, float | None]:
     try:
         d = datetime.fromisoformat((response.get("metadata") or {})["publishedTime"])
         published = (d if d.tzinfo else d.replace(tzinfo=UTC)).timestamp()  # a bare date is taken as UTC
-    except (KeyError, TypeError, ValueError):
+        if not 946684800 <= published <= time.time() + 86400:  # pages can claim any date: keep 2000..tomorrow
+            published = None
+    except (KeyError, TypeError, ValueError, OverflowError):
         published = None
     return text, published
 

@@ -107,3 +107,19 @@ def test_an_item_that_is_not_new_loses_its_strength_and_becomes_no_effect():
     assert abs(fresh.strength - 0.875 * 0.9) < 1e-9 and verdict(fresh)[0] == "up"
     assert abs(stale.strength - 0.0875) < 1e-9 and verdict(stale)[0] == "none"
     assert abs(stale.up - 0.095) < 1e-9 and abs(stale.up + stale.none + stale.down - 1) < 1e-9
+
+
+def test_an_out_of_range_newness_answer_cannot_inflate_the_score():
+    import pytest
+
+    from terminal.scoring import ScoringError
+
+    strong_up = [0.0, 0.0, 0.05, 0.15, 0.80]
+    over = parse_decision1(answers(3.75, strong_up, new=1.7))
+    assert abs(over.strength - 0.875) < 1e-9 and over.up <= 1 and over.none >= 0
+    under = parse_decision1(answers(3.75, strong_up, new=-0.5))
+    assert under.strength == 0 and under.up == 0 and under.none == 1
+    with pytest.raises(ScoringError):
+        parse_decision1(answers(3.75, strong_up, new=float("nan")))
+    with pytest.raises(ScoringError):
+        parse_decision1(answers(float("inf"), strong_up))

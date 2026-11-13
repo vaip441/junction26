@@ -1,4 +1,5 @@
 """Scoring a tick with Gemini Decision 1: how much does this item move the YES price?"""
+import math
 import os
 from typing import NamedTuple
 
@@ -76,7 +77,11 @@ def parse_decision1(response: dict) -> Score:
         p = [float(answer["probabilities"].get(str(i), 0)) for i in range(len(LEVELS))]
         total = sum(p)
         new = float(response["answers"]["new"]["noul"]) if "new" in response["answers"] else 1.0
-        strength = min(max((float(answer["score"]) - 2) / 2, -1.0), 1.0) * new
+        level = float(answer["score"])
+        if not (math.isfinite(new) and math.isfinite(level) and total > 0):
+            raise ValueError("non-finite answer")
+        new = min(max(new, 0.0), 1.0)  # a probability; never let a bad value inflate the score
+        strength = min(max((level - 2) / 2, -1.0), 1.0) * new
         up, down = (p[3] + p[4]) / total * new, (p[0] + p[1]) / total * new
         return Score(up, 1 - up - down, down, strength)
     except (KeyError, TypeError, ValueError, ZeroDivisionError) as e:

@@ -133,3 +133,8 @@ def test_search_asks_for_passages_and_can_exclude_sites(monkeypatch):
     cd = client_with(handler, monkeypatch)
     asyncio.run(cd.search("q", exclude_domains=["wikipedia.org"]))
     assert seen[0]["highlightsOptions"] == {"enabled": True} and seen[0]["excludeDomains"] == ["wikipedia.org"]
+
+
+def test_absurd_publish_times_are_ignored():
+    for bad in ("9999-12-31T23:59:59+00:00", "0001-01-01T00:00:00+00:00", "1970-01-01T00:00:00+00:00", "2126-11-13"):
+        assert parse_scrape({"markdown": {"data": "x"}, "metadata": {"publishedTime": bad}}) == ("x", None)

@@ -199,3 +199,21 @@ def test_articles_are_scored_on_their_passages_and_reference_sites_are_excluded(
     asyncio.run(poller.fetch_articles(db, bus, spy, m, backfill=False, num_results=10, search=search, scrape=scrape))
     assert "The long passage." in seen[0] and "short" not in seen[0]
     assert set(searched[0]["exclude_domains"]) >= {"wikipedia.org", "polymarket.com", "kalshi.com"}
+
+
+def test_one_article_that_blows_up_does_not_lose_the_rest():
+    db, bus, m = setup(queries=("a",))
+
+    async def touchy(context, item, gate):
+        if "Story X" in item:
+            raise RuntimeError("unexpected")
+        return Score(0.84, 0.12, 0.04, 0.8)
+
+    async def search(query, **kw):
+        return RESULTS
+
+    async def scrape(url):
+        return "", None
+
+    assert asyncio.run(poller.fetch_articles(db, bus, touchy, m, backfill=False, num_results=10, search=search, scrape=scrape)) == 1
+    assert [t["headline"] for t in store.ticks(db, "m")] == ["Story Y"]

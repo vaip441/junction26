@@ -78,9 +78,13 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 log.warning("scrape failed for %s: %s", r["url"], e)
                 text, published = "", None
             host = urlsplit(r["url"]).netloc.lower().removeprefix("www.")
-            tick = await ingest(db, bus, scorer, market, kind="article", source=host, headline=r["title"],
-                                url=r["url"], body=(text or r.get("text") or r["description"])[:2000],
-                                published_ts=published, backfill=backfill)
+            try:
+                tick = await ingest(db, bus, scorer, market, kind="article", source=host, headline=r["title"],
+                                    url=r["url"], body=(text or r.get("text") or r["description"])[:2000],
+                                    published_ts=published, backfill=backfill)
+            except Exception:  # one odd page must not cost the market the rest of the batch
+                log.exception("could not ingest %s", r["url"])
+                return False
             return tick is not None
 
     return sum(await asyncio.gather(*(one(r) for r in fresh.values())))
