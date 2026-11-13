@@ -1,0 +1,1 @@
+{"answers":{"move":{"confidence":0.9973180302097191,"choice":"up","probabilities":{"down":0.0011141496790746574,"none":0.0015678201112061386,"up":0.9973180302097191},"type":"choice"}},"usage":{"total_tokens":164,"total_input_tokens":164,"input_tokens_by_modality":[{"modality":"text","tokens":164}],"total_output_tokens":0}}
