@@ -8,10 +8,17 @@ import { SourceIcon } from '../common/SourceIcon'
 
 const POLL_MS = 2000
 const KEEP = 24 // items on the strip
-// Items come in one at a time, so the few a market's search brings read as a stream and not a jolt:
-// unhurried while little is waiting, quicker as more is, so the strip is never far behind the reading.
-const pace = (waiting: number) => (waiting > 12 ? { every: 110, slide: 80 } : waiting > 4 ? { every: 380, slide: 220 } : { every: 850, slide: 280 })
-const WAITING = 60 // of a longer burst only the newest wait; the count is right all the same
+// Items come in one at a time and never faster than they can be read. A burst (a market just added reads
+// a hundred items at once) is shown as a sample, the calls before the rest; the count is right all the same.
+const EVERY = 900
+const SLIDE = 280
+const WAITING = 8
+function sample(waiting: ReadItem[]): ReadItem[] {
+  if (waiting.length <= WAITING) return waiting
+  const calls = waiting.filter((x) => x.verdict !== 'none').slice(-WAITING)
+  const rest = waiting.filter((x) => x.verdict === 'none').slice(calls.length - WAITING || waiting.length)
+  return [...calls, ...rest].sort((a, b) => a.id - b.id)
+}
 
 const MARK: Record<Verdict, { sign: string; tone: string; said: string }> = {
   up: { sign: '▲', tone: 'text-up', said: 'Up' },
@@ -59,7 +66,7 @@ export function ReadingStrip() {
         if (!filled) {
           for (const item of r.recent.slice().reverse()) list.current = admit(list.current, item)?.list ?? list.current
           setItems(list.current)
-        } else waiting.current = [...waiting.current, ...r.recent.slice().reverse()].slice(-WAITING)
+        } else waiting.current = sample([...waiting.current, ...r.recent.slice().reverse()])
         filled = true
       } catch {
         // the strip is an extra: it tries again at the next poll
@@ -76,16 +83,15 @@ export function ReadingStrip() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
     const step = () => {
-      const { every, slide } = pace(waiting.current.length)
       // the next item that has something to show: a repeat of one already here is passed over
       let added = null
       while (!held.current && !added && waiting.current.length) added = admit(list.current, waiting.current.shift()!)
       if (added) {
-        moving.current = added.front ? slide : 0
+        moving.current = added.front ? SLIDE : 0
         list.current = added.list
         setItems(added.list)
       }
-      timer = setTimeout(step, every)
+      timer = setTimeout(step, EVERY)
     }
     timer = setTimeout(step, 400)
     return () => clearTimeout(timer)
