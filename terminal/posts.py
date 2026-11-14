@@ -62,6 +62,18 @@ def reddit_trash(url: str, title: str) -> bool:
     return "/comments/" not in urlsplit(url).path or bool(NOT_A_POST.search(title))
 
 
+MIN_WORDS = 8
+ADVERT = re.compile(r"\d[\d.,]*\s*USD\b|https?://", re.I)
+
+
+def comment_trash(comment: dict) -> bool:
+    """A comment under a venue's market that is a reply, was reported, is too short to say anything, or is an
+    advert: the bots that track positions quote a sum in USD, the rest carry a link.
+    Measured on 14 Nov over 291 Polymarket comments: 70 were left for the scorer."""
+    return (comment["is_reply"] or bool(comment["reports"]) or len(comment["text"].split()) < MIN_WORDS
+            or bool(ADVERT.search(comment["text"])))
+
+
 ATOM = {"a": "http://www.w3.org/2005/Atom"}
 
 

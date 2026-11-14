@@ -9,6 +9,7 @@ from terminal import contextdev, googlenews, madeup, moves, posts, venues, watch
 from terminal import db as store
 from terminal.pipeline import STORY_SECONDS, dedupe_key, ingest, public, title_key
 from terminal.scoring import Score
+from terminal.venues import polymarket
 
 log = logging.getLogger(__name__)
 
@@ -111,15 +112,28 @@ BACKGROUND_RESERVE = 2
 FEED_WINDOW = 86400  # a feed's posts count for a day, like the searches' "last 24 hours"
 
 
+def comment_slug(db, market: dict) -> str | None:
+    """The Polymarket event whose comments belong to a market: its own, or that of the same question there."""
+    for m in (market, market.get("twin_id") and store.get_market(db, market["twin_id"])):
+        if m and m["venue"] == "polymarket" and (slugs := polymarket.parse_link(m["url"] or "")):
+            return slugs[0]
+
+
+async def venue_comments(slug: str) -> list[dict]:
+    return await asyncio.to_thread(polymarket.comments, slug)
+
+
 async def unscored(*_) -> Score:
     """Trash is kept as a hidden no-effect tick without asking the model: stored, it is never looked at again."""
     return Score(0.0, 1.0, 0.0, 0.0)
 
 
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
-                         search=None, scrape=None, lookup=None, feed=None, news=None, gnews=None) -> int:
+                         search=None, scrape=None, lookup=None, feed=None, news=None, gnews=None,
+                         comments=None) -> int:
     """Search every query of a market, plus X and Reddit once, read the newest posts of the subreddits
-    that were relevant to it before, and ingest what was not seen before. Returns how many ticks were stored.
+    that were relevant to it before and the newest comments under it on Polymarket, and ingest what was
+    not seen before. Returns how many ticks were stored.
 
     Every query runs on every pass: measured on 14 Nov, a market's four queries returned 25 to 28
     different results between them, so dropping or rotating them would lose coverage, not waste.
@@ -172,6 +186,17 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             key = dedupe_key("post", r["url"], r["title"], 0)
             if key not in fresh and not store.has_tick(db, market["id"], key):
                 fresh[key] = ("post", r)
+    if slug := comment_slug(db, market):
+        try:
+            said = await (comments or venue_comments)(slug)
+        except Exception as e:  # the comments are an extra: the pass goes on without them
+            log.warning("could not read the comments under %s: %s: %s", slug, type(e).__name__, str(e)[:100])
+            said = []
+        for c in said:
+            key, text = f"pm-comment:{c['id']}", " ".join(c["text"].split())  # its page's address is every comment's
+            if c["published"] >= time.time() - FEED_WINDOW and key not in fresh and not store.has_tick(db, market["id"], key):
+                fresh[key] = ("post", {"url": f"https://polymarket.com/event/{slug}", "title": text[:280],
+                                       "description": text, "published": c["published"], "comment": c, "key": key})
     if backfill:  # for the frontend: how much the first fill found, before the scoring that takes most of its time
         bus.publish("market", {"market_id": market["id"], "status": "scoring", "found": len(fresh)})
     limit = asyncio.Semaphore(10)
@@ -181,7 +206,10 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             text, published, read, known, trash = "", None, None, None, False
             source = (post_source(r["url"]) if kind == "post"
                       else r.get("source") or urlsplit(r["url"]).netloc.lower().removeprefix("www."))  # Google names the publisher
-            if kind == "post" and (published := posted_at(r["url"])):  # on X: the id holds the time
+            if comment := r.get("comment"):  # a venue comment arrives whole: who, when, how many liked it
+                source, published = f"polymarket.com/{comment['author']}", r["published"]
+                known, trash = {"likes": comment["likes"], "replies": None}, posts.comment_trash(comment)
+            elif kind == "post" and (published := posted_at(r["url"])):  # on X: the id holds the time
                 if known := await lookup(r["url"]):
                     source, text = f"x.com/{known['handle']}", known["text"]
                     trash = posts.x_trash(known, time.time() - published)
@@ -206,7 +234,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                                     headline=r["title"], url=r["url"],
                                     body=(text or r.get("text") or r["description"])[:2000], published_ts=published,
                                     backfill=backfill or old, likes=known and known["likes"],
-                                    replies=known and known["replies"],
+                                    replies=known and known["replies"], key=r.get("key"),
                                     # the search's own excerpt of the page, for the frontend; a post is its own passage
                                     passage=(contextdev.passage([r.get("text") or ""]) or None) if kind == "article" else None)
             except Exception:  # one odd page must not cost the market the rest of the batch

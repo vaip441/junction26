@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from datetime import datetime
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -50,6 +51,32 @@ def search(words: str, limit: int = 10) -> list[str]:
     data = get(GAMMA + "/public-search", q=words[:200], events_status="active", limit_per_type=limit) or {}
     return [e["slug"] for e in data.get("events") or []
             if not e.get("closed") and SLUG.match(str(e.get("slug") or ""))]
+
+
+_event_ids: dict[str, str] = {}  # event slug -> its number, which its comments are filed under
+
+
+def comments(slug: str, limit: int = 40) -> list[dict]:
+    """The newest comments under an event, newest first: what its traders are saying. Rows without text or a
+    time are left out; an event Polymarket does not know has none."""
+    if slug not in _event_ids:
+        events = get(GAMMA + "/events", slug=slug) or []
+        if not events:
+            return []
+        _event_ids[slug] = str(events[0]["id"])
+    rows = get(GAMMA + "/comments", parent_entity_type="Event", parent_entity_id=_event_ids[slug], limit=limit,
+               order="createdAt", ascending="false") or []
+    out = []
+    for c in rows:
+        try:
+            profile = c.get("profile") or {}
+            out.append({"id": str(c["id"]), "text": c["body"] + "", "is_reply": bool(c.get("parentCommentID")),
+                        "author": str(profile.get("name") or profile.get("pseudonym") or "trader"),
+                        "likes": int(c.get("reactionCount") or 0), "reports": int(c.get("reportCount") or 0),
+                        "published": datetime.fromisoformat(c["createdAt"].replace("Z", "+00:00")).timestamp()})
+        except (AttributeError, KeyError, TypeError, ValueError):
+            continue  # not a comment, or one with no text or time
+    return out
 
 
 def parse_event(event: dict, market_slug: str | None) -> list[dict]:

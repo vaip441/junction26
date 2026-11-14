@@ -224,3 +224,34 @@ def test_kalshi_search_returns_open_event_pages_in_rank_order(monkeypatch):
     monkeypatch.setattr(kalshi, "get", lambda path, **params: {})
     assert kalshi_search("nothing like it") == []
 
+
+from terminal.venues.polymarket import comments as polymarket_comments  # the real one: conftest swaps it out
+
+
+def test_polymarket_comments_are_the_newest_under_an_event_and_its_number_is_asked_for_once(monkeypatch):
+    asked = []
+
+    def get(url, **params):
+        asked.append((url.rsplit("/", 1)[1], params))
+        if url.endswith("/events"):
+            return [{"id": "1353337"}] if params["slug"] == "next-ceo-of-nvidia" else []
+        return [{"id": "9", "body": "musk said he is signing\nthe petition", "createdAt": "2026-11-14T09:56:00.5Z",
+                 "reactionCount": 3, "reportCount": 0, "profile": {"name": "steamalert"}},
+                {"id": "10", "body": "yes", "createdAt": "2026-11-14T12:16:00Z", "parentCommentID": "8",
+                 "reportCount": 2, "profile": {"pseudonym": "Quiet-Otter"}},
+                {"id": "11", "body": None, "createdAt": None}, "odd"]
+
+    monkeypatch.setattr(polymarket, "get", get)
+    monkeypatch.setattr(polymarket, "_event_ids", {})
+    found = polymarket_comments("next-ceo-of-nvidia")
+    assert found == [
+        {"id": "9", "text": "musk said he is signing\nthe petition", "author": "steamalert", "likes": 3,
+         "published": 1794650160.5, "is_reply": False, "reports": 0},
+        {"id": "10", "text": "yes", "author": "Quiet-Otter", "likes": 0, "published": 1794658560.0,
+         "is_reply": True, "reports": 2}]
+    assert asked[1] == ("comments", {"parent_entity_type": "Event", "parent_entity_id": "1353337", "limit": 40,
+                                     "order": "createdAt", "ascending": "false"})
+    polymarket_comments("next-ceo-of-nvidia")
+    assert [a[0] for a in asked] == ["events", "comments", "comments"]
+    assert polymarket_comments("no-such-event") == []
+

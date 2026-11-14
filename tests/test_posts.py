@@ -88,3 +88,14 @@ def test_feeds_are_read_one_at_a_time_and_kept_for_five_minutes():
         assert await new("../etc", 2000) == [] and "../etc" not in read  # not a subreddit name
 
     asyncio.run(go())
+
+
+def test_venue_comments_that_are_replies_short_reported_or_adverts_are_trash():
+    said = {"text": "Until 2028 without a new CEO? A company of NVIDIA size? Doubt it.", "is_reply": False, "reports": 0}
+    assert posts.comment_trash(said) is False
+    assert posts.comment_trash({**said, "is_reply": True}) is True
+    assert posts.comment_trash({**said, "reports": 1}) is True
+    assert posts.comment_trash({**said, "text": "add Jenson please."}) is True  # under eight words says little
+    assert posts.comment_trash({**said, "text": "sbimbg locked in 12299,76 USD on Ian Buck with outcome No. We track more"}) is True
+    assert posts.comment_trash({**said, "text": "all the whale data you could ever want is at https://example.com/x come see"}) is True
+

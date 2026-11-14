@@ -951,3 +951,65 @@ def test_an_article_carries_the_passage_the_search_found_and_a_post_carries_none
     # the excerpt is for the frontend to show; a post's headline is already its own text
     assert by_kind["article"]["passage"] == "The board named its finance chief as interim chief executive on Thursday."
     assert by_kind["post"]["passage"] is None
+
+
+def comment(id, text, ago=600, **more):
+    return {"id": id, "text": text, "author": "steamalert", "likes": 3, "published": time.time() - ago,
+            "is_reply": False, "reports": 0, **more}
+
+
+def with_comments(db, m, found, scorer=up):
+    asked = []
+
+    async def nothing(query, **kw):
+        return []
+
+    async def comments(slug):
+        asked.append(slug)
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    n = asyncio.run(poller.fetch_articles(db, Bus(), scorer, m, backfill=False, num_results=10, search=nothing,
+                                          gnews=nothing, comments=comments))
+    return n, asked
+
+
+def test_comments_under_a_polymarket_market_are_scored_as_posts():
+    db = store.connect(":memory:")
+    m = store.add_market(db, id="pm-a", venue="polymarket", venue_ref="tok", title="t", rules="r", queries=["a"],
+                         url="https://polymarket.com/event/next-ceo-of-nvidia/will-ian-buck-be-the-next-ceo-of-nvidia")
+    scored = []
+
+    async def scorer(context, item, gate):
+        scored.append(item)
+        return await up()
+
+    said = "musk literally said he is signing the petition to bring jensen back about two hours ago"
+    found = [comment("9", said), comment("10", "add Jenson please."), comment("11", "an old thought on who leads next, eight words", ago=2 * 86400)]
+    n, asked = with_comments(db, m, found, scorer)
+    assert asked == ["next-ceo-of-nvidia"] and n == 2 and len(scored) == 1 and said in scored[0]
+    t, = store.ticks(db, "pm-a")  # the short one is kept hidden, unscored; the one from two days ago is passed over
+    assert t["kind"] == "post" and t["source"] == "polymarket.com/steamalert" and t["headline"] == said
+    assert t["likes"] == 3 and t["replies"] is None and abs(t["published_ts"] - (time.time() - 600)) < 5
+    assert t["url"] == "https://polymarket.com/event/next-ceo-of-nvidia" and t["backfill"] is False
+    assert with_comments(db, m, found, scorer)[0] == 0 and len(scored) == 1  # each comment once
+
+
+def test_a_kalshi_market_reads_the_comments_of_its_polymarket_twin_and_others_read_none():
+    db = store.connect(":memory:")
+    k = store.add_market(db, id="k-A", venue="kalshi", venue_ref="A", title="t", rules="r", url=None, queries=["a"])
+    store.add_market(db, id="pm-a", venue="polymarket", venue_ref="tok", title="t", rules="r", lead_id="k-A",
+                     url="https://polymarket.com/event/the-event/the-market")
+    assert with_comments(db, k, [comment("1", "eight words or more are needed to be kept here")]) == (0, [])
+    store.pair(db, "k-A", "pm-a")
+    n, asked = with_comments(db, store.get_market(db, "k-A"), [comment("1", "eight words or more are needed to be kept here")])
+    assert (n, asked) == (1, ["the-event"]) and store.ticks(db, "k-A")[0]["source"] == "polymarket.com/steamalert"
+
+
+def test_comments_that_cannot_be_read_do_not_fail_the_pass():
+    db = store.connect(":memory:")
+    m = store.add_market(db, id="pm-a", venue="polymarket", venue_ref="tok", title="t", rules="r", queries=["a"],
+                         url="https://polymarket.com/event/e/m")
+    assert with_comments(db, m, RuntimeError("down")) == (0, ["e"])
+
