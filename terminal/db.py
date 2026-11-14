@@ -18,14 +18,15 @@ CREATE TABLE IF NOT EXISTS ticks (
     source TEXT NOT NULL, url TEXT, headline TEXT NOT NULL, up REAL NOT NULL, none REAL NOT NULL, down REAL NOT NULL,
     strength REAL NOT NULL, verdict TEXT NOT NULL, confidence REAL NOT NULL, price_at REAL,
     test INTEGER NOT NULL, backfill INTEGER NOT NULL, hidden INTEGER NOT NULL, dedupe_key TEXT NOT NULL,
-    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER, title_key TEXT,
+    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER, title_key TEXT, rule TEXT,
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
-OPTIONAL_COLS = ("likes", "replies", "title_key")  # likes and replies: posts on X; title_key: articles
+# likes and replies: posts on X; title_key: articles; rule: the rules sentence behind a tick that moves the price
+OPTIONAL_COLS = ("likes", "replies", "title_key", "rule")
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -39,6 +40,7 @@ def connect(path: str) -> sqlite3.Connection:
         db.execute("ALTER TABLE markets ADD COLUMN companies TEXT")
     if "title_key" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov noon
         db.execute("ALTER TABLE ticks ADD COLUMN title_key TEXT")
+        db.execute("ALTER TABLE ticks ADD COLUMN rule TEXT")
     db.execute("CREATE INDEX IF NOT EXISTS ticks_by_title ON ticks (market_id, title_key)")
     if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
         db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
@@ -54,7 +56,8 @@ def _market(row) -> dict | None:
 
 
 def _tick(row) -> dict:
-    return {**row, "test": bool(row["test"]), "backfill": bool(row["backfill"]), "hidden": bool(row["hidden"])}
+    return {**row, "test": bool(row["test"]), "backfill": bool(row["backfill"]), "hidden": bool(row["hidden"]),
+            "rule": row["rule"] and json.loads(row["rule"])}
 
 
 def add_market(db, *, id, venue, venue_ref, title, rules, url, lead_id=None, queries=(), poll_seconds=900) -> dict:

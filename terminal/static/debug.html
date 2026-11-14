@@ -35,6 +35,11 @@ function row(t) {
   const reach = t.likes == null ? "" : ` · ${t.likes} likes, ${t.replies} replies`;
   s.textContent = ` ${when} · ${t.source}${reach}${t.test ? " · test" : ""}${t.backfill ? " · backfill" : ""}`;
   li.append(b, s, document.createElement("br"), document.createTextNode(t.headline));
+  if (t.rule) {  // the sentence of the market's rules that makes this tick matter
+    const r = document.createElement("small");
+    r.textContent = `rule (${Math.round(t.rule.confidence * 100)}%): ${t.rule.text}`;
+    li.append(document.createElement("br"), r);
+  }
   return li;
 }
 async function load() {

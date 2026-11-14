@@ -269,3 +269,33 @@ def test_one_story_run_by_several_outlets_is_one_tick_and_scored_once():
     # posts are told apart by address alone: many people post the same words
     assert run(db, bus, spy, m, kind="post", url="https://x.com/a/status/2120971125412827486",
                headline="Microsoft says services fully restored after outage") is not None
+
+
+def test_a_tick_that_moves_the_price_names_the_rule_behind_it():
+    db, bus, q, m = setup(venue="kalshi")
+    asked = []
+
+    async def ruler(market, item):
+        asked.append(item)
+        return {"start": 3, "end": 9, "text": "a rule", "confidence": 0.8}
+
+    moved = run(db, bus, up, m, url="https://a.example/1", headline="Board names a new chief executive", ruler=ruler)
+    assert moved["rule"] == {"start": 3, "end": 9, "text": "a rule", "confidence": 0.8}
+    assert store.ticks(db, "m")[0]["rule"] == moved["rule"] and drain(q)[0][1]["rule"] == moved["rule"]
+    quiet = run(db, bus, no_effect, m, url="https://a.example/2", headline="Nothing much happened in the markets", ruler=ruler)
+    assert quiet["rule"] is None and len(asked) == 1  # an item that moves nothing costs no second call
+
+
+def test_a_spoken_sentence_always_gets_its_rule_and_a_failing_lookup_loses_nothing():
+    db, bus, q, m = setup()
+
+    async def ruler(market, item):
+        return {"start": 0, "end": 1, "text": "r", "confidence": 0.9}
+
+    async def broken_ruler(market, item):
+        raise ScoringError("api down")
+
+    assert run(db, bus, no_effect, m, kind="typed", headline="Trump was killed", ruler=ruler)["rule"]["text"] == "r"
+    tick = run(db, bus, up, m, kind="typed", headline="The team shipped", ruler=broken_ruler)
+    assert tick is not None and tick["rule"] is None and tick["verdict"] == "up"
+    assert run(db, bus, up, m, kind="typed", headline="No ruler given")["rule"] is None  # a stand-in scorer brings no ruler

@@ -1,4 +1,6 @@
 """The one path every tick takes: dedupe -> score -> store -> publish."""
+import asyncio
+import json
 import logging
 import re
 import time
@@ -6,6 +8,7 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from terminal import db as store
+from terminal import rules, scoring
 from terminal.pricing import nudge
 from terminal.scoring import Rejected, Score, ScoringError, is_hidden, verdict
 
@@ -76,8 +79,14 @@ def context(db, market: dict, now: float, history: bool) -> str:
 
 async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headline: str, url: str | None = None,
                  body: str = "", published_ts: float | None = None, backfill: bool = False,
-                 now: float | None = None, likes: int | None = None, replies: int | None = None) -> dict | None:
-    """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried)."""
+                 now: float | None = None, likes: int | None = None, replies: int | None = None,
+                 ruler=None) -> dict | None:
+    """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried).
+
+    A tick that moves the price, and every spoken or typed one, also carries the sentence of the market's
+    rules that makes it matter (`ruler`, by default rules.deciding wherever the real scorer is used).
+    """
+    ruler = ruler or (rules.deciding if scorer is scoring.score else None)
     now = time.time() if now is None else now
     key = dedupe_key(kind, url, headline, now)
     if store.has_tick(db, market["id"], key):
@@ -88,8 +97,19 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     spoken = kind in ("mic", "typed")  # a judge's own sentence is new by nature: no newness check, no history
     item = (f"{clean(source, 60)}: {clean(headline, 250)}" + (f"\nPublished {day(published_ts)}." if published_ts else "")
             + (f"\n{clean(body, 2000)}" if body else ""))
+    async def rule_for() -> dict | None:
+        try:
+            return await ruler(market, item)
+        except ScoringError as e:  # the tick is worth having without its rule
+            log.warning("no rule found for %r on %s: %s", headline[:60], market["id"], e)
+
+    rule = None
     try:
-        s = await scorer(context(db, market, now, history=not spoken), item, not spoken)
+        scoring_call = scorer(context(db, market, now, history=not spoken), item, not spoken)
+        if spoken and ruler:  # side by side: a person is waiting
+            s, rule = await asyncio.gather(scoring_call, rule_for())
+        else:
+            s = await scoring_call
     except ScoringError as e:
         log.warning("scoring failed for %r on %s: %s", headline[:60], market["id"], e)
         if spoken or not (backfill or isinstance(e, Rejected)):
@@ -100,6 +120,10 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     if store.get_market(db, market["id"]) is None:
         return None  # deleted while this item was being scored
     v, confidence = verdict(s)
+    if ruler and not spoken and v != "none":
+        rule = await rule_for()
+        if store.get_market(db, market["id"]) is None:
+            return None
     made_up, latest = market["venue"] == "made_up", store.latest_price(db, market["id"])
     # A made-up price is ours alone, so it always moves from the newest value: two sentences scored
     # out of order must both count. A real market's tick records the venue price at detection time.
@@ -109,7 +133,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "url": url, "headline": headline, "up": s.up, "none": s.none, "down": s.down, "strength": s.strength,
         "verdict": v, "confidence": confidence, "price_at": price, "test": kind in ("mic", "typed"),
         "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies,
-        "title_key": story})
+        "title_key": story, "rule": rule and json.dumps(rule)})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
     # history is already in the starting price; and what moves the price must be on the tape, so a
