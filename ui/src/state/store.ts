@@ -46,6 +46,8 @@ interface State {
   /** A write was refused for want of the key: the key prompt is open. */
   needKey: boolean
   record: WeekendRecord | null
+  /** Latest streamed price of contracts that are not in the market list (related contracts). */
+  otherPrices: Record<string, number>
   recordOpen: boolean
 
   setMarkets: (list: MarketSummary[]) => void
@@ -84,6 +86,7 @@ export const useStore = create<State>((set) => ({
   presentation: false,
   needKey: false,
   record: null,
+  otherPrices: {},
   recordOpen: false,
 
   setMarkets: (list) =>
@@ -152,6 +155,7 @@ export const useStore = create<State>((set) => ({
           const { market_id, ts, price } = e.data
           const m = s.markets[market_id]
           const points = s.prices[market_id]
+          if (!m) return { otherPrices: { ...s.otherPrices, [market_id]: price } }
           return {
             markets: m ? { ...s.markets, [market_id]: { ...m, price } } : s.markets,
             prices: points ? { ...s.prices, [market_id]: [...points, { ts, price }] } : s.prices,

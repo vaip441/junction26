@@ -7,6 +7,7 @@ import { EdgeFlash } from '../components/layout/EdgeFlash'
 import { MarketList } from '../components/layout/MarketList'
 import { TopBar } from '../components/layout/TopBar'
 import { MarketHeader } from '../components/market/MarketHeader'
+import { MarketTabs } from '../components/market/MarketTabs'
 import { PriceChart } from '../components/market/PriceChart'
 import { RecordCard } from '../components/record/RecordCard'
 import { RecordView } from '../components/record/RecordView'
@@ -34,7 +35,7 @@ export function App() {
   useHotkeys()
   useRecord()
   useVoiceCallout()
-  const { id, market, ticks, prices } = useSelectedMarket()
+  const { id, market, detail, ticks, prices } = useSelectedMarket()
   const pending = useStore((s) => (id ? s.pending[id] : undefined))
   const presentation = useStore((s) => s.presentation)
   // nobody has said anything to this made-up market yet: tell the judge to talk
@@ -49,13 +50,13 @@ export function App() {
     <div className="flex h-full flex-col">
       <TopBar />
       <main
-        className={`grid min-h-0 flex-1 grid-cols-1 gap-px bg-line ${
+        className={`grid min-h-0 flex-1 grid-cols-1 gap-px bg-line max-lg:auto-rows-max max-lg:overflow-y-auto ${
           presentation ? 'lg:grid-cols-[1fr_minmax(0,0.75fr)]' : 'lg:grid-cols-[260px_1fr_380px]'
         }`}
       >
         {!presentation && (
-          <div className="flex min-h-0 flex-col bg-panel max-lg:max-h-72">
-            <Panel title="Markets" className="min-h-0 flex-1">
+          <div className="flex min-h-0 flex-col bg-panel">
+            <Panel title="Markets" className="min-h-0 flex-1 max-lg:max-h-48">
               <MarketList />
             </Panel>
             <RecordCard />
@@ -66,7 +67,7 @@ export function App() {
           {market && id ? (
             <>
               <MarketHeader market={market} />
-              <div className="relative min-h-64 flex-1 p-4">
+              <div className="relative min-h-64 flex-1 p-4 max-lg:h-80 max-lg:flex-none">
                 <PriceChart marketId={id} />
                 {silent && (
                   <div className="absolute inset-0 flex items-center justify-center bg-panel/95 p-6">
@@ -74,6 +75,7 @@ export function App() {
                   </div>
                 )}
               </div>
+              {!presentation && <MarketTabs key={id} detail={detail} />}
               {market.made_up && <SpeakBar marketId={id} />}
             </>
           ) : (
@@ -81,7 +83,7 @@ export function App() {
           )}
         </section>
 
-        <Panel title="Tape">{id ? <Tape ticks={ticks} prices={prices} madeUp={market?.made_up ?? false} pending={pending} /> : <EmptyState title="No market selected" />}</Panel>
+        <Panel title="Tape" className="max-lg:h-[36rem]">{id ? <Tape ticks={ticks} prices={prices} madeUp={market?.made_up ?? false} pending={pending} /> : <EmptyState title="No market selected" />}</Panel>
       </main>
       <EdgeFlash />
       <KeyPrompt />

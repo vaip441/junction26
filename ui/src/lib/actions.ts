@@ -1,5 +1,6 @@
 import { ApiError, api } from './api'
 import { announceTick } from './bus'
+import { loadMarket } from '../hooks/useStream'
 import { useStore } from '../state/store'
 
 /**
@@ -22,5 +23,26 @@ export async function sendTick(marketId: string, text: string, kind: 'mic' | 'ty
     return err.detail
   } finally {
     useStore.getState().removePending(marketId, key)
+  }
+}
+
+/**
+ * Track a market from a link or a question in plain words. Progress shows in the AskBar's checklist;
+ * the new market opens as soon as the backend answers. Returns true when it is now tracked.
+ */
+export async function askFor(query: string): Promise<boolean> {
+  const s = useStore.getState()
+  if (s.ask && !s.ask.marketId && !s.ask.error) return false // one at a time
+  s.startAsk(query)
+  try {
+    const market = await api.addMarket(query)
+    useStore.getState().askDone(market)
+    void loadMarket(market.id)
+    return true
+  } catch (e) {
+    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
+    if (err.status === 401) useStore.getState().setNeedKey(true)
+    useStore.getState().askFailed(err.status === 401 ? 'needs the terminal key: enter it, then ask again' : err.detail)
+    return false
   }
 }

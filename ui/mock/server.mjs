@@ -175,11 +175,11 @@ addMarket({ id: NV, venue: 'polymarket', title: 'MOCK · Will Ian Buck be the ne
     [1, { verdict: 'none', confidence: 0.8, headline: 'Nvidia stock closes flat ahead of earnings', source: 'marketwatch.com' }],
   ]
   for (const [mins, f] of seed) addTick(makeTick(NV, { ...f, ts: m(mins) }))
-  for (const [id, title, venue, p] of [
-    ['mock-nvidia-ceo-2027', 'MOCK · Nvidia CEO change announced by March 2027?', 'polymarket', 18],
-    ['mock-kx-nvidia-ceo', 'MOCK · Will Ian Buck be named Nvidia CEO? (Kalshi)', 'kalshi', 51],
+  for (const [id, title, venue, p, url] of [
+    ['mock-nvidia-ceo-2027', 'MOCK · Nvidia CEO change announced by March 2027?', 'polymarket', 18, 'https://polymarket.com/event/next-ceo-of-nvidia/nvidia-ceo-change-by-march-2027'],
+    ['mock-kx-nvidia-ceo', 'MOCK · Will Ian Buck be named Nvidia CEO? (Kalshi)', 'kalshi', 51, 'https://kalshi.com/markets/kxnvdaceo/nvidia-ceo/kxnvdaceo-buck'],
   ]) {
-    addMarket({ id, venue, title, lead_id: NV })
+    addMarket({ id, venue, title, lead_id: NV, url })
     history(id, p, 30, 1800, 0.5)
   }
 }
@@ -343,7 +343,10 @@ async function postMarket(body) {
     }
   }
 
-  const id = slug(isLink ? query.split('/').filter(Boolean).pop() : query)
+  // a related contract asked for by its own link becomes a market of its own, like the real backend
+  const related = isLink ? [...markets.values()].find((m) => m.url === query && m.lead_id) : undefined
+  if (related) related.lead_id = null
+  const id = related?.id ?? slug(isLink ? query.split('/').filter(Boolean).pop() : query)
   if (!markets.has(id)) {
     addMarket({ id, venue: isLink && /kalshi/.test(query) ? 'kalshi' : 'polymarket', url: isLink ? query : null, poll_seconds: Number(body.poll_seconds ?? 900),
       title: `MOCK · ${isLink ? id.slice(5).replace(/-/g, ' ') : query.replace(/\?*$/, '?')}` })

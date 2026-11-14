@@ -22,11 +22,16 @@ export function TopBar() {
   const togglePresentation = useStore((s) => s.togglePresentation)
   return (
     <header className="flex h-12 shrink-0 items-center gap-4 border-b border-line bg-panel px-4">
-      <span className="num text-sm font-bold tracking-widest text-text">TERMINAL</span>
+      <span className="num shrink-0 text-sm font-bold tracking-widest text-text">
+        TERMINAL
+      </span>
       {!presentation && <AskBar />}
-      <div className={`flex items-center gap-4 ${presentation ? 'ml-auto' : ''}`}>
-        <Key k="M" label={muted ? 'muted' : 'voice on'} on={!muted} onClick={toggleMute} />
-        <Key k="P" label="present" on={presentation} onClick={() => togglePresentation()} />
+      <div className={`flex shrink-0 items-center gap-4 ${presentation ? 'ml-auto' : ''}`}>
+        {/* keyboard hints: no use on a phone, and the ask box needs the width */}
+        <span className="hidden items-center gap-4 md:flex">
+          <Key k="M" label={muted ? 'muted' : 'voice on'} on={!muted} onClick={toggleMute} />
+          <Key k="P" label="present" on={presentation} onClick={() => togglePresentation()} />
+        </span>
         <ConnectionDot />
       </div>
     </header>

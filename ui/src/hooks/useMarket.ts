@@ -1,4 +1,5 @@
 import { useEffect } from 'react'
+import { api } from '../lib/api'
 import { useStore } from '../state/store'
 import { loadMarket } from './useStream'
 
@@ -11,7 +12,16 @@ export function useSelectedMarket() {
   const prices = useStore((s) => (id ? s.prices[id] : undefined))
 
   useEffect(() => {
-    if (id) void loadMarket(id)
+    if (!id) return
+    void loadMarket(id)
+    // sources and related prices change slowly: refresh the detail once a minute
+    const t = setInterval(() => {
+      api
+        .market(id)
+        .then((d) => useStore.getState().setDetail(d))
+        .catch(() => {})
+    }, 60_000)
+    return () => clearInterval(t)
   }, [id])
 
   return { id, market, detail, ticks, prices }

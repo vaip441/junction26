@@ -1,7 +1,9 @@
 import { absoluteTime, tickTime, timeAgo } from '../../lib/format'
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { Tick, TickKind } from '../../lib/types'
+import { shortSource } from '../../lib/sources'
 import { Badge } from '../common/Badge'
+import { SourceIcon } from '../common/SourceIcon'
 import { DecisionBar } from './DecisionBar'
 import { LifecycleBadge } from './LifecycleBadge'
 import { VerdictBadge } from './VerdictBadge'
@@ -15,9 +17,6 @@ const KIND_LABEL: Record<TickKind, string> = {
   typed: 'Typed',
 }
 
-function shortSource(source: string): string {
-  return source.replace(/^reddit\.com\/r\//, 'r/').replace(/^www\./, '')
-}
 
 export function TickRow({ tick, life, now }: { tick: Tick; life: Lifecycle | null; now: number }) {
   const at = tickTime(tick)
@@ -56,8 +55,11 @@ export function TickRow({ tick, life, now }: { tick: Tick; life: Lifecycle | nul
           <LifecycleBadge life={life} verdict={tick.verdict} />
         </div>
       )}
-      <p className="flex gap-3 text-[11px] text-faint">
-        <span className="truncate">{shortSource(tick.source)}</span>
+      <p className="flex items-center gap-3 text-[11px] text-faint">
+        <span className="flex min-w-0 items-center gap-1.5">
+          <SourceIcon source={tick.source} className="h-3 w-3" />
+          <span className="truncate">{shortSource(tick.source)}</span>
+        </span>
         {tick.likes != null && <span className="num">♥ {tick.likes}</span>}
         {tick.replies != null && <span className="num">↩ {tick.replies}</span>}
       </p>
