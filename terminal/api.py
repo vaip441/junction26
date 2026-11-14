@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, moves, pages, poller, replay, scoring, speech, truth, venues
+from terminal import contextdev, madeup, match, moves, pages, poller, replay, scoring, speech, truth, venues, wire
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -128,6 +128,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                                                     lambda: poller.drop_resolved(db, app.state.bus)))] if poll else []
         if poll and os.environ.get("TRUTH_FEED"):  # the feed file of trump-social-scraper, where one runs
             tasks.append(asyncio.create_task(truth.truth_loop(db, app.state.bus, app.state.scorer, os.environ["TRUTH_FEED"])))
+        if poll and os.environ.get("WIRE_FEED"):  # the article list of our own demo newsroom
+            tasks.append(asyncio.create_task(wire.wire_loop(db, app.state.bus, app.state.scorer, os.environ["WIRE_FEED"])))
         app.state.tasks = tasks
         yield
         for t in tasks:

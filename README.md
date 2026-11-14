@@ -86,6 +86,7 @@ watch it become a tick. It is also what `/` shows until the screen is built.
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |
 | `GEMINI_SPEECH_MODEL` | optional: the model that writes down what the microphone hears (same key), `gemini-3.5-transcribe` on the live service; `GEMINI_TEXT_MODEL` when unset |
 | `TRUTH_FEED` | optional: the file `trump-social-scraper` appends new posts to |
+| `WIRE_FEED` | optional: the article list of our own demo newsroom (`https://news.white-snakes.com/api/articles`), read every 2 seconds. We write those articles, so their ticks are flagged `test`: shown, never in the weekend record (`terminal/wire.py`) |
 | `PUBLIC_URL` | optional: the address the internet reaches this service at; turns on page watching, since Context.dev calls back `PUBLIC_URL/hooks/context/...` |
 
 ## Interface

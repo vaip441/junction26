@@ -72,7 +72,9 @@ demo that is very memorable and unique.
 - **A dead demo.** Nothing on screen may depend on news happening to break during the
   two minutes. Goals 1 and 4 exist to prevent this.
 - **Passing off made-up data as real.** Made-up markets and microphone or typed ticks are
-  flagged as such in the data and must never count towards the weekend record.
+  flagged as such in the data and must never count towards the weekend record. The same goes
+  for articles from our own demo newsroom (`WIRE_FEED`, read every 2 seconds so one published
+  on stage is on the tape at once): we write them, so their ticks carry `test`.
 - **A demo that only works for Nvidia.** Nothing may be specific to one market.
 
 ## Constraints
