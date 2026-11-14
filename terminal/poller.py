@@ -219,8 +219,6 @@ async def fetch_now(db, bus, scorer, market: dict, busy: set, fetch=None) -> Non
     """Search for one market right away, outside its polling interval. If an article pass is on it
     already, wait for that instead: searched twice at once, every new item would be scored twice."""
     id = market["id"]
-    if not market["queries"] or not market["filled"]:
-        return  # nothing to search with, or its first fill is still the article loop's to do (as history)
     if id in busy:
         for _ in range(120):  # a pass over one market takes well under two minutes
             if id not in busy:

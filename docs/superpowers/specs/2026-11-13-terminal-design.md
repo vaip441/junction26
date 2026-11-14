@@ -122,12 +122,13 @@ One thing runs the other way, from the price back to the web ("why did it move?"
   hours before the move began is its most likely cause, with "none of these" as a
   choice. Each item is shown to the model with how long before the move it appeared.
 - **On request.** `POST /markets/{id}/why` asks the same about the market's change over
-  the last day, for any market at any time, choosing among the day's strongest items
-  and what a search made at that moment brings.
-- **What is stored.** The move, the item (the `cause` when Decision 1 puts it at 0.4 or
-  more and above "none", otherwise only the `closest` item), the sentence of the rules a
+  the last day, for any market at any time, choosing among the day's strongest items.
+  It makes no search, so it answers in about a second.
+- **What is stored.** The move, the item (the `cause` when Decision 1 thinks it likelier
+  than "none of these", otherwise only the `closest` item), the sentence of the rules a
   cause touches, and the related contracts that moved 1.5 points or more over the same
-  stretch.
+  stretch. With a dozen items to choose from the vote is split, so a cause can carry a
+  low probability: under 0.4 the summary says "possible cause", from 0.4 "likely cause".
 
 Measured on 14 Nov: the tracked markets made about ten jumps a day, and for 10 of 11
 no item on the tape explained the jump, whether the look-back was 30 minutes or three
@@ -380,7 +381,7 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 - `GET /markets/{id}/moves?limit=`: the market's price moves, newest first (see "A
   move" below).
 - `POST /markets/{id}/why` (needs the key): why did this market move over the last
-  day? Searches the web now, takes a few seconds, and returns a move with `asked:
+  day? Answers in about a second with a move that has `asked:
   true`, which is also sent as a `move` event. Asked again within five minutes it
   returns the same answer. 409 when the price moved less than a point.
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or

@@ -83,7 +83,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         store.set_poll_seconds(db, DEMO["id"], 0)  # it moves only by what is said to it, never by articles
         app.state.wake = asyncio.Event()
         app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
-        busy = app.state.busy = set()  # markets being searched right now, by the article loop or behind a price move
+        busy = set()  # markets being searched right now, by the article loop or behind a price move
         # Context.dev can only call back an address the internet can reach: no PUBLIC_URL, no page watching
         public_url = os.environ.get("PUBLIC_URL", "")
         watch_page = (lambda db, m: pages.watch(db, m, public_url)) if public_url else None
@@ -161,9 +161,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
 
     @app.post("/markets/{id}/why", dependencies=[Depends(write_access)])
     async def why(id: str):
-        """Why did this market move over the last day? Searches the web now and answers with a move."""
-        m, st = market_or_404(id), app.state
-        move = await moves.why(st.db, st.bus, m, fetch=lambda mk: poller.fetch_now(st.db, st.bus, st.scorer, mk, st.busy))
+        """Why did this market move over the last day? Answers with a move, in about a second."""
+        move = await moves.why(app.state.db, app.state.bus, market_or_404(id))
         if move is None:
             raise HTTPException(409, "the price has not moved a point in the last day")
         return move

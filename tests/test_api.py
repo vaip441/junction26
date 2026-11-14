@@ -442,14 +442,14 @@ def test_why_is_answered_on_request_with_the_key_and_a_flat_market_is_a_409(path
 
     asked = []
 
-    async def why(db, bus, market, *, fetch):
+    async def why(db, bus, market):
         asked.append(market["id"])
         return {"summary": "Up 6.0 points in the last day."} if len(asked) == 1 else None
 
     monkeypatch.setattr(moves, "why", why)
     with TestClient(create_app(db_path=path, scorer=up, poll=False, key="k")) as c:
         h = {"X-Terminal-Key": "k"}
-        assert c.post("/markets/mu-demo/why").status_code == 401 and asked == []  # it costs searches and model calls
+        assert c.post("/markets/mu-demo/why").status_code == 401 and asked == []  # it costs model calls
         assert c.post("/markets/nope/why", headers=h).status_code == 404
         assert c.post("/markets/mu-demo/why", headers=h).json() == {"summary": "Up 6.0 points in the last day."}
         assert c.post("/markets/mu-demo/why", headers=h).status_code == 409

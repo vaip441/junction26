@@ -152,7 +152,9 @@ def test_a_move_nothing_explains_is_recorded_without_a_cause_but_with_the_closes
     nothing = (None, None, None)
     assert explained(never, ticks=()) == nothing                           # nothing was published around it
     assert explained(decide_with({"t0": 0.2, "none": 0.8})) == (None, "headline a", 0.2)   # the model says none of them
-    assert explained(decide_with({"t0": 0.3, "t1": 0.35, "none": 0.1}), ticks=("a", "b")) == (None, "headline a", 0.35)
+    assert explained(decide_with({"t0": 0.3, "t1": 0.3, "none": 0.3}), ticks=("a", "b")) == (None, "headline b", 0.3)
+    # a dozen items split the vote (seen live: best 0.35, none 0.12): the best is the cause once it beats "none"
+    assert explained(decide_with({"t0": 0.3, "t1": 0.35, "none": 0.1}), ticks=("a", "b")) == ("headline a", None, 0.35)
     assert explained(decide_with({"t7": 0.9})) == nothing                  # an odd answer
     assert explained(down) == nothing                                      # the model cannot be reached
     # a failed search still leaves what was stored
@@ -176,6 +178,10 @@ def test_a_move_says_which_related_contracts_moved_with_it_and_reads_as_one_sent
     quiet = {**out, "related": []}
     assert moves.summary(quiet) == "Down 6.0 points in 5 minutes. No news explains it."
     assert moves.summary({**quiet, "since": NOW - 86400, "from": 40.0, "to": 41.0}).startswith("Up 1.0 point in the last day.")
+    assert moves.summary({**quiet, "since": NOW - 47880}).startswith("Down 6.0 points in 13 hours.")  # not "798 minutes"
+    weak = {**quiet, "explained": True, "confidence": 0.17, "cause": {"source": "a.example", "headline": "A headline"}}
+    assert moves.summary(weak) == "Down 6.0 points in 5 minutes. Possible cause: a.example: A headline"
+    assert moves.summary({**weak, "confidence": 0.4}) == "Down 6.0 points in 5 minutes. Likely cause: a.example: A headline"
 
 
 def test_what_the_search_behind_a_move_finds_counts_even_though_it_arrives_after_the_move_was_seen(monkeypatch):
@@ -200,7 +206,7 @@ def test_why_a_market_moved_today_is_answered_on_request_from_its_strongest_item
     tick(db, "weak", ago=1000, strength=0.1)
     tick(db, "strong", ago=50000, strength=-0.9)
     tick(db, "yesterday", ago=100000, strength=1.0)
-    ask = lambda **kw: asyncio.run(moves.why(db, bus, m, fetch=no_fetch, ruler=no_rule, now=NOW, **kw))
+    ask = lambda **kw: asyncio.run(moves.why(db, bus, m, ruler=no_rule, now=NOW, **kw))
     out = ask(decide=decide_with({"t0": 0.8, "none": 0.1}, seen))
     assert (out["since"], out["from"], out["to"]) == (NOW - 86400, 30.0, 44.0)
     criteria = seen[0][1]["cause"]["criteria"]
@@ -211,7 +217,7 @@ def test_why_a_market_moved_today_is_answered_on_request_from_its_strongest_item
     async def never(input, questions):
         raise AssertionError("asked again within minutes")
 
-    assert ask(decide=never) == out and len(shown(db)) == 1  # asked twice in a row: the same answer, no second search
+    assert ask(decide=never) == out and len(shown(db)) == 1  # asked twice in a row: the same answer, no second call
     assert moves.find(db, NOW) == []
     prices(db, "m", (-60, 48.0))  # a jump right after: the answer given on request does not hide it
     assert len(moves.find(db, NOW + 60)) == 1
@@ -222,15 +228,15 @@ def test_a_market_that_did_not_move_today_or_has_no_prices_has_nothing_to_explai
     m = market(db)
 
     async def never(*a, **kw):
-        raise AssertionError("searched or asked for a flat market")
+        raise AssertionError("asked the model about a flat market")
 
-    ask = lambda: asyncio.run(moves.why(db, Bus(), m, fetch=never, decide=never, ruler=no_rule, now=NOW))
+    ask = lambda: asyncio.run(moves.why(db, Bus(), m, decide=never, ruler=no_rule, now=NOW))
     assert ask() is None
     prices(db, "m", (5000, 40.0), (0, 40.6))
     assert ask() is None and shown(db) == []
     young = market(db, "young")  # tracked for an hour: its first price stands in for yesterday's
     prices(db, "young", (3600, 20.0), (0, 26.0))
-    out = asyncio.run(moves.why(db, Bus(), young, fetch=no_fetch, decide=decide_with({}), ruler=no_rule, now=NOW))
+    out = asyncio.run(moves.why(db, Bus(), young, decide=decide_with({}), ruler=no_rule, now=NOW))
     assert (out["since"], out["from"], out["to"]) == (NOW - 3600, 20.0, 26.0)
 
 
