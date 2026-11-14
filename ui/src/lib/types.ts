@@ -71,7 +71,10 @@ export interface MarketEvent {
   market_id: string | null
   status: string
   query?: string
+  /** On `found contracts`: how many groups of contracts matched. */
   count?: number
+  /** On `ready`: how many items the instant fill put on the tape. */
+  ticks?: number
 }
 
 export interface PriceEvent {

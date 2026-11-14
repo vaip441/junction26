@@ -13,6 +13,21 @@ export interface PendingTick {
 
 let pendingKey = 0
 
+/**
+ * A link or question being turned into a tracked market. Its `market` events carry `query` until the
+ * market exists; after that (tracking, finding sources, ready) only `market_id`, so both are followed.
+ */
+export interface Ask {
+  query: string
+  steps: MarketEvent[]
+  /** Set once the POST answers with the market now tracked. */
+  marketId: string | null
+  /** False when no contract matched and a market was made up for the question. */
+  matched: boolean | null
+  error: string | null
+  started: number
+}
+
 interface State {
   markets: Record<string, MarketSummary>
   order: string[]
@@ -22,7 +37,7 @@ interface State {
   selectedId: string | null
   stream: StreamStatus
   /** Live `market` status steps for a plain-words question being worked on. */
-  ask: { query: string; steps: MarketEvent[] } | null
+  ask: Ask | null
   pending: Record<string, PendingTick[]>
   /** Stage controls. */
   muted: boolean
@@ -38,6 +53,8 @@ interface State {
   select: (id: string | null) => void
   setStream: (s: StreamStatus) => void
   startAsk: (query: string) => void
+  askDone: (market: MarketDetail & { matched: boolean }) => void
+  askFailed: (error: string) => void
   clearAsk: () => void
   apply: (e: StreamEvent) => void
   addPending: (marketId: string, text: string, kind: 'mic' | 'typed') => number
@@ -75,7 +92,18 @@ export const useStore = create<State>((set) => ({
   setPrices: (id, prices) => set((s) => ({ prices: { ...s.prices, [id]: prices } })),
   select: (id) => set({ selectedId: id }),
   setStream: (stream) => set({ stream }),
-  startAsk: (query) => set({ ask: { query, steps: [] } }),
+  startAsk: (query) =>
+    set({ ask: { query, steps: [], marketId: null, matched: null, error: null, started: Date.now() / 1000 } }),
+  askDone: (d) =>
+    set((s) => ({
+      ask: s.ask ? { ...s.ask, marketId: d.id, matched: d.matched } : s.ask,
+      // the new market joins the list and is opened at once
+      markets: { ...s.markets, [d.id]: { ...s.markets[d.id], ...d } },
+      details: { ...s.details, [d.id]: d },
+      order: s.order.includes(d.id) ? s.order : [...s.order, d.id],
+      selectedId: d.id,
+    })),
+  askFailed: (error) => set((s) => ({ ask: s.ask ? { ...s.ask, error } : s.ask })),
   clearAsk: () => set({ ask: null }),
   addPending: (marketId, text, kind) => {
     const key = ++pendingKey
@@ -131,8 +159,9 @@ export const useStore = create<State>((set) => ({
               selectedId: s.selectedId === ev.market_id ? (s.order.find((id) => id !== ev.market_id) ?? null) : s.selectedId,
             }
           }
-          if (ev.query && s.ask && ev.query === s.ask.query) {
-            return { ask: { ...s.ask, steps: [...s.ask.steps, ev] } }
+          const ask = s.ask
+          if (ask && ((ev.query && ev.query === ask.query) || (ev.market_id && ev.market_id === ask.marketId))) {
+            return { ask: { ...ask, steps: [...ask.steps, ev] } }
           }
           return {}
         }

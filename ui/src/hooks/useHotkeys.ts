@@ -1,9 +1,10 @@
 import { useEffect } from 'react'
 import { unlockAudio } from '../lib/sound'
+import { ASK_INPUT_ID } from '../components/input/AskBar'
 import { useStore } from '../state/store'
 
 /**
- * Stage control from the keyboard: P presentation, M mute, Space mic (made-up markets), 1-9 jump to a
+ * Stage control from the keyboard: / ask, P presentation, M mute, Space mic (made-up markets), 1-9 jump to a
  * market, Esc leaves presentation. Ignored while typing in a field, except Esc, which leaves the field.
  */
 export function useHotkeys(): void {
@@ -16,14 +17,22 @@ export function useHotkeys(): void {
       const target = e.target as HTMLElement | null
       const typing = target?.closest('input, textarea, [contenteditable="true"]')
       if (e.key === 'Escape') {
+        const s = useStore.getState()
         if (typing) (target as HTMLElement).blur()
-        else useStore.getState().togglePresentation(false)
+        else if (s.ask) s.clearAsk()
+        else s.togglePresentation(false)
         return
       }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return
 
       const s = useStore.getState()
-      if (e.key === 'p' || e.key === 'P') s.togglePresentation()
+      if (e.key === '/') {
+        const input = document.getElementById(ASK_INPUT_ID)
+        if (input) {
+          e.preventDefault()
+          input.focus()
+        }
+      } else if (e.key === 'p' || e.key === 'P') s.togglePresentation()
       else if (e.key === 'm' || e.key === 'M') s.toggleMute()
       else if (e.key === ' ') {
         const m = s.selectedId ? s.markets[s.selectedId] : undefined
