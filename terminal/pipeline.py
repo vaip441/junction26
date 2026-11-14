@@ -41,7 +41,10 @@ def title_key(headline: str) -> str | None:
     words = lambda t: re.findall(r"[^\W_]+", t.casefold())
     cut = PUBLISHER.sub("", headline.strip())
     kept = words(cut) if len(words(cut)) >= 4 else words(headline)
-    return " ".join(kept[:12]) if len(kept) >= 4 else None
+    return " ".join(kept[:40]) if len(kept) >= 4 else None  # the whole headline: ones that only start alike differ
+
+
+STORY_SECONDS = 3 * 86400  # a headline counts as the same story this long; a recurring one is new after that
 
 
 def clean(text: str, limit: int) -> str:
@@ -92,7 +95,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     if store.has_tick(db, market["id"], key):
         return None
     story = title_key(headline) if kind == "article" else None  # posts: many people post the same words
-    if story and store.has_title(db, market["id"], story):
+    if story and store.has_title(db, market["id"], story, now - STORY_SECONDS):
         return None
     spoken = kind in ("mic", "typed")  # a judge's own sentence is new by nature: no newness check, no history
     item = (f"{clean(source, 60)}: {clean(headline, 250)}" + (f"\nPublished {day(published_ts)}." if published_ts else "")

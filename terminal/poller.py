@@ -7,7 +7,7 @@ from urllib.parse import urlsplit
 
 from terminal import contextdev, googlenews, madeup, posts, venues, watch
 from terminal import db as store
-from terminal.pipeline import dedupe_key, ingest, public, title_key
+from terminal.pipeline import STORY_SECONDS, dedupe_key, ingest, public, title_key
 from terminal.scoring import Score
 
 log = logging.getLogger(__name__)
@@ -123,7 +123,11 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             story = title_key(r["title"]) if kind == "article" else None  # one story, many outlets and addresses
             if key in fresh or store.has_tick(db, market["id"], key):
                 continue
-            if story and (story in stories or store.has_title(db, market["id"], story)):
+            # the web search is told which sites are not news; the news index and Google News are held to the same list
+            host = r.get("source") or urlsplit(r["url"]).netloc.lower().removeprefix("www.")
+            if kind == "article" and any(host == site or host.endswith("." + site) for site in NOT_NEWS + POST_SITES):
+                continue
+            if story and (story in stories or store.has_title(db, market["id"], story, time.time() - STORY_SECONDS)):
                 continue
             fresh[key] = (kind, r)
             stories.add(story)

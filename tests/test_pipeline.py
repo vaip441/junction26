@@ -299,3 +299,20 @@ def test_a_spoken_sentence_always_gets_its_rule_and_a_failing_lookup_loses_nothi
     tick = run(db, bus, up, m, kind="typed", headline="The team shipped", ruler=broken_ruler)
     assert tick is not None and tick["rule"] is None and tick["verdict"] == "up"
     assert run(db, bus, up, m, kind="typed", headline="No ruler given")["rule"] is None  # a stand-in scorer brings no ruler
+
+
+def test_headlines_that_only_start_alike_are_different_stories():
+    from terminal.pipeline import title_key
+
+    a = "Stock market today: Dow, S&P 500 and Nasdaq futures slip as traders wait for the Fed decision on rates"
+    b = "Stock market today: Dow, S&P 500 and Nasdaq futures slip as traders wait for the jobs report on Friday"
+    assert title_key(a) != title_key(b)
+
+
+def test_a_headline_seen_days_ago_does_not_hide_todays_story():
+    db, bus, q, m = setup(venue="kalshi")
+    day = 86400
+    old = run(db, bus, up, m, url="https://a.example/monday", headline="Stock market today: what to watch this morning", now=10 * day)
+    soon = run(db, bus, up, m, url="https://b.example/copy", headline="Stock market today: what to watch this morning", now=11 * day)
+    later = run(db, bus, up, m, url="https://a.example/friday", headline="Stock market today: what to watch this morning", now=14 * day)
+    assert old is not None and soon is None and later is not None  # a recurring headline is a new story after three days

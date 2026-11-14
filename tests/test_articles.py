@@ -823,3 +823,28 @@ def test_google_news_being_down_does_not_fail_the_pass():
 
     assert asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape,
                                              gnews=gnews)) == 2
+
+
+def test_sites_kept_out_of_the_news_search_are_kept_out_of_every_news_source():
+    db, bus, m = setup(queries=("a",))
+    store.set_companies(db, "m", ["Nvidia"])
+    item = lambda url, title, **kw: {"url": url, "title": title, "description": "", "text": "", "published": time.time() - 60, **kw}
+
+    async def search(query, **kw):
+        return []
+
+    async def gnews(query):
+        return [item("https://news.google.com/rss/articles/C1", "Odds shift on the next chief executive", source="polymarket.com"),
+                item("https://news.google.com/rss/articles/C2", "Thread about the next chief executive", source="old.reddit.com"),
+                item("https://news.google.com/rss/articles/C3", "Board names a new chief executive", source="reuters.com")]
+
+    async def news(company, **kw):
+        return [item("https://en.wikipedia.org/wiki/Nvidia", "Nvidia, the free encyclopedia entry"),
+                item("https://x.com/someone/status/2120971125412827486", "Someone on X about the chief executive")]
+
+    async def scrape(url):
+        return "", None
+
+    asyncio.run(poller.fetch_articles(db, bus, up, store.get_market(db, "m"), backfill=False, num_results=10,
+                                      search=search, scrape=scrape, gnews=gnews, news=news))
+    assert [t["source"] for t in store.ticks(db, "m", include_hidden=True)] == ["reuters.com"]

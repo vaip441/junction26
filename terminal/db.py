@@ -141,9 +141,10 @@ def has_tick(db, market_id: str, dedupe_key: str) -> bool:
                       (market_id, dedupe_key)).fetchone() is not None
 
 
-def has_title(db, market_id: str, title_key: str) -> bool:
-    """Whether this market already has an article with this headline, from any outlet or address."""
-    return db.execute("SELECT 1 FROM ticks WHERE market_id = ? AND title_key = ?", (market_id, title_key)).fetchone() is not None
+def has_title(db, market_id: str, title_key: str, since: float) -> bool:
+    """Whether this market got an article with this headline, from any outlet or address, since a time."""
+    return db.execute("SELECT 1 FROM ticks WHERE market_id = ? AND title_key = ? AND ts >= ?",
+                      (market_id, title_key, since)).fetchone() is not None
 
 
 def add_tick(db, tick: dict) -> dict | None:
