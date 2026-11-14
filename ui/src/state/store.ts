@@ -30,6 +30,20 @@ export interface Ask {
   matched: boolean | null
   error: string | null
   started: number
+  /** When the backend said the market is ready (its tape filled); the search took `finished - started`. */
+  finished: number | null
+  /** The market's own panel is uncovered: the question no longer fills the centre of the screen. */
+  opened: boolean
+  /** The question has finished fading away: it is off the screen. */
+  uncovered: boolean
+  /** Events that name a market, received before the POST said which market this ask became. */
+  early: MarketEvent[]
+}
+
+/** Context.dev use while a question is worked on: credits spent since it was asked, and requests this minute. */
+export interface Meter {
+  credits: number | null
+  perMinute: number
 }
 
 interface State {
@@ -49,6 +63,7 @@ interface State {
   stream: StreamStatus
   /** Live `market` status steps for a plain-words question being worked on. */
   ask: Ask | null
+  meter: Meter | null
   pending: Record<string, PendingTick[]>
   /** Stage controls. */
   micOn: boolean
@@ -74,6 +89,10 @@ interface State {
   askDone: (market: MarketDetail & { matched: boolean }) => void
   askFailed: (error: string) => void
   clearAsk: () => void
+  openAsk: () => void
+  uncoverAsk: () => void
+  finishAsk: () => void
+  setMeter: (m: Meter | null) => void
   apply: (e: StreamEvent) => void
   addPending: (marketId: string, text: string, kind: 'mic' | 'typed') => number
   removePending: (marketId: string, key: number) => void
@@ -97,6 +116,7 @@ export const useStore = create<State>((set) => ({
   selectedId: null,
   stream: 'connecting',
   ask: null,
+  meter: null,
   pending: {},
   micOn: false,
   presentation: false,
@@ -122,18 +142,36 @@ export const useStore = create<State>((set) => ({
   select: (id) => set({ selectedId: id }),
   setStream: (stream) => set({ stream }),
   startAsk: (query) =>
-    set({ ask: { query, steps: [], marketId: null, matched: null, error: null, started: Date.now() / 1000 } }),
+    set({
+      ask: { query, steps: [], marketId: null, matched: null, error: null, started: Date.now() / 1000, finished: null, opened: false, uncovered: false, early: [] },
+      meter: null,
+    }),
   askDone: (d) =>
-    set((s) => ({
-      ask: s.ask ? { ...s.ask, marketId: d.id, matched: d.matched } : s.ask,
+    set((s) => {
+      // a market tracked before answers at once with its tape already filled: there is no search to wait for
+      const known = d.sources.length > 0
+      const ask = s.ask
+      // what the stream said about this market before the POST named it
+      const early = ask ? ask.early.filter((ev) => ev.market_id === d.id) : []
+      const ready = early.some((ev) => ev.status === 'ready')
+      return {
+      ask: ask
+        ? { ...ask, marketId: d.id, matched: d.matched, steps: [...ask.steps, ...early], early: [],
+            finished: known || ready ? Date.now() / 1000 : ask.finished }
+        : ask,
       // the new market joins the list and is opened at once
       markets: { ...s.markets, [d.id]: { ...s.markets[d.id], ...d } },
       details: { ...s.details, [d.id]: d },
       order: s.order.includes(d.id) ? s.order : [...s.order, d.id],
       selectedId: d.id,
-    })),
+      }
+    }),
   askFailed: (error) => set((s) => ({ ask: s.ask ? { ...s.ask, error } : s.ask })),
-  clearAsk: () => set({ ask: null }),
+  clearAsk: () => set({ ask: null, meter: null }),
+  openAsk: () => set((s) => (s.ask ? { ask: { ...s.ask, opened: true } } : {})),
+  uncoverAsk: () => set((s) => (s.ask ? { ask: { ...s.ask, uncovered: true } } : {})),
+  finishAsk: () => set((s) => (s.ask && s.ask.finished == null ? { ask: { ...s.ask, finished: Date.now() / 1000 } } : {})),
+  setMeter: (meter) => set({ meter }),
   addPending: (marketId, text, kind) => {
     const key = ++pendingKey
     set((s) => ({ pending: { ...s.pending, [marketId]: [{ key, text, kind }, ...(s.pending[marketId] ?? [])] } }))
@@ -205,7 +243,11 @@ export const useStore = create<State>((set) => ({
           }
           const ask = s.ask
           if (ask && ((ev.query && ev.query === ask.query) || (ev.market_id && ev.market_id === ask.marketId))) {
-            return { ask: { ...ask, steps: [...ask.steps, ev] } }
+            const finished = ev.status === 'ready' && ask.finished == null ? Date.now() / 1000 : ask.finished
+            return { ask: { ...ask, steps: [...ask.steps, ev], finished } }
+          }
+          if (ask && ask.marketId == null && ev.market_id) {
+            return { ask: { ...ask, early: [...ask.early, ev].slice(-20) } } // may be about the market being made
           }
           return {}
         }

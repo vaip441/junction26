@@ -29,6 +29,8 @@ const MAX_MARKERS = 300
 const MAX_LEAD_LINES = 6
 /** Of those, how many carry their "N min early" label (more overlap and become unreadable). */
 const MAX_LEAD_LABELS = 3
+/** The price axis never spans less than this many points, so a flat price is a flat line with distinct labels. */
+const MIN_SPAN = 6
 
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -102,6 +104,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
 
   const prices = useStore((s) => s.prices[marketId])
   const ticks = useStore((s) => s.ticks[marketId])
+  // a market asked for just now: once the question leaves the centre of the screen, its history is wiped in
+  const wiping = useStore((s) => s.ask?.marketId === marketId && s.ask.opened)
   const moves = useStore((s) => s.moves[marketId])
   const market = useStore((s) => s.markets[marketId])
   const presentation = useStore((s) => s.presentation)
@@ -130,6 +134,15 @@ export function PriceChart({ marketId }: { marketId: string }) {
       priceLineColor: text,
       priceLineStyle: LineStyle.Dotted,
       lastValueVisible: true,
+      // a price that has barely moved would otherwise be stretched until every axis label rounds to the same %
+      autoscaleInfoProvider: (original: () => { priceRange: { minValue: number; maxValue: number } | null } | null) => {
+        const info = original()
+        const r = info?.priceRange
+        if (!info || !r || r.maxValue - r.minValue >= MIN_SPAN) return info
+        const mid = (r.minValue + r.maxValue) / 2
+        const min = Math.max(0, Math.min(100 - MIN_SPAN, mid - MIN_SPAN / 2))
+        return { ...info, priceRange: { minValue: min, maxValue: min + MIN_SPAN } }
+      },
     })
     chart.current = c
     area.current = s
@@ -218,6 +231,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
 
     for (const t of (ticks ?? []).slice(0, MAX_MARKERS)) {
       if (t.verdict === 'none') continue
+      // earlier coverage whose date is not known yet has no place on a time axis: "when we found it" is now
+      if (t.backfill && t.published_ts == null) continue
       const at = snap(times, tickTime(t))
       if (at == null) continue // before the price history starts
       const colour = t.verdict === 'up' ? up : down
@@ -303,6 +318,9 @@ export function PriceChart({ marketId }: { marketId: string }) {
   }, [ticks, moves, data, prices, market?.made_up, now, presentation])
 
   const tick = hover?.tick
+  // calls made before the first price we have: real, on the tape, but with no price to pin them to
+  const first = data[0]?.time
+  const before = first == null ? 0 : (ticks ?? []).filter((t) => t.verdict !== 'none' && t.published_ts != null && t.published_ts < first).length
   const empty =
     prices === undefined
       ? 'Loading prices…'
@@ -315,10 +333,23 @@ export function PriceChart({ marketId }: { marketId: string }) {
   return (
     <div className="relative h-full min-h-56">
       <div ref={box} className="absolute inset-0" />
+      {wiping && !empty && (
+        // the price history sweeps in from the left: a cover over the plot slides away (pure CSS, so it is
+        // smooth however busy or throttled the page is); the price axis on the right stays put
+        <div className="pointer-events-none absolute inset-y-0 left-0 right-14 overflow-hidden">
+          <div className="chart-wipe absolute inset-0" />
+        </div>
+      )}
       {empty && (
         <div className="absolute inset-0">
           <EmptyState title={empty} />
         </div>
+      )}
+      {!empty && before > 0 && first != null && (
+        <p className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[70%] rounded bg-panel/90 px-2 py-1 text-[11px] leading-snug text-muted">
+          Price history starts {new Date(first * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}.{' '}
+          <span className="num text-text">{before}</span> earlier {before === 1 ? 'call is' : 'calls are'} on the tape, from before this chart starts.
+        </p>
       )}
       {hover?.move && !hover.tick && hover.move.market_id === marketId && (
         <div

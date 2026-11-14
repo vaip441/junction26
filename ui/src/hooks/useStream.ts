@@ -25,7 +25,7 @@ export function useStream(): void {
         if (e.type === 'market' && e.data.market_id && !store.markets[e.data.market_id] && e.data.status !== 'deleted') {
           void refreshMarkets()
         }
-        // the backend fills a new market's tape and sources in one burst, without a tick event each: fetch them
+        // the fill is over: its sources, and anything the stream did not carry, are fetched once
         if (e.type === 'market' && e.data.status === 'ready' && e.data.market_id) {
           void refreshMarkets()
           if (e.data.market_id === useStore.getState().selectedId) void loadMarket(e.data.market_id)

@@ -82,7 +82,7 @@ ui/
       layout/            TopBar, MarketList, Shell, ConnectionDot
       market/            MarketHeader, PriceChart, RelatedContracts, SourcesPanel, RulesPanel
       tape/              Tape, TickRow, VerdictBadge, ConfidenceBar, KindLabel
-      input/             AskBar, AskProgress, MicBar, TypeTickBox, KeyPrompt
+      input/             AskBar, AskStage, MicBar, TypeTickBox, KeyPrompt
       record/            RecordCard, RecordView
       common/            Price, Points, TimeAgo, Badge, Spinner-with-words, EmptyState
     hooks/               useStream, useMarket, useSpeechInput, useHotkeys
@@ -102,7 +102,7 @@ Mirror the spec exactly: `MarketSummary`, `MarketDetail` (+ `related`, `sources`
 `MarketDetail` gains `companies: string[]`.
 
 ### `lib/api.ts`
-- Base URL from `VITE_API_URL` (default `http://localhost:8000`).
+- Base URL from `VITE_API_URL` (default `http://localhost:18911`, the real backend).
 - Reads need nothing. Writes (`POST /markets`, `POST /markets/{id}/ticks`, `DELETE /markets/{id}`)
   send `X-Terminal-Key`, read from `localStorage`; on 401, `KeyPrompt` asks for it once and retries.
 - Errors surface the backend's `detail` text verbatim (it is already written for people): 422
@@ -133,7 +133,8 @@ markets have no moves: skip the request for them.
 | **MarketHeader** | Title, venue badge (Kalshi / Polymarket / MADE UP), big animated `Price`, `Points` change (24 h), ticks today, link out to the venue. Made-up market with `price: null` shows "setting starting odds from coverage…". |
 | **PriceChart** | `lightweight-charts` line series from `/prices`. Each up/down tick is a dot on the line at `published_ts ?? ts` (green up, red down, size by `strength`, a soft ring on strong calls, dimmed for backfill). Hover a dot → its headline; click → scroll the tape to it. Each `move` is a shaded band from `since` to `ts` in the move's colour (see "Why did it move?"). |
 | **Tape / TickRow** | Verdict badge + confidence %, `KindLabel` (ARTICLE/POST/SPOKEN/TYPED/FILING/PAGE), source (`x.com/handle`, `r/sub`, domain), headline (links out), time, likes/replies for X. `none` verdicts shown grey and collapsed to one line. A tick with a `rule` shows that sentence as a one-line quote under the headline; a tick that is the `cause` of a move carries a `MOVED THE PRICE 24% → 20%` badge. Truth Social posts are `post` ticks with source `truthsocial.com/@realDonaldTrump`: shown as `@realDonaldTrump` with the Truth Social logo. |
-| **AskBar** | One input for a link or plain words. On submit shows `AskProgress`: the live `market` status steps as a checklist, then jumps to the new market. Errors inline with the backend's text. |
+| **AskBar** | One input for a link or plain words. What happens next is shown on the centre of the screen, not in the bar (see AskStage). |
+| **AskStage** | The ask, as a sequence on the main stage. (1) The question takes over the centre panel: the judge's words large, a clock to a tenth of a second, and a Context.dev meter (credits spent on this question, from `GET /status`). (2) The markets found drop in as cards (`found contracts` carries one per market: venue, title, price); on `picked` the winner lifts out and the rest step back. Errors show here with the backend's text. (3) The question fades, the market opens and its week of price history is wiped in left to right. A strip over the chart shows the search phrases as chips (`finding sources` carries them), then "Found 148 items. Scoring the 50 most relevant." (`scoring`). (4) Items land on the tape as they are scored: the backend streams each one, so this is live, not staged; each row opens in place so the rows under it glide down. (5) On `ready` the strip ends on one line: "Read 148 items in 24 seconds. 10 made the tape, 4 are calls. Market says 25%." A market tracked before answers at once and goes straight to the closing line. Every animation is CSS (transform, opacity, grid rows), not timers, so it stays smooth on a slow or throttled page. |
 | **MicBar** | Only on made-up markets. Web Speech API `SpeechRecognition` (Chrome), continuous, final results only → `POST /ticks {kind: "mic"}`. Shows the live transcript. If recognition is unavailable or the hall is loud, `TypeTickBox` is the fallback (same endpoint, `kind: "typed"`). |
 | **RelatedContracts** | Other deadlines / the other venue, with prices; "track" button promotes one to its own market via its link. |
 | **MovesPanel** (new tab, first in the row, real markets only) | "Why did it move?": one row per move, newest first: `24% → 20%` in the move's colour, the time span, then `likely cause (65%)` with the cause's source logo and headline, and the rule sentence quoted beneath. A move with no cause says "no cause found on the web" in grey; never hide it. Click a row's cause → the tape scrolls to it; click its rule → the Rules tab opens on that sentence. |
@@ -216,7 +217,6 @@ impact for the effort. Tier 1 uses data the backend already sends, so none of it
 | **Audience mode (QR code)** | A QR code in the corner of the demo market opens the UI on a phone in a "talk to the market" view (one text box, one big price). The whole room moves the price, not only one judge. Put the write key in the URL *fragment* (`#k=…`), not the query, so it never reaches a server log. Needs `qrcode` (tiny) and the deployed URL. The most memorable beat there could be. |
 | **Weekend replay (time-lapse)** | A scrubber on any market replays the weekend at 60–600×: ticks land, the price moves. Purely client-side from `/ticks` + `/prices`. It doubles as the **fallback for beat 2** if no news breaks, and as a strong opener for beat 4 ("here's Friday to Sunday in 20 seconds"). |
 | **Live-web radar** | A slow radar sweep in the Sources panel; each watched page and source is a blip that flashes on `page_check` and on each new tick. The challenge is "reacts to the live web", and this shows the terminal watching it. |
-| **Ask flow, shown working** | During `AskProgress`, show the actual search phrases (`queries`) typing out, then the found contracts dropping in as cards with venue and price before the jump. The wait looks like the terminal working, not loading. |
 
 ### Tier 3: finishing touches
 
@@ -244,7 +244,7 @@ Each step ends with something demoable; stop where time runs out.
    moves the demo market's price on screen. *Beat 1 works by typing.*
 3. **Voice.** MicBar. *Beat 1 complete.*
 4. **Chart.** PriceChart with tick markers, MarketList with switching. *Beat 2 works.*
-5. **Ask.** AskBar + AskProgress + error states + KeyPrompt. *Beat 3 works.*
+5. **Ask.** AskBar + AskStage + error states + KeyPrompt. *Beat 3 works.*
 6. **Record.** RecordCard and full-screen RecordView. *Beat 4 works.*
 7. **Polish for the stage.** Presentation mode, hotkeys, price flash/count animation, tick slide-in,
    related/sources/rules tabs, responsive stacking.
@@ -262,7 +262,7 @@ Each step ends with something demoable; stop where time runs out.
 | No news breaks during the demo | Backend instant fill; the tape is already full when a market opens |
 | No price jumps during the demo | Past moves are stored: the Moves tab and the chart bands are already there when the market opens |
 | Stream drops on venue wifi | Auto-reconnect + refetch; ConnectionDot shows it honestly |
-| Plain-words search is slow | AskProgress narrates each step so the wait reads as work, not a hang |
+| Plain-words search is slow | AskStage narrates each step on the centre of the screen so the wait reads as work, not a hang |
 | Scoring down (503) | Inline "scoring unavailable, try again", the typed sentence stays in the box |
 
 ## Open questions

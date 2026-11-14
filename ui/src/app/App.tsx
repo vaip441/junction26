@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import { EmptyState } from '../components/common/EmptyState'
+import { AskStrip, AskTakeover } from '../components/input/AskStage'
 import { JudgePrompt } from '../components/input/JudgePrompt'
 import { KeyPrompt } from '../components/input/KeyPrompt'
 import { SpeakBar } from '../components/input/SpeakBar'
@@ -14,6 +15,7 @@ import { RecordCard } from '../components/record/RecordCard'
 import { RecordView } from '../components/record/RecordView'
 import { Tape } from '../components/tape/Tape'
 import { useSelectedMarket } from '../hooks/useMarket'
+import { useAskShow } from '../hooks/useAskShow'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useRecord } from '../hooks/useRecord'
 import { useStream } from '../hooks/useStream'
@@ -34,7 +36,10 @@ export function App() {
   useStream()
   useHotkeys()
   useRecord()
+  useAskShow()
   const { id, market, detail, ticks, prices } = useSelectedMarket()
+  // a question fills the centre of the screen: the tape of the market behind it would only distract
+  const asking = useStore((s) => s.ask != null && !s.ask.opened && !s.ask.error)
   const pending = useStore((s) => (id ? s.pending[id] : undefined))
   const presentation = useStore((s) => s.presentation)
   // nobody has said anything to this made-up market yet: tell the judge to talk
@@ -62,15 +67,17 @@ export function App() {
           </div>
         )}
 
-        <section className="flex min-h-0 flex-col bg-panel">
+        <section className="relative flex min-h-0 flex-col bg-panel">
+          <AskTakeover />
           {market && id ? (
             <>
               <MarketHeader market={market} />
               <div className="relative min-h-64 flex-1 p-4 max-lg:h-80 max-lg:flex-none">
                 <PriceChart marketId={id} />
                 {!market.made_up && <MoveBanner marketId={id} />}
+                <AskStrip marketId={id} />
                 {silent && (
-                  <div className="absolute inset-0 flex items-center justify-center bg-panel/95 p-6">
+                  <div className="absolute inset-0 z-10 flex items-center justify-center bg-panel p-6">
                     <JudgePrompt />
                   </div>
                 )}
@@ -83,7 +90,15 @@ export function App() {
           )}
         </section>
 
-        <Panel title="Tape" className="max-lg:h-[36rem]">{id ? <Tape ticks={ticks} prices={prices} madeUp={market?.made_up ?? false} pending={pending} /> : <EmptyState title="No market selected" />}</Panel>
+        <Panel title="Tape" className="max-lg:h-[36rem]">
+          {asking ? (
+            <EmptyState title="The tape fills as the terminal reads the web">Each item it scores lands here.</EmptyState>
+          ) : id ? (
+            <Tape ticks={ticks} prices={prices} madeUp={market?.made_up ?? false} pending={pending} />
+          ) : (
+            <EmptyState title="No market selected" />
+          )}
+        </Panel>
       </main>
       <EdgeFlash />
       <KeyPrompt />

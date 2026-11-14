@@ -382,16 +382,37 @@ function slug(text) {
   return `mock-${text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}`
 }
 
-/** Fill a new market's tape in one burst, like the backend's instant fill. */
-function instantFill(id) {
-  const n = Math.round(rand(6, 12))
-  for (let i = 0; i < n; i++) {
-    const v = pick(['up', 'down', 'none', 'none'])
-    const ts = now() - rand(3600, 3 * 86400)
-    addTick(makeTick(id, { ts, verdict: v, strength: rand(0.1, 0.8), confidence: rand(0.5, 0.9), backfill: true, headline: pick(LIVE_HEADLINES[v]), source: pick(SOURCES) }))
+/**
+ * A new market's first fill, like the backend's: it says what it searches with, how many items it found and
+ * how many of those it scores, then each scored item worth showing arrives as a tick (earlier coverage:
+ * found now, published before), and "ready" ends it.
+ */
+async function fill(id, words) {
+  const m = markets.get(id)
+  if (!m) return
+  await sleep(800) // the model writes the search phrases
+  if (!m.queries.length) {
+    const core = words.replace(/[?.!]+$/, '').replace(/^(will|is|are|does|do|can)\s+/i, '')
+    m.queries = [core, `${core} latest news`, `${core} announcement`, `${core} odds`]
   }
-  ticks.get(id).sort((a, b) => b.ts - a.ts)
-  return n
+  send('market', { market_id: id, status: 'finding sources', queries: m.queries })
+  await sleep(1800)
+  if (!markets.has(id)) return
+  const found = Math.round(rand(90, 190))
+  const scored = Math.min(found, 50)
+  send('market', { market_id: id, status: 'scoring', found, scored })
+  const shown = Math.round(rand(8, 18))
+  for (let i = 0; i < shown; i++) {
+    await sleep(rand(120, 520)) // scored ten at a time: they land in uneven bursts
+    if (!markets.has(id)) return
+    const v = pick(['up', 'down', 'none', 'none'])
+    const t = makeTick(id, { verdict: v, strength: rand(0.1, 0.9), confidence: rand(0.5, 0.9), backfill: true,
+      published_ts: now() - rand(1800, 3 * 86400), headline: pick(LIVE_HEADLINES[v]), source: pick(SOURCES) })
+    if (v !== 'none' && Math.abs(t.strength) >= 0.5) t.rule = ruleOf(m) // history: only a strong call has its rule looked up
+    emitTick(t)
+  }
+  if (m.venue === 'made_up' && latest(id) == null) emitPrice(id, rand(10, 60)) // starting odds from the coverage found
+  send('market', { market_id: id, status: 'ready', ticks: found })
 }
 
 async function postMarket(body) {
@@ -399,6 +420,7 @@ async function postMarket(body) {
   const isLink = /^https?:\/\//.test(query)
   const status = (s, more = {}) => send('market', { market_id: null, query, status: s, ...more })
   if (!query) return [422, { detail: 'that does not look like a question about something that could happen' }]
+  let picked = null // the card the "model" picks for plain words
 
   if (isLink) {
     if (!/kalshi\.com|polymarket\.com/.test(query)) return [422, { detail: 'not a Kalshi or Polymarket link' }]
@@ -415,14 +437,22 @@ async function postMarket(body) {
       return [422, { detail: 'that does not look like a question about something that could happen' }]
     }
     const madeUp = /made up/i.test(query)
-    status('found contracts', { count: madeUp ? 0 : 2 })
+    const title = `MOCK · ${query.replace(/\?*$/, '?')}`
+    // one card per market found, then the one picked, like the backend
+    const cards = madeUp ? [] : [
+      { venue: 'polymarket', title, price: round(rand(5, 90)), contracts: 3 },
+      { venue: 'kalshi', title: `MOCK · ${query.replace(/\?*$/, '')} (Kalshi)?`, price: round(rand(5, 90)), contracts: 1 },
+      { venue: 'polymarket', title: 'MOCK · A related market about something else?', price: round(rand(5, 90)), contracts: 12 },
+      { venue: 'kalshi', title: 'MOCK · The same question, a year later?', price: round(rand(5, 90)), contracts: 2 },
+    ]
+    status('found contracts', { count: cards.length, contracts: cards })
+    picked = cards[0] ?? null
     await sleep(1500)
     if (madeUp) {
       const id = `mu-${slug(query).slice(5)}`
       if (!markets.has(id)) addMarket({ id, venue: 'made_up', title: `MOCK · ${query.replace(/\?*$/, '?')}` })
       send('market', { market_id: id, query, status: 'made up' })
-      setTimeout(() => emitPrice(id, rand(10, 60)), 6000) // starting odds from coverage, a little later
-      setTimeout(() => send('market', { market_id: id, status: 'ready', ticks: instantFill(id) }), 8000)
+      void fill(id, query) // starting odds come from the coverage it finds
       return [200, { ...detail(markets.get(id)), matched: false }]
     }
   }
@@ -431,18 +461,19 @@ async function postMarket(body) {
   const related = isLink ? [...markets.values()].find((m) => m.url === query && m.lead_id) : undefined
   if (related) related.lead_id = null
   const id = related?.id ?? slug(isLink ? query.split('/').filter(Boolean).pop() : query)
-  if (!markets.has(id)) {
+  const fresh = !markets.has(id)
+  if (fresh) {
     addMarket({ id, venue: isLink && /kalshi/.test(query) ? 'kalshi' : 'polymarket', url: isLink ? query : null, poll_seconds: Number(body.poll_seconds ?? 900),
       title: `MOCK · ${isLink ? id.slice(5).replace(/-/g, ' ') : query.replace(/\?*$/, '?')}` })
-    history(id, rand(5, 90), 30, 1200, 1)
+    history(id, picked?.price ?? rand(5, 90), 7 * 24, 3600, 1.4) // a week, hourly, like the venues give
+  }
+  if (!isLink) {
+    status('picked', { winner: 0, venue: markets.get(id).venue, title: markets.get(id).title, price: latest(id) })
+    await sleep(600) // the venue's price history is fetched before the answer
   }
   // Like the real backend (track() in terminal/api.py): no `query` on this one, even for plain words.
   send('market', { market_id: id, status: 'tracking' })
-  setTimeout(() => send('market', { market_id: id, status: 'finding sources' }), 800)
-  setTimeout(() => {
-    const n = instantFill(id)
-    send('market', { market_id: id, status: 'ready', ticks: n })
-  }, 4000)
+  if (fresh) void fill(id, isLink ? markets.get(id).title.replace(/^MOCK · /, '') : query)
   return [200, { ...detail(markets.get(id)), matched: true }]
 }
 

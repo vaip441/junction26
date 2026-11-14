@@ -1,6 +1,6 @@
 import type { MarketDetail, MarketSummary, Move, PricePoint, Tick, WeekendRecord } from './types'
 
-export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
+export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:18911'
 
 const KEY_STORAGE = 'terminal.writeKey'
 
@@ -65,6 +65,8 @@ export const api = {
   ticks: (id: string, limit = 200) => request<Tick[]>(`/markets/${encodeURIComponent(id)}/ticks?limit=${limit}`),
   prices: (id: string, since = 0) => request<PricePoint[]>(`/markets/${encodeURIComponent(id)}/prices?since=${since}`),
   moves: (id: string, limit = 20) => request<Move[]>(`/markets/${encodeURIComponent(id)}/moves?limit=${limit}`),
+  status: () =>
+    request<{ context_dev: { keys: { credits_remaining: number | null }[]; per_minute: number; used_last_minute: number } }>('/status'),
   record: () => request<WeekendRecord>('/record'),
 
   addMarket: (query: string, pollSeconds = 900) =>

@@ -99,8 +99,29 @@ export interface MarketEvent {
   query?: string
   /** On `found contracts`: how many groups of contracts matched. */
   count?: number
-  /** On `ready`: how many items the instant fill put on the tape. */
+  /** On `ready`: how many items the first fill stored (most of them hidden). */
   ticks?: number
+  /** On `found contracts`: one card per market found. */
+  contracts?: FoundMarket[]
+  /** On `picked`: which card won, and the contract of it that leads. */
+  winner?: number
+  venue?: Venue
+  title?: string
+  price?: number | null
+  /** On `finding sources`: the phrases the web is searched with. */
+  queries?: string[]
+  /** On `scoring`: how many items the searches found, and how many of them are scored. */
+  found?: number
+  scored?: number
+}
+
+/** A market found for a question, shown while the model picks one. */
+export interface FoundMarket {
+  venue: Venue
+  title: string
+  price: number | null
+  /** How many contracts the market holds. */
+  contracts: number
 }
 
 export interface PriceEvent {

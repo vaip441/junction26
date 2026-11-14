@@ -20,20 +20,33 @@ const KIND_LABEL: Record<TickKind, string> = {
 }
 
 
-export function TickRow({ tick, life, move, now }: { tick: Tick; life: Lifecycle | null; move?: Move; now: number }) {
+export function TickRow({
+  tick,
+  life,
+  move,
+  now,
+}: {
+  tick: Tick
+  life: Lifecycle | null
+  move?: Move
+  now: number
+}) {
   const showRule = useStore((s) => s.showRule)
   const setTab = useStore((s) => s.setTab)
   const at = tickTime(tick)
   const quiet = tick.verdict === 'none'
   // arrived in the last few seconds: animate the decision (first paint of history stays still)
   const fresh = !tick.backfill && now - tick.ts < 15
+  // found in the last few seconds, live news or earlier coverage alike: the row opens up in place, so the
+  // rows under it glide down (history already here on first paint stays still)
+  const arrived = now - tick.ts < 12
   return (
-    <li
-      id={`tick-${tick.id}`}
-      className={`flex flex-col gap-1 border-l-2 ${fresh ? 'slide-in' : ''} px-3 py-2.5 ${tick.backfill ? 'opacity-60' : ''} ${
-        life?.state === 'edge' ? (tick.verdict === 'up' ? 'border-l-up' : 'border-l-down') : 'border-l-transparent'
-      }`}
-    >
+    <li id={`tick-${tick.id}`} className={`grid ${arrived ? 'row-in' : ''}`}>
+      <div
+        className={`flex min-h-0 flex-col gap-1 overflow-hidden border-l-2 px-3 py-2.5 ${fresh ? 'tick-flash' : ''} ${tick.backfill ? 'opacity-60' : ''} ${
+          life?.state === 'edge' ? (tick.verdict === 'up' ? 'border-l-up' : 'border-l-down') : 'border-l-transparent'
+        }`}
+      >
       <div className="flex items-center gap-2">
         <span className={fresh ? 'verdict-late' : ''}>
           <VerdictBadge verdict={tick.verdict} confidence={tick.confidence} strength={tick.strength} />
@@ -85,6 +98,7 @@ export function TickRow({ tick, life, move, now }: { tick: Tick; life: Lifecycle
         {tick.likes != null && <span className="num">♥ {tick.likes}</span>}
         {tick.replies != null && <span className="num">↩ {tick.replies}</span>}
       </p>
+      </div>
     </li>
   )
 }

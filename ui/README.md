@@ -4,13 +4,27 @@ React + Vite + TypeScript screen for the prediction market terminal. The plan, l
 are in [PLAN.md](PLAN.md); the backend contract is "Interface for the frontend" in
 `../docs/superpowers/specs/2026-11-13-terminal-design.md`.
 
+The UI runs against the real backend. Start that first, from the repository root (see `../README.md`;
+it needs the keys in `../.env`):
+
 ```bash
-npm install
-cp .env.example .env.local   # point VITE_API_URL at the backend
-npm run dev                  # http://localhost:5173
+uv run --env-file .env uvicorn terminal.api:app --port 18911
 ```
 
-### Without the backend
+Then, in this folder:
+
+```bash
+npm install
+npm run dev                  # http://localhost:5173, talking to http://localhost:18911
+```
+
+`VITE_API_URL` points the UI at another address (copy `.env.example` to `.env.local` and change it).
+Writes (asking a question, typing or speaking a sentence) need the backend's `TERMINAL_KEY`: the UI asks
+for it once and keeps it in the browser.
+
+### Offline, without the backend
+
+Only for working on the screen when the backend or its keys are not at hand:
 
 ```bash
 npm run dev:mock             # mock backend on :8765 + the UI pointed at it
