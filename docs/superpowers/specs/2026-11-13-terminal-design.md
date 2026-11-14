@@ -435,6 +435,9 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   searched. 409 for a made-up market.
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
+- `POST /transcribe`, body one short `audio/wav` recording: `{ "text": "..." }`, the
+  words said in it, written down by a Gemini model with the same key as scoring. Empty
+  when nobody spoke. 502 when the model cannot be reached.
 - `GET /record`: the weekend record numbers.
 - `GET /status`: Context.dev capacity per key (use, resting time, credits left). Needs the write key.
 - `GET /stream`: server-sent events. Event types: `tick`, `tick_update`, `price`,
@@ -510,7 +513,8 @@ changed 1.5 points or more over the same stretch, biggest change first. `asked` 
 for a move explained on request (the last day), false for a jump the terminal saw itself.
 Made-up markets have no jumps of their own, but can be asked about.
 
-The frontend owns speech-to-text (microphone to sentences), the spoken call-out of
+The frontend owns the microphone (recording, cut into sentences at pauses, each sent
+to `POST /transcribe` and then on as a `mic` tick), the spoken call-out of
 each verdict, and all layout. The concept mockup is at
 https://claude.ai/artifact/Rx3hfxQFtQ1tNFfjSwvvKm (sample data, concept only).
 
