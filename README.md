@@ -33,7 +33,9 @@ by Decision 1. Context.dev checks it every ten minutes and calls a signed webhoo
 the market becomes a tick (`terminal/pages.py`). This needs an address the internet can reach (`PUBLIC_URL`).
 
 A question in plain words is matched to a real market by searching both venues and letting Decision 1 pick
-(`terminal/match.py`). When nothing matches, a text model writes a yes/no question with a deadline, Decision 1
+(`terminal/match.py`). When the other venue lists a contract that resolves the same way (the same person,
+threshold and deadline, as Decision 1 judges it), the two are paired and the market carries a `consensus`:
+both venues' prices, their middle and how far apart they are. When nothing matches, a text model writes a yes/no question with a deadline, Decision 1
 gives its starting odds from the coverage found, and each shown tick afterwards nudges the price
 (`terminal/madeup.py`, `terminal/pricing.py`).
 
@@ -88,6 +90,7 @@ and of every stream event, is in
 | `GET /markets/{id}/ticks`, `GET /markets/{id}/prices` | history for the tape and the chart |
 | `GET /markets/{id}/moves` | "why did it move?": the market's price moves, each in one sentence with its likely cause |
 | `POST /markets/{id}/why` | explain the market's move over the last day, now |
+| `POST /markets/{id}/pair` | look for the same question on the other venue; found, the two prices are shown as one `consensus` |
 | `POST /markets/{id}/ticks` | a spoken or typed sentence, scored like any other tick |
 | `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market`, `page_check` |
 | `GET /record` | of the ticks called up or down, how often the price then moved that way |

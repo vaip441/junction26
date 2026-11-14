@@ -7,6 +7,7 @@ and Decision 1 picks.
 import asyncio
 import logging
 import math
+import re
 
 from terminal import contextdev, scoring, venues
 from terminal.venues import kalshi, polymarket
@@ -15,6 +16,7 @@ VENUE_SITES = ["polymarket.com", "kalshi.com"]
 log = logging.getLogger(__name__)
 MAX_EVENTS, OWN_RESULTS = 11, 3  # events weighed in all; how many of them may come from each venue's own search
 SHOWN, MAX_CONTRACTS = 6, 30  # contracts named when describing an event; contracts offered when choosing one
+SAME = 0.5  # how sure the model must be that two contracts ask one question before their prices are set side by side
 SEARCH_SECONDS = 10  # a person is waiting: a search that is queued or slow is given up on, not waited out
 
 
@@ -103,3 +105,32 @@ async def pick(words: str, groups: list[list[dict]], *, decide=None) -> tuple[in
     # the same question on both venues splits the vote, so "none" must beat all the markets together
     winner = None if p.get("none", 0.0) >= sum(probs) else max(range(len(groups)), key=probs.__getitem__)
     return winner, probs, leads
+
+
+async def twin(market: dict, groups: list[list[dict]], *, decide=None) -> dict | None:
+    """The contract on the other venue that resolves YES in exactly the cases this one does, or None.
+
+    Strict on purpose: the two prices are shown as one question, and another person, threshold or
+    deadline is another question. Of a big event only the contracts worded most like this one are offered.
+    """
+    words = lambda t: set(re.findall(r"[^\W_]+", t.casefold()))
+    mine = words(market["title"])
+    offered = sorted((c for g in groups for c in g if c["venue"] != market["venue"]),
+                     key=lambda c: -len(mine & words(c["title"])))[:MAX_CONTRACTS]
+    if not offered:
+        return None
+    question = {"same": {
+        "type": "choice",
+        "instructions": "Which of these contracts resolves YES in exactly the same cases as the contract described? "
+                        "Another person, team, threshold or deadline makes it a different contract.",
+        "criteria": {**{f"k{i}": f"{c['title'][:200]} Rules: {c['rules'][:300]}" for i, c in enumerate(offered)},
+                     "none": "None of these resolves the same way"}}}
+    answers = await (decide or scoring.decide)(
+        f"A prediction market contract: {market['title'][:300]}\nIts rules: {market['rules'][:800]}", question)
+    try:
+        p = {k: float(v) for k, v in answers["same"]["probabilities"].items()}
+        best = max((k for k in p if k != "none"), key=p.get)
+        found = offered[int(best[1:])]
+    except (KeyError, TypeError, ValueError, AttributeError, IndexError) as e:
+        raise scoring.ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
+    return found if p[best] >= SAME else None

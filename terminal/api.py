@@ -49,9 +49,22 @@ class MarketIn(BaseModel):
     poll_seconds: int = Field(900, ge=30, le=86400)
 
 
+def consensus(db, m: dict, price: float | None, now: float) -> dict | None:
+    """The same question on the other venue, side by side: the middle of the two prices and how far apart
+    they are. None unless the market has such a twin and both have a price."""
+    twin = m["twin_id"] and store.get_market(db, m["twin_id"])
+    other = twin and store.price_at(db, twin["id"], now)
+    if price is None or other is None:
+        return None
+    return {"price": (price + other) / 2, "gap": abs(price - other),
+            "venues": [{"id": x["id"], "venue": x["venue"], "price": p, "url": x["url"]}
+                       for x, p in ((m, price), (twin, other))]}
+
+
 def summary(db, m: dict, now: float) -> dict:
     price, old = store.price_at(db, m["id"], now), store.price_at(db, m["id"], now - DAY)
     return {"id": m["id"], "venue": m["venue"], "title": m["title"], "url": m["url"], "price": price,
+            "consensus": consensus(db, m, price, now),
             "change_24h": None if price is None or old is None else price - old,
             "ticks_today": store.count_shown(db, m["id"], now - DAY), "made_up": m["venue"] == "made_up",
             "poll_seconds": m["poll_seconds"]}
@@ -172,6 +185,22 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(409, "the price has not moved a point in the last day")
         return move
 
+    @app.post("/markets/{id}/pair", dependencies=[Depends(write_access)])
+    async def pair(id: str):
+        """Look for the same question on the other venue; when it is there, the two prices become one consensus."""
+        m = market_or_404(id)
+        if m["venue"] == "made_up":
+            raise HTTPException(409, "a made-up market is on no venue")
+        try:
+            twin = await match.twin(m, await match.candidates(m["title"]))
+        except match.SearchFailed:
+            raise HTTPException(502, "could not reach search, try again")
+        except scoring.ScoringError:
+            raise HTTPException(503, "scoring unavailable, try again")
+        if twin is not None:
+            await with_history(keep_twin(m, twin))
+        return detail(app.state.db, store.get_market(app.state.db, id), time.time())
+
     @app.post("/markets/{id}/ticks", dependencies=[Depends(write_access)])
     async def add_tick(id: str, body: TickIn):
         m = market_or_404(id)
@@ -208,15 +237,25 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             store.promote(db, lead_id)  # a related contract asked for by itself becomes a market
         else:
             for c in contracts[:1 + MAX_RELATED] + extra:
-                id = venues.market_id(c)
-                store.add_market(db, id=id, venue=c["venue"], venue_ref=c["venue_ref"], title=c["title"],
-                                 rules=c["rules"], url=c["url"], lead_id=None if c is lead else lead_id,
-                                 poll_seconds=poll_seconds)
-                if c["price"] is not None:
-                    store.add_price(db, id, now, c["price"])
-                fresh.append(id)
+                fresh.append(keep(c, None if c is lead else lead_id, poll_seconds, now))
         app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
         return lead_id, fresh
+
+    def keep(c: dict, lead_id: str | None, poll_seconds: int, now: float) -> str:
+        db, id = app.state.db, venues.market_id(c)
+        store.add_market(db, id=id, venue=c["venue"], venue_ref=c["venue_ref"], title=c["title"],
+                         rules=c["rules"], url=c["url"], lead_id=lead_id, poll_seconds=poll_seconds)
+        if c["price"] is not None:
+            store.add_price(db, id, now, c["price"])
+        return id
+
+    def keep_twin(m: dict, twin: dict) -> list[str]:
+        """Pair a market with the contract that asks the same thing on the other venue, storing that contract
+        beside it unless it is tracked already. Returns the ids stored just now."""
+        db, id = app.state.db, venues.market_id(twin)
+        fresh = [] if store.get_market(db, id) else [keep(twin, m["lead_id"] or m["id"], m["poll_seconds"], time.time())]
+        store.pair(db, m["id"], id)
+        return fresh
 
     async def from_words(words: str, poll_seconds: int) -> tuple[str, bool, list[str]]:
         """Plain words -> (id of the market now tracked, whether a venue contract matched, markets stored just now)."""
@@ -260,9 +299,16 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         contracts = groups[winner]
         contracts.insert(0, contracts.pop(leads[winner]))  # the contract the question names leads
         status("picked", winner=winner, venue=contracts[0]["venue"], title=contracts[0]["title"], price=contracts[0]["price"])
-        other = [g[leads[i]] for i, g in enumerate(groups)
-                 if i != winner and probs[i] >= OTHER_VENUE_ABOVE and g[0]["venue"] != contracts[0]["venue"]]
+        try:
+            twin = await match.twin(contracts[0], groups)
+        except scoring.ScoringError:
+            twin = None  # the market is worth tracking without its other venue; POST /markets/{id}/pair asks again
+        # beside the match: the other venue's market when it is close, as the contract asking the very same thing if one does
+        other = [twin if twin in g else g[leads[i]] for i, g in enumerate(groups)
+                 if i != winner and (probs[i] >= OTHER_VENUE_ABOVE or twin in g) and g[0]["venue"] != contracts[0]["venue"]]
         app.state.asked[made_id], fresh = track(contracts, other, poll_seconds)
+        if twin is not None:
+            fresh += keep_twin(store.get_market(db, app.state.asked[made_id]), twin)
         return app.state.asked[made_id], True, fresh
 
     @app.post("/markets", dependencies=[Depends(write_access)])

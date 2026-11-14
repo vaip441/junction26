@@ -11,10 +11,19 @@ export interface MarketSummary {
   title: string
   url: string | null
   price: number | null
+  /** The same question on the other venue, side by side: null unless the market has such a twin and both have
+   *  a price. `price` is the middle of the two, `gap` how far apart they are; this market comes first in `venues`. */
+  consensus?: Consensus | null
   change_24h: number | null
   ticks_today: number
   made_up: boolean
   poll_seconds: number
+}
+
+export interface Consensus {
+  price: number
+  gap: number
+  venues: { id: string; venue: Venue; price: number; url: string | null }[]
 }
 
 export interface Source {

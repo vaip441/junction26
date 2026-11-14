@@ -260,8 +260,9 @@ def test_market_detail_lists_its_sources(path):
         assert c.get("/markets/mu-demo").json()["sources"] == [{"source": "typed", "ticks": 1, "moved": 1}]
 
 
-def plain(monkeypatch, groups=(), pick=(None, [], []), question=None):
-    """Stand-ins for the venue search, the model's pick and the question writer. Returns the writer's calls."""
+def plain(monkeypatch, groups=(), pick=(None, [], []), question=None, twin=None):
+    """Stand-ins for the venue search, the model's pick, the same-question check and the question writer.
+    Returns the writer's calls."""
     from terminal import madeup, match
 
     written = []
@@ -282,8 +283,14 @@ def plain(monkeypatch, groups=(), pick=(None, [], []), question=None):
             raise question
         return question or {"title": "Will it snow?", "rules": "Resolves yes if it snows."}
 
+    async def same(market, found):
+        if isinstance(twin, Exception):
+            raise twin
+        return twin
+
     monkeypatch.setattr(match, "candidates", candidates)
     monkeypatch.setattr(match, "pick", choose)
+    monkeypatch.setattr(match, "twin", same)
     monkeypatch.setattr(madeup, "question_for", question_for)
     return written
 
@@ -535,3 +542,60 @@ def test_the_built_screen_is_served_at_the_root_and_the_debug_page_moves_aside(p
         assert c.get("/nothing-here").status_code == 404
     with TestClient(create_app(db_path=path, scorer=up, poll=False, ui=tmp_path / "not-built")) as c:
         assert "Terminal debug page" in c.get("/").text and "Terminal debug page" in c.get("/debug").text
+
+
+def test_the_same_question_on_both_venues_is_shown_as_one_consensus(path, monkeypatch):
+    # the model names contract 1 of the Kalshi event as the same question: it is kept, not the event's own lead
+    plain(monkeypatch, [CONTRACTS, KALSHI], (0, [0.7, 0.25], [0, 0]), twin=KALSHI[1])
+    with client(path) as c:
+        m = c.post("/markets", json={"query": "will contract 0 happen"}).json()
+        assert [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2", "k-KX-1"]
+        assert m["consensus"] == {"price": 43.0, "gap": 6.0, "venues": [
+            {"id": "pm-m0", "venue": "polymarket", "price": 40.0, "url": "https://polymarket.com/event/e/m0"},
+            {"id": "k-KX-1", "venue": "kalshi", "price": 46.0, "url": "https://kalshi.com/markets/kx/e/kx"}]}
+        assert c.get("/markets").json()[1]["consensus"]["gap"] == 6.0
+        assert m["related"][0]["consensus"] is None and m["related"][2]["consensus"]["venues"][0]["id"] == "k-KX-1"
+
+
+def test_no_consensus_without_the_same_question_on_the_other_venue(path, monkeypatch):
+    plain(monkeypatch, [CONTRACTS, KALSHI], (0, [0.7, 0.25], [0, 1]))
+    with client(path) as c:
+        m = c.post("/markets", json={"query": "will contract 0 happen"}).json()
+        assert m["consensus"] is None and [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2", "k-KX-1"]
+        assert c.get("/markets").json()[0]["consensus"] is None  # a made-up market is on no venue
+
+
+def test_a_market_tracked_earlier_can_be_paired_with_the_other_venue(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        return [dict(c) for c in CONTRACTS]
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    plain(monkeypatch, [CONTRACTS, KALSHI], twin=KALSHI[0])
+    with client(path) as c:
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()["consensus"] is None
+        r = c.post("/markets/pm-m0/pair")
+        assert r.status_code == 200 and r.json()["consensus"]["venues"][1]["id"] == "k-KX-0"
+        assert r.json()["related"][-1]["id"] == "k-KX-0"
+        assert c.post("/markets/pm-m0/pair").json()["consensus"]["gap"] == 5.0  # asked again: the same pair, stored once
+        assert c.post("/markets/mu-demo/pair").status_code == 409  # a made-up market is on no venue
+        assert c.post("/markets/nope/pair").status_code == 404
+
+
+def test_two_markets_already_tracked_are_paired_where_they_stand(path, monkeypatch):
+    from terminal import venues
+
+    async def resolve(link):
+        return [dict(c) for c in (KALSHI if "kalshi" in link else CONTRACTS)]
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    plain(monkeypatch, [CONTRACTS, KALSHI], twin=KALSHI[0])
+    with client(path) as c:
+        c.post("/markets", json={"query": "https://polymarket.com/event/e"})
+        c.post("/markets", json={"query": "https://kalshi.com/markets/kx/e/kx"})
+        m = c.post("/markets/pm-m0/pair").json()
+        assert [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2"]  # the Kalshi one stays a market of its own
+        listed = {x["id"]: x["consensus"] for x in c.get("/markets").json()}
+        assert listed["pm-m0"]["gap"] == 5.0 and listed["k-KX-0"]["venues"][0]["id"] == "k-KX-0"
+

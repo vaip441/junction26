@@ -158,3 +158,15 @@ def test_history_fills_in_only_what_is_older_than_our_own_samples():
     assert [(p["ts"], p["price"]) for p in prices(db, "m")] == [(400.0, 30.0), (700.0, 35.0), (1000.0, 40.0)]
     assert add_history(db, "m", [(400.0, 31.0), (700.0, 36.0)]) == 0  # asked twice: nothing changes
     assert price_at(db, "m", 800.0) == 35.0
+
+
+def test_pairing_two_markets_points_each_at_the_other(tmp_path):
+    from terminal import db as store
+
+    db = store.connect(str(tmp_path / "t.db"))
+    for id, venue in (("pm-a", "polymarket"), ("k-A", "kalshi")):
+        store.add_market(db, id=id, venue=venue, venue_ref=id, title="A?", rules="r", url=None)
+    assert store.get_market(db, "pm-a")["twin_id"] is None
+    store.pair(db, "pm-a", "k-A")
+    assert store.get_market(db, "pm-a")["twin_id"] == "k-A" and store.get_market(db, "k-A")["twin_id"] == "pm-a"
+

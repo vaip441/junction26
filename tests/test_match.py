@@ -209,3 +209,34 @@ def test_kalshis_own_search_failing_leaves_the_others_and_it_alone_is_enough():
     assert [g[0]["slug"] for g in run(search=down, venue_search=failed,
                                       kalshi_search=venue_search(["https://kalshi.com/markets/kx/e/kx-1"]))] == ["kx-1"]
 
+
+def test_twin_is_the_other_venues_contract_that_asks_the_same_thing():
+    mine = {"venue": "polymarket", "title": "Will Ian Buck be the next CEO of NVIDIA?", "rules": "Resolves by Jan 2029."}
+    groups = [[contract("polymarket", "sibling")],
+              [{**contract("kalshi", "KX-JH"), "title": "Who will be the next CEO of NVIDIA? (Jensen Huang)"},
+               {**contract("kalshi", "KX-IB"), "title": "Who will be the next CEO of NVIDIA? (Ian Buck)", "rules": "Before Jan 1, 2029."}]]
+    seen = []
+    found = asyncio.run(match.twin(mine, groups, decide=decider({"same": choice(k0=0.8, k1=0.1, none=0.1)}, seen)))
+    assert found["venue_ref"] == "KX-IB"
+    input, questions = seen[0]
+    assert "Will Ian Buck be the next CEO of NVIDIA?" in input and "Resolves by Jan 2029." in input
+    # only the other venue's contracts are offered, the one sharing most words with the title first, each with its rules
+    criteria = questions["same"]["criteria"]
+    assert list(criteria) == ["k0", "k1", "none"]
+    assert "(Ian Buck)" in criteria["k0"] and "Before Jan 1, 2029." in criteria["k0"] and "(Jensen Huang)" in criteria["k1"]
+
+
+def test_twin_is_none_unless_the_model_is_sure_and_is_not_asked_when_the_other_venue_has_nothing():
+    mine = {"venue": "polymarket", "title": "Will a win?", "rules": "r"}
+    other = [[contract("kalshi", "KX-A")]]
+    unsure = decider({"same": choice(k0=0.45, none=0.55)})
+    assert asyncio.run(match.twin(mine, other, decide=unsure)) is None
+    assert asyncio.run(match.twin(mine, other, decide=decider({"same": choice(k0=0.49, none=0.3)}))) is None
+
+    async def never(input, questions):
+        raise AssertionError("asked the model with nothing to choose from")
+
+    assert asyncio.run(match.twin(mine, [[contract("polymarket", "b")]], decide=never)) is None
+    with pytest.raises(ScoringError):
+        asyncio.run(match.twin(mine, other, decide=decider({"same": {"probabilities": "odd"}})))
+

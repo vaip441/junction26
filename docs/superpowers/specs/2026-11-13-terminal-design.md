@@ -356,6 +356,11 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 `X-Terminal-Key: <the shared key>` (401 without it).
 
 - `GET /markets`: all tracked markets with latest price, 24-hour change, ticks today.
+  Each market, here and wherever a market appears, has `consensus`: null, or when the
+  same question trades on the other venue and both have a price, `{ "price", "gap",
+  "venues": [{ "id", "venue", "price", "url" }, ...] }`: the middle of the two prices,
+  how far apart they are, and the two contracts, this market first. Each one's later
+  prices arrive as `price` events under its `id`.
 - `POST /markets` `{ "query": "<link or plain words>", "poll_seconds": 900 }`: returns
   the lead market now being tracked (the same shape as `GET /markets/{id}`) plus
   `"matched"`: true when it is a Kalshi or Polymarket contract, false when no market
@@ -384,6 +389,12 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   day? Answers in about a second with a move that has `asked:
   true`, which is also sent as a `move` event. Asked again within five minutes it
   returns the same answer. 409 when the price moved less than a point.
+- `POST /markets/{id}/pair` (needs the key): looks for the same question on the other
+  venue and, when Decision 1 is at least 50% sure a contract there resolves in exactly
+  the same cases, pairs the two; the answer is the market's detail, with `consensus`
+  set when a pair was found. A question in plain words is paired this way when it is
+  first tracked; this route is for markets tracked from a link or before pairing
+  existed. 409 for a made-up market.
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
 - `GET /record`: the weekend record numbers.

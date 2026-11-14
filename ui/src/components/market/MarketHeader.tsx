@@ -1,7 +1,39 @@
-import type { MarketSummary } from '../../lib/types'
+import { pct } from '../../lib/format'
+import type { Consensus, MarketSummary } from '../../lib/types'
+import { useStore } from '../../state/store'
 import { VenueBadge } from '../common/Badge'
 import { AnimatedPrice } from '../common/AnimatedPrice'
 import { Points } from '../common/Price'
+
+/** The same question on both venues: each venue's live price, the middle of the two and how far apart they are. */
+function BothVenues({ consensus }: { consensus: Consensus }) {
+  const markets = useStore((s) => s.markets)
+  const others = useStore((s) => s.otherPrices)
+  // the stream carries each contract's newest price: a market's in the list, a related contract's beside it
+  const venues = consensus.venues.map((v) => ({ ...v, price: markets[v.id]?.price ?? others[v.id] ?? v.price }))
+  const [a, b] = venues
+  const gap = Math.abs(a.price - b.price)
+  return (
+    <p className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-muted" title="The same question on both venues">
+      {venues.map((v) => (
+        <span key={v.id}>
+          {v.url ? (
+            <a href={v.url} target="_blank" rel="noreferrer" className="hover:underline">
+              {v.venue === 'kalshi' ? 'Kalshi' : 'Polymarket'}
+            </a>
+          ) : v.venue === 'kalshi' ? 'Kalshi' : 'Polymarket'}{' '}
+          <span className="num text-text">{pct(v.price)}</span>
+        </span>
+      ))}
+      <span>
+        consensus <span className="num font-semibold text-text">{pct((a.price + b.price) / 2)}</span>
+      </span>
+      <span className={gap >= 3 ? 'font-semibold text-accent' : ''}>
+        <span className="num">{gap.toFixed(1)}</span> pts apart
+      </span>
+    </p>
+  )
+}
 
 export function MarketHeader({ market }: { market: MarketSummary }) {
   return (
@@ -16,6 +48,7 @@ export function MarketHeader({ market }: { market: MarketSummary }) {
           )}
         </div>
         <h1 className="text-lg font-semibold leading-tight text-text">{market.title}</h1>
+        {market.consensus && <BothVenues consensus={market.consensus} />}
       </div>
       <div className="text-right">
         {market.price == null ? (

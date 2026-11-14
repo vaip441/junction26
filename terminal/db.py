@@ -10,7 +10,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS markets (
     id TEXT PRIMARY KEY, venue TEXT NOT NULL, venue_ref TEXT, title TEXT NOT NULL, rules TEXT NOT NULL,
     url TEXT, lead_id TEXT, queries TEXT NOT NULL DEFAULT '[]', poll_seconds INTEGER NOT NULL DEFAULT 900,
-    filled INTEGER NOT NULL DEFAULT 0, companies TEXT,
+    filled INTEGER NOT NULL DEFAULT 0, companies TEXT, twin_id TEXT,
     created_ts REAL NOT NULL DEFAULT (unixepoch('subsec')));
 CREATE TABLE IF NOT EXISTS prices (
     market_id TEXT NOT NULL, ts REAL NOT NULL, price REAL NOT NULL, PRIMARY KEY (market_id, ts));
@@ -49,6 +49,8 @@ def connect(path: str) -> sqlite3.Connection:
         db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
     if "companies" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov noon
         db.execute("ALTER TABLE markets ADD COLUMN companies TEXT")
+    if "twin_id" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov 13:00
+        db.execute("ALTER TABLE markets ADD COLUMN twin_id TEXT")
     if "title_key" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov noon
         db.execute("ALTER TABLE ticks ADD COLUMN title_key TEXT")
         db.execute("ALTER TABLE ticks ADD COLUMN rule TEXT")
@@ -107,6 +109,12 @@ def set_poll_seconds(db, id: str, seconds: int) -> None:
 def promote(db, id: str) -> None:
     """Turn a related contract into a market of its own."""
     db.execute("UPDATE markets SET lead_id = NULL WHERE id = ?", (id,))
+
+
+def pair(db, a: str, b: str) -> None:
+    """Two markets that ask the same question on the two venues: each points at the other."""
+    db.execute("UPDATE markets SET twin_id = ? WHERE id = ?", (b, a))
+    db.execute("UPDATE markets SET twin_id = ? WHERE id = ?", (a, b))
 
 
 def delete_market(db, id: str) -> None:
