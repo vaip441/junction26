@@ -421,8 +421,8 @@ function slug(text) {
 }
 
 /**
- * A new market's first fill, like the backend's: it says what it searches with, how many items it found and
- * how many of those it scores, then each scored item worth showing arrives as a tick (earlier coverage:
+ * A new market's first fill, like the backend's: it says what it searches with and how many items it found,
+ * then each scored item worth showing arrives as a tick (earlier coverage:
  * found now, published before), and "ready" ends it.
  */
 async function fill(id, words) {
@@ -437,8 +437,7 @@ async function fill(id, words) {
   await sleep(1800)
   if (!markets.has(id)) return
   const found = Math.round(rand(90, 190))
-  const scored = Math.min(found, 50)
-  send('market', { market_id: id, status: 'scoring', found, scored })
+  send('market', { market_id: id, status: 'scoring', found })
   const shown = Math.round(rand(8, 18))
   for (let i = 0; i < shown; i++) {
     await sleep(rand(120, 520)) // scored ten at a time: they land in uneven bursts
@@ -446,7 +445,7 @@ async function fill(id, words) {
     const v = pick(['up', 'down', 'none', 'none'])
     const t = makeTick(id, { verdict: v, strength: rand(0.1, 0.9), confidence: rand(0.5, 0.9), backfill: true,
       published_ts: now() - rand(1800, 3 * 86400), headline: pick(LIVE_HEADLINES[v]), source: pick(SOURCES) })
-    if (v !== 'none' && Math.abs(t.strength) >= 0.5) t.rule = ruleOf(m) // history: only a strong call has its rule looked up
+    if (v !== 'none' && Math.random() < 0.6) t.rule = ruleOf(m) // a call from the web names its rule when one stands out
     emitTick(t)
   }
   if (m.venue === 'made_up' && latest(id) == null) emitPrice(id, rand(10, 60)) // starting odds from the coverage found

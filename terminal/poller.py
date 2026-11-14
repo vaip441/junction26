@@ -1,7 +1,6 @@
 """Background loops: price sampling, article polling, instant fill."""
 import asyncio
 import logging
-import os
 import re
 import time
 from urllib.parse import urlsplit
@@ -111,20 +110,6 @@ BACKGROUND_RESERVE = 2
 
 FEED_WINDOW = 86400  # a feed's posts count for a day, like the searches' "last 24 hours"
 
-# A first fill finds 100 to 200 items and each one scored is a Decision 1 call; measured on 14 Nov over five
-# fills, 85% of them came back "no effect" and were never shown. So a fill scores only the items most
-# likely to matter and keeps the rest hidden without a call, like trash. Live passes score everything new.
-FILL_SCORED = int(os.environ.get("FILL_SCORED", "50"))
-
-
-def most_relevant(fresh: dict, words: set[str], limit: int) -> set[str]:
-    """Keys of the `limit` items worth a scoring call on a first fill: those sharing the most words with
-    the market's title and queries, then those the searches ranked highest."""
-    def worth(item) -> tuple[int, int]:
-        _, (_, r, rank) = item
-        return -len(posts._words(f"{r['title']} {r.get('description') or ''}") & words), rank
-    return {key for key, _ in sorted(fresh.items(), key=worth)[:limit]}
-
 
 async def unscored(*_) -> Score:
     """Trash is kept as a hidden no-effect tick without asking the model: stored, it is never looked at again."""
@@ -160,7 +145,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             failed.append(kind)
             continue
         kind = "article" if kind in ("news", "Google News") else kind
-        for rank, r in enumerate(results):
+        for r in results:
             try:
                 key = dedupe_key(kind, r["url"], r["title"], 0)
             except ValueError:  # an address that cannot be parsed
@@ -174,7 +159,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 continue
             if story and (story in stories or store.has_title(db, market["id"], story, time.time() - STORY_SECONDS)):
                 continue
-            fresh[key] = (kind, r, rank)
+            fresh[key] = (kind, r)
             stories.add(story)
     # a failed posts search alone does not fail the pass; one whose article searches all failed does
     if failed.count("article") == len(queries) > 0:
@@ -186,15 +171,12 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 continue
             key = dedupe_key("post", r["url"], r["title"], 0)
             if key not in fresh and not store.has_tick(db, market["id"], key):
-                fresh[key] = ("post", r, len(fresh))
-    scored = set(fresh)
-    if backfill:
-        if len(fresh) > FILL_SCORED:
-            scored = most_relevant(fresh, posts._words(" ".join([market["title"], *queries])), FILL_SCORED)
-        bus.publish("market", {"market_id": market["id"], "status": "scoring", "found": len(fresh), "scored": len(scored)})
+                fresh[key] = ("post", r)
+    if backfill:  # for the frontend: how much the first fill found, before the scoring that takes most of its time
+        bus.publish("market", {"market_id": market["id"], "status": "scoring", "found": len(fresh)})
     limit = asyncio.Semaphore(10)
 
-    async def one(key: str, kind: str, r: dict) -> bool:
+    async def one(kind: str, r: dict) -> bool:
         async with limit:
             text, published, read, known, trash = "", None, None, None, False
             source = (post_source(r["url"]) if kind == "post"
@@ -220,7 +202,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             # search is asked for the last day but also returns older pages: those are history, not live ticks
             old = published is not None and published < time.time() - FEED_WINDOW
             try:
-                tick = await ingest(db, bus, unscored if trash or key not in scored else scorer, market, kind=kind, source=source,
+                tick = await ingest(db, bus, unscored if trash else scorer, market, kind=kind, source=source,
                                     headline=r["title"], url=r["url"],
                                     body=(text or r.get("text") or r["description"])[:2000], published_ts=published,
                                     backfill=backfill or old, likes=known and known["likes"],
@@ -232,7 +214,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 store.set_published(db, r["url"], published)  # remembered, so no market reads it again
             return tick is not None
 
-    return sum(await asyncio.gather(*(one(key, kind, r) for key, (kind, r, _) in fresh.items())))
+    return sum(await asyncio.gather(*(one(kind, r) for kind, r in fresh.values())))
 
 
 async def fetch_now(db, bus, scorer, market: dict, busy: set, fetch=None) -> None:

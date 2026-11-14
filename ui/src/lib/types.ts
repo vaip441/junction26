@@ -140,9 +140,8 @@ export interface MarketEvent {
   price?: number | null
   /** On `finding sources`: the phrases the web is searched with. */
   queries?: string[]
-  /** On `scoring`: how many items the searches found, and how many of them are scored. */
+  /** On `scoring`: how many items the searches found; each is scored, and those worth showing arrive as ticks. */
   found?: number
-  scored?: number
 }
 
 /** A market found for a question, shown while the model picks one. */

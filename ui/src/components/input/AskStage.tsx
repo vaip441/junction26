@@ -194,7 +194,7 @@ function Takeover({ ask }: { ask: Ask }) {
 
 /**
  * Once the asked market is open: a strip over its chart that says what the terminal is doing (the phrases
- * it searches with, how much it found and how much of that it scores, items landing on the tape as they
+ * it searches with, how much it found, items landing on the tape as they
  * are scored), and ends on one line that sums the search up.
  */
 export function AskStrip({ marketId }: { marketId: string }) {
@@ -240,7 +240,7 @@ function Strip({ ask, marketId }: { ask: Ask; marketId: string }) {
   } else if (phase === 'scoring') {
     body = (
       <p className="text-sm text-muted">
-        <Spinner /> <span className="ml-1.5">Found</span> {n(scoring?.found ?? 0)} items. Scoring the {n(scoring?.scored ?? 0)} most relevant.{' '}
+        <Spinner /> <span className="ml-1.5">Found</span> {n(scoring?.found ?? 0)} items. Scoring each one.{' '}
         <span className="ml-1 whitespace-nowrap text-text">
           {n(<Tween value={onTape} />)} on the tape
         </span>

@@ -402,9 +402,9 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   `winner`, its place in `contracts`, and the leading contract's `venue`, `title` and
   `price`), then `tracking` or `made up` with the id, or `failed`. Afterwards the market
   reports `finding sources` (with `queries`, the phrases the web is searched with),
-  `scoring` (with `found`, how many items the searches returned, and `scored`, how many
-  of them are scored: see `FILL_SCORED`), a `tick` for each scored item worth showing as
-  it is scored, and `ready` (with `ticks`, how many items were stored).
+  `scoring` (with `found`, how many items the searches returned), a `tick` for each
+  scored item worth showing as it is scored, and `ready` (with `ticks`, how many items
+  were stored).
 
 A tick:
 

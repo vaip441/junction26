@@ -32,11 +32,6 @@ when the outcome is decided (a newsroom, a results page, a Wikipedia article), f
 by Decision 1. Context.dev checks it every ten minutes and calls a signed webhook; a change that bears on
 the market becomes a tick (`terminal/pages.py`). This needs an address the internet can reach (`PUBLIC_URL`).
 
-A first fill finds 100 to 200 items, and scoring one is a Decision 1 call. Measured over five fills,
-85% came back "no effect" and were never shown, so a fill scores only the `FILL_SCORED` (default 50) items
-that share the most words with the market's title and queries and keeps the rest hidden without a call.
-Earlier coverage has its rules sentence looked up only for a strong call. Live passes score everything new.
-
 A question in plain words is matched to a real market by searching both venues and letting Decision 1 pick
 (`terminal/match.py`). When nothing matches, a text model writes a yes/no question with a deadline, Decision 1
 gives its starting odds from the coverage found, and each shown tick afterwards nudges the price
@@ -68,7 +63,6 @@ watch it become a tick. The real screen is a separate frontend that talks to the
 | `TERMINAL_KEY` | shared secret that every write must send in an `X-Terminal-Key` header |
 | `DB_PATH` | the SQLite file |
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |
-| `FILL_SCORED` | optional: how many items a new market's first fill scores, each one a Decision 1 call (default 50) |
 | `TRUTH_FEED` | optional: the file `trump-social-scraper` appends new posts to |
 | `PUBLIC_URL` | optional: the address the internet reaches this service at; turns on page watching, since Context.dev calls back `PUBLIC_URL/hooks/context/...` |
 

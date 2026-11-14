@@ -913,48 +913,9 @@ def test_social_media_pages_are_not_news_whichever_source_brings_them():
     assert n == 1 and [t["source"] for t in store.ticks(db, m["id"], include_hidden=True)] == ["reuters.com"]
 
 
-def test_a_first_fill_scores_only_the_most_relevant_items_and_hides_the_rest_unscored(monkeypatch):
-    monkeypatch.setattr(poller, "FILL_SCORED", 2)
+def test_a_first_fill_says_how_much_it_found_before_it_scores_and_a_live_pass_says_nothing():
     db, bus, m = setup(queries=("fed rates",))
     q = bus.subscribe()
-    scored = []
-
-    async def spy(context, item, gate):
-        scored.append(item.split(": ", 1)[1].split("\n")[0])
-        return await up()
-
-    found = [{"url": "https://a.example.com/1", "title": "Weather in Paris", "description": "sunny"},
-             {"url": "https://a.example.com/2", "title": "Fed holds rates", "description": "the fed kept rates"},
-             {"url": "https://a.example.com/3", "title": "Football scores", "description": "a draw"},
-             {"url": "https://a.example.com/4", "title": "Rates outlook", "description": "analysts on rates"}]
-
-    async def search(query, **kw):
-        return [] if kw.get("include_domains") else found
-
-    async def scrape(url):
-        return "", None
-
-    fetch = lambda backfill: asyncio.run(poller.fetch_articles(db, bus, spy, m, backfill=backfill, num_results=20,
-                                                               search=search, scrape=scrape))
-    assert fetch(True) == 4  # all four are stored, so none is searched up and scored on a later pass
-    # the two sharing the most words with the market's queries cost a model call; the others cost none
-    assert sorted(scored) == ["Fed holds rates", "Rates outlook"]
-    shown = {t["headline"] for t in store.ticks(db, "m")}
-    hidden = {t["headline"] for t in store.ticks(db, "m", include_hidden=True)} - shown
-    assert shown == {"Fed holds rates", "Rates outlook"} and hidden == {"Weather in Paris", "Football scores"}
-    events = [d for e, d in (q.get_nowait() for _ in range(q.qsize())) if e == "market"]
-    assert events == [{"market_id": "m", "status": "scoring", "found": 4, "scored": 2}]
-    assert fetch(False) == 0 and len(scored) == 2
-
-
-def test_a_live_pass_scores_everything_new_however_much_there_is(monkeypatch):
-    monkeypatch.setattr(poller, "FILL_SCORED", 1)
-    db, bus, m = setup(queries=("fed rates",))
-    scored = []
-
-    async def spy(context, item, gate):
-        scored.append(item)
-        return await up()
 
     async def search(query, **kw):
         return [] if kw.get("include_domains") else RESULTS
@@ -962,5 +923,11 @@ def test_a_live_pass_scores_everything_new_however_much_there_is(monkeypatch):
     async def scrape(url):
         return "", None
 
-    asyncio.run(poller.fetch_articles(db, bus, spy, m, backfill=False, num_results=10, search=search, scrape=scrape))
-    assert len(scored) == 2
+    fetch = lambda backfill: asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=backfill, num_results=20,
+                                                               search=search, scrape=scrape))
+    assert fetch(True) == 2
+    events = [(e, d) for e, d in (q.get_nowait() for _ in range(q.qsize()))]
+    # the count comes first, then each item as it is scored: the frontend shows the fill as it happens
+    assert events[0] == ("market", {"market_id": "m", "status": "scoring", "found": 2})
+    assert [e for e, _ in events[1:]] == ["tick", "tick"]
+    assert fetch(False) == 0 and q.empty()

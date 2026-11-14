@@ -323,23 +323,3 @@ def test_a_headline_seen_days_ago_does_not_hide_todays_story():
     soon = run(db, bus, up, m, url="https://b.example/copy", headline="Stock market today: what to watch this morning", now=11 * day)
     later = run(db, bus, up, m, url="https://a.example/friday", headline="Stock market today: what to watch this morning", now=14 * day)
     assert old is not None and soon is None and later is not None  # a recurring headline is a new story after three days
-
-
-def test_earlier_coverage_has_its_rule_looked_up_only_for_a_strong_call():
-    db, bus, q, m = setup(venue="kalshi")
-    asked = []
-
-    async def ruler(market, item, closest):
-        asked.append(item)
-        return {"start": 0, "end": 1, "text": "r", "confidence": 0.8}
-
-    async def weak_up(*_):
-        return Score(0.6, 0.3, 0.1, 0.3)
-
-    # history is scored by the dozen on a first fill: a second model call each only where the call is strong
-    weak = run(db, bus, weak_up, m, url="https://a.example/1", headline="A mild hint of a change", backfill=True, ruler=ruler)
-    assert weak["verdict"] == "up" and weak["rule"] is None and asked == []
-    strong = run(db, bus, up, m, url="https://a.example/2", headline="The board has named its choice", backfill=True, ruler=ruler)
-    assert strong["rule"]["text"] == "r" and len(asked) == 1
-    live = run(db, bus, weak_up, m, url="https://a.example/3", headline="A second mild hint arrives", ruler=ruler)
-    assert live["rule"]["text"] == "r" and len(asked) == 2  # a live call always gets its rule
