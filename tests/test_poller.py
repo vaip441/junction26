@@ -75,16 +75,3 @@ def test_the_search_behind_a_move_never_doubles_an_article_pass(monkeypatch):
     busy.add("m")
     asyncio.run(poller.fetch_now(db, Bus(), None, m, busy, fetch=fetch))
     assert len(fetched) == 1  # the pass already searched: its ticks are what gets looked at
-
-
-def test_a_market_with_no_queries_or_no_first_fill_is_not_searched_on_request():
-    db, fetched = store.connect(":memory:"), []
-    store.add_market(db, id="bare", venue="made_up", venue_ref=None, title="t", rules="r", url=None)
-    store.add_market(db, id="new", venue="kalshi", venue_ref="n", title="t", rules="r", url=None, queries=["q"])
-
-    async def fetch(db, bus, scorer, market, *, backfill, num_results):
-        fetched.append(market["id"])
-
-    for id in ("bare", "new"):  # its first fill is the article loop's: fetched here, history would count as live
-        asyncio.run(poller.fetch_now(db, Bus(), None, store.get_market(db, id), set(), fetch=fetch))
-    assert fetched == []

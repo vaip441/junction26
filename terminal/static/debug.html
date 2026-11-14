@@ -66,8 +66,8 @@ async function load() {
   $("moves").replaceChildren(...moves.map(moveRow));
 }
 $("market").onchange = () => { current = $("market").value; load(); };
-$("why").onclick = async () => {  // searches the web now; the answer also arrives as a move event
-  $("status").textContent = "Searching for why it moved…";
+$("why").onclick = async () => {  // the answer also arrives as a move event
+  $("status").textContent = "Working out why it moved…";
   const r = await post(`/markets/${current}/why`, {});
   $("status").textContent = r.ok ? "" : (await r.json()).detail;
 };
