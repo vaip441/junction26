@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from terminal import db as store
 from terminal import poller, watch
@@ -601,24 +602,26 @@ def test_trash_is_stored_hidden_without_being_scored_so_it_is_looked_at_once():
 
 def test_new_posts_in_subreddits_that_were_relevant_before_are_scored_with_their_post_time():
     db, bus, m = setup(queries=("Ian Buck Nvidia CEO",))
-    asked = []
+    asked, posted = [], time.time() - 600
 
     async def feed(sub):
         asked.append(sub)
         return [{"url": f"https://www.reddit.com/r/{sub}/comments/9/buck/", "title": "Buck named", "description": "",
-                 "published": 1794615385.0},
+                 "published": posted},
                 {"url": f"https://www.reddit.com/r/{sub}/comments/8/fans/", "title": "My fans are loud", "description": "",
-                 "published": 1794615000.0},
+                 "published": posted},
                 {"url": f"https://www.reddit.com/r/{sub}/comments/7/daily/", "title": "Daily Discussion on the CEO",
-                 "description": "", "published": 1794615000.0}]
+                 "description": "", "published": posted},
+                {"url": f"https://www.reddit.com/r/{sub}/comments/6/old/", "title": "Buck rumoured for CEO", "description": "",
+                 "published": posted - 2 * 86400}]  # a quiet subreddit's feed reaches back days: only the last day counts
 
     found = [{"url": "https://www.reddit.com/r/nvidia/comments/1/first/", "title": "CEO search begins", "description": ""}]
     assert fetch_posts(db, bus, m, found, unknown, feed=feed) == 1 and asked == []  # no subreddit known yet
     assert fetch_posts(db, bus, m, found, unknown, feed=feed) == 1 and asked == ["nvidia"]
     new = store.ticks(db, "m")[0]
     assert (new["headline"], new["source"], new["kind"]) == ("Buck named", "reddit.com/r/nvidia", "post")
-    assert new["published_ts"] == 1794615385.0
-    # the off-topic post and the recurring thread cost nothing and are not stored
+    assert new["published_ts"] == posted
+    # the off-topic post, the recurring thread and the old post cost nothing and are not stored
     assert len(store.ticks(db, "m", include_hidden=True)) == 2
 
 

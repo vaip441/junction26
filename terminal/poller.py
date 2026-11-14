@@ -78,6 +78,9 @@ def posted_at(url: str) -> float | None:
 BACKGROUND_RESERVE = 2
 
 
+FEED_WINDOW = 86400  # a feed's posts count for a day, like the searches' "last 24 hours"
+
+
 async def unscored(*_) -> Score:
     """Trash is kept as a hidden no-effect tick without asking the model: stored, it is never looked at again."""
     return Score(0.0, 1.0, 0.0, 0.0)
@@ -116,7 +119,8 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
         raise FetchFailed(f"{len(failed)} of {len(searches)} searches failed for {market['id']}")
     for sub in store.subreddits(db, market["id"]):
         for r in await feed(sub):  # off-topic posts and recurring threads are passed over at no cost
-            if posts.reddit_trash(r["url"], r["title"]) or not posts.shares_words(f"{r['title']} {r['description']}", queries):
+            if (posts.reddit_trash(r["url"], r["title"]) or (r["published"] or 0) < time.time() - FEED_WINDOW
+                    or not posts.shares_words(f"{r['title']} {r['description']}", queries)):
                 continue
             key = dedupe_key("post", r["url"], r["title"], 0)
             if key not in fresh and not store.has_tick(db, market["id"], key):
