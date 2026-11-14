@@ -6,13 +6,13 @@ at that minute and the posts before it.
 
 Prices are Polymarket's history, one a minute. Posts are from Bluesky, whose search takes a time window
 and whose posts cannot be edited afterwards: a news site's headline is rewritten once the result is known,
-which would hand the model the ending. Of each half hour the most-liked posts are kept (how many likes a
-post ended up with is the one thing used here that was not known at the time; the model never sees it).
+which would hand the model the ending. Of each half hour the most-liked posts are kept, by the rule the
+live service uses (posts.bluesky_worth); how many likes a post ended up with is the one thing used here
+that was not known at the time, and the model never sees it.
 The result is written to replays/<id>.json, which the service loads when it starts.
 """
 import asyncio
 import json
-import re
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -28,9 +28,9 @@ from terminal.record import record
 ROOT = Path(__file__).parent.parent
 OUT, CACHE = ROOT / "replays", ROOT / "data" / "replay-posts"  # the posts found are kept, so a re-run only scores
 GAMMA, CLOB = "https://gamma-api.polymarket.com", "https://clob.polymarket.com"
-BLUESKY = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts"
-SLICE, MIN_LIKES, CLOCK_SLACK = 1800, 20, 300
-# The markets, hardcoded: each finished after the scoring model was trained, so it cannot know how they ended.
+SLICE = 1800
+# The markets, hardcoded. Each finished between 25 Oct and 4 Nov 2026, which is assumed (not verified) to be
+# later than anything the scoring model was trained on, so that it cannot know how they ended.
 REPLAYS = [
     {"id": "replay-lula", "slug": "brazil-presidential-election", "contract": "Lula",
      "start": "2026-10-25T19:00", "end": "2026-10-26T00:30", "per_slice": 20, "queries": ["lula", "bolsonaro"]},
@@ -60,34 +60,21 @@ def prices(c: httpx.Client, token: str, start: float, end: float) -> list[tuple[
     return [(float(p["t"]), round(float(p["p"]) * 100, 1)) for p in history]
 
 
-def worth_reading(p: dict) -> bool:
-    """Not a reply, liked by a few people, long enough to say something, and stamped by its author with
-    the time the network received it (a post can claim any time for itself)."""
-    said = re.sub(r"https?://\S+|@[\w.]+", " ", p["record"].get("text") or "").split()
-    return ("reply" not in p["record"] and (p.get("likeCount") or 0) >= MIN_LIKES and len(said) >= posts.MIN_WORDS
-            and abs(stamp(p["indexedAt"]) - stamp(p["record"]["createdAt"])) <= CLOCK_SLACK)
-
-
-def found_posts(c: httpx.Client, conf: dict, start: float, end: float) -> list[dict]:
+async def found_posts(conf: dict, start: float, end: float) -> list[dict]:
     """The most-liked posts of every half hour that match one of the replay's search words."""
     cached = CACHE / f"{conf['id']}.json"
     if cached.exists():
         return json.loads(cached.read_text())
     out, at = [], start
-    iso = lambda ts: datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     while at < end:
         found = {}
         for q in conf["queries"]:
-            r = c.get(BLUESKY, params={"q": q, "since": iso(at), "until": iso(min(at + SLICE, end)), "sort": "top",
-                                       "limit": 100, "lang": "en"}).raise_for_status()
-            found.update({p["uri"]: p for p in r.json().get("posts", []) if worth_reading(p)})
-        best = sorted(found.values(), key=lambda p: -p["likeCount"])[:conf["per_slice"]]
-        for p in best:
-            text = " ".join(p["record"]["text"].split())
-            out.append({"ts": stamp(p["record"]["createdAt"]), "source": f"bsky.app/{p['author']['handle']}",
-                        "url": f"https://bsky.app/profile/{p['author']['handle']}/post/{p['uri'].rsplit('/', 1)[1]}",
-                        "headline": text[:280], "body": text, "likes": p["likeCount"], "replies": p.get("replyCount")})
-        print(f"  {iso(at)[5:16]}: {len(found)} posts worth reading, kept {len(best)}", flush=True)
+            found.update({p["url"]: p for p in await posts.bluesky(q, at, min(at + SLICE, end), limit=100)
+                          if posts.bluesky_worth(p)})
+        best = sorted(found.values(), key=lambda p: -p["likes"])[:conf["per_slice"]]
+        out += [{"ts": p["published"], "source": f"bsky.app/{p['handle']}", "url": p["url"], "headline": p["text"][:280],
+                 "body": p["text"], "likes": p["likes"], "replies": p["replies"]} for p in best]
+        print(f"  {datetime.fromtimestamp(at, UTC):%d %H:%M}: {len(found)} posts worth reading, kept {len(best)}", flush=True)
         at += SLICE
     out.sort(key=lambda p: p["ts"])
     CACHE.mkdir(parents=True, exist_ok=True)
@@ -100,7 +87,7 @@ async def build(conf: dict) -> None:
     with httpx.Client(timeout=40, headers={"User-Agent": posts.UA}) as c:
         found = contract(c, conf["slug"], conf["contract"])
         points = prices(c, found["token"], start, end)
-        said = found_posts(c, conf, start, end)
+    said = await found_posts(conf, start, end)
     print(f"{conf['id']}: {found['title']} ({len(points)} prices, {len(said)} posts)", flush=True)
     db = store.connect(":memory:")
     store.add_market(db, id=conf["id"], venue="polymarket", venue_ref=None, title=found["title"], rules=found["rules"],

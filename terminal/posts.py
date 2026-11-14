@@ -1,9 +1,9 @@
-"""X and Reddit posts: what is known about one beyond its search result, and which ones are trash."""
+"""X, Reddit and Bluesky posts: what is known about one beyond its search result, and which ones are trash."""
 import html
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 
@@ -72,6 +72,54 @@ def comment_trash(comment: dict) -> bool:
     Measured on 14 Nov over 291 Polymarket comments: 70 were left for the scorer."""
     return (comment["is_reply"] or bool(comment["reports"]) or len(comment["text"].split()) < MIN_WORDS
             or bool(ADVERT.search(comment["text"])))
+
+
+BLUESKY = "https://api.bsky.app/xrpc/app.bsky.feed.searchPosts"
+CLOCK_SLACK = 300  # seconds a post's own time may differ from the time the network received it
+
+
+def _utc(text: str) -> float:
+    d = datetime.fromisoformat(text)
+    return (d if d.tzinfo else d.replace(tzinfo=UTC)).timestamp()
+
+
+def parse_bluesky(data: dict) -> list[dict]:
+    """The posts of a Bluesky search, each whole: who, when, the text, how many liked and answered it.
+    A post states its own time, so one that arrived at another time than it claims is left out."""
+    out = []
+    for p in data.get("posts") or []:
+        try:
+            handle, record = p["author"]["handle"], p["record"]
+            published = _utc(record["createdAt"])
+            if abs(_utc(p["indexedAt"]) - published) > CLOCK_SLACK:
+                continue
+            out.append({"url": f"https://bsky.app/profile/{handle}/post/{p['uri'].rsplit('/', 1)[1]}", "handle": handle,
+                        "text": " ".join(record["text"].split()), "is_reply": "reply" in record,
+                        "likes": int(p.get("likeCount") or 0), "replies": int(p.get("replyCount") or 0),
+                        "published": published})
+        except (KeyError, TypeError, ValueError, AttributeError, IndexError):
+            continue
+    return out
+
+
+def bluesky_worth(post: dict) -> bool:
+    """Not a reply, liked by a few people, and long enough to say something. One that fails is passed
+    over, not stored as trash: an hour later people may have liked it."""
+    said = re.sub(r"https?://\S+|@[\w.]+", " ", post["text"]).split()
+    return not post["is_reply"] and post["likes"] >= MIN_LIKES and len(said) >= MIN_WORDS
+
+
+async def bluesky(query: str, since: float, until: float | None = None, limit: int = 25) -> list[dict]:
+    """The most-liked Bluesky posts of a stretch of time that hold every word of a query. Its search
+    needs no login, takes a time window, and a post cannot be edited afterwards."""
+    iso = lambda ts: datetime.fromtimestamp(ts, UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    params = {"q": query[:200], "since": iso(since), "sort": "top", "limit": limit, "lang": "en"}
+    if until is not None:
+        params["until"] = iso(until)
+    async with httpx.AsyncClient(timeout=10, headers={"User-Agent": UA}) as c:
+        r = await c.get(BLUESKY, params=params)
+        r.raise_for_status()
+        return parse_bluesky(r.json())
 
 
 ATOM = {"a": "http://www.w3.org/2005/Atom"}

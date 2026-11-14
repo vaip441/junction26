@@ -17,6 +17,9 @@ def no_post_lookups_over_the_network(monkeypatch):
     async def ask_json(prompt):
         raise AssertionError("test asked the writing model")
 
+    async def no_posts(query, since, until=None, limit=25):
+        return []  # Bluesky is searched on every pass: it finds nothing unless a test says otherwise
+
     async def google(params):
         raise AssertionError("test read Google News")
 
@@ -27,6 +30,7 @@ def no_post_lookups_over_the_network(monkeypatch):
     monkeypatch.setattr(googlenews, "_get", google)
     monkeypatch.setattr(watch, "ask_json", ask_json)
     monkeypatch.setattr(posts, "x_post", x_post)
+    monkeypatch.setattr(posts, "bluesky", no_posts)
     monkeypatch.setattr(posts, "_get_feed", get_feed)
     monkeypatch.setattr(posts, "_feeds", {})
     monkeypatch.setattr(posts, "_next_feed", 0.0)

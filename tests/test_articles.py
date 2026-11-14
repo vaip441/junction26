@@ -1013,3 +1013,46 @@ def test_comments_that_cannot_be_read_do_not_fail_the_pass():
                          url="https://polymarket.com/event/e/m")
     assert with_comments(db, m, RuntimeError("down")) == (0, ["e"])
 
+
+
+def sky_post(id, text, **more):
+    return {"url": f"https://bsky.app/profile/reuters.com/post/{id}", "handle": "reuters.com", "text": text,
+            "is_reply": False, "likes": 420, "replies": 12, "published": time.time() - 600, **more}
+
+
+def with_bluesky(db, m, found, scorer=up):
+    asked = []
+
+    async def nothing(query, **kw):
+        return []
+
+    async def bluesky(query, since):
+        asked.append(query)
+        if isinstance(found, Exception):
+            raise found
+        return found
+
+    n = asyncio.run(poller.fetch_articles(db, Bus(), scorer, m, backfill=False, num_results=10, search=nothing,
+                                          gnews=nothing, bluesky=bluesky))
+    return n, asked
+
+
+def test_bluesky_posts_found_for_a_markets_queries_are_scored_as_posts():
+    db = store.connect(":memory:")
+    m = store.add_market(db, id="k-A", venue="kalshi", venue_ref="A", title="t", rules="r", url=None, queries=["q1", "q2"])
+    said = "BREAKING: Lula wins Brazil's presidential runoff, electoral authority says"
+    found = [sky_post("1", said), sky_post("2", "nobody liked this one although it is long enough to read", likes=3),
+             sky_post("3", "a reply that is long enough to read and that many people liked", is_reply=True)]
+    n, asked = with_bluesky(db, m, found)
+    (tick,) = store.ticks(db, "k-A", include_hidden=True)  # the two not worth reading are not stored: they may yet be liked
+    assert (n, asked) == (1, ["q1", "q2"])  # found under both queries, one tick
+    assert (tick["kind"], tick["source"], tick["headline"], tick["likes"], tick["replies"]) == (
+        "post", "bsky.app/reuters.com", said, 420, 12)
+    assert tick["url"] == "https://bsky.app/profile/reuters.com/post/1" and abs(tick["published_ts"] - (time.time() - 600)) < 5
+    assert with_bluesky(db, m, found)[0] == 0  # seen before
+
+
+def test_a_bluesky_search_that_fails_does_not_fail_the_pass():
+    db = store.connect(":memory:")
+    m = store.add_market(db, id="k-A", venue="kalshi", venue_ref="A", title="t", rules="r", url=None, queries=["q1"])
+    assert with_bluesky(db, m, RuntimeError("down")) == (0, ["q1"])

@@ -155,10 +155,10 @@ async def unscored(*_) -> Score:
 
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
                          search=None, scrape=None, lookup=None, feed=None, news=None, gnews=None,
-                         comments=None) -> int:
+                         comments=None, bluesky=None) -> int:
     """Search every query of a market, plus X and Reddit once, read the newest posts of the subreddits
-    that were relevant to it before and the newest comments under it on Polymarket, and ingest what was
-    not seen before. Returns how many ticks were stored.
+    that were relevant to it before, the newest comments under it on Polymarket and the day's most-liked
+    Bluesky posts for each query, and ingest what was not seen before. Returns how many ticks were stored.
 
     Every query runs on every pass: measured on 14 Nov, a market's four queries returned 25 to 28
     different results between them, so dropping or rotating them would lose coverage, not waste.
@@ -222,6 +222,19 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             if c["published"] >= time.time() - FEED_WINDOW and key not in fresh and not store.has_tick(db, market["id"], key):
                 fresh[key] = ("post", {"url": f"https://polymarket.com/event/{slug}", "title": text[:280],
                                        "description": text, "published": c["published"], "comment": c, "key": key})
+    # Bluesky's own search: free, and each post arrives whole. A search that fails is an extra lost, not the pass.
+    said = await asyncio.gather(*((bluesky or posts.bluesky)(q, time.time() - FEED_WINDOW) for q in queries),
+                                return_exceptions=True)
+    for q, found_posts in zip(queries, said):
+        if isinstance(found_posts, BaseException):
+            log.warning("Bluesky search failed for %r on %s: %s: %s", q, market["id"], type(found_posts).__name__,
+                        str(found_posts)[:100])
+            continue
+        for p in found_posts:
+            key = dedupe_key("post", p["url"], p["text"], 0)
+            if posts.bluesky_worth(p) and key not in fresh and not store.has_tick(db, market["id"], key):
+                fresh[key] = ("post", {"url": p["url"], "title": p["text"][:280], "description": p["text"],
+                                       "published": p["published"], "bluesky": p})
     if backfill:  # for the frontend: how much the first fill found, before the scoring that takes most of its time
         bus.publish("market", {"market_id": market["id"], "status": "scoring", "found": len(fresh)})
     limit = asyncio.Semaphore(10)
@@ -234,6 +247,9 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             if comment := r.get("comment"):  # a venue comment arrives whole: who, when, how many liked it
                 source, published = f"polymarket.com/{comment['author']}", r["published"]
                 known, trash = {"likes": comment["likes"], "replies": None}, posts.comment_trash(comment)
+            elif sky := r.get("bluesky"):  # so does a Bluesky post
+                source, published = f"bsky.app/{sky['handle']}", r["published"]
+                known = {"likes": sky["likes"], "replies": sky["replies"]}
             elif kind == "post" and (published := posted_at(r["url"])):  # on X: the id holds the time
                 if known := await lookup(r["url"]):
                     source, text = f"x.com/{known['handle']}", known["text"]

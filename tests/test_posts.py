@@ -99,3 +99,31 @@ def test_venue_comments_that_are_replies_short_reported_or_adverts_are_trash():
     assert posts.comment_trash({**said, "text": "sbimbg locked in 12299,76 USD on Ian Buck with outcome No. We track more"}) is True
     assert posts.comment_trash({**said, "text": "all the whale data you could ever want is at https://example.com/x come see"}) is True
 
+
+
+def sky(**more):
+    return {"uri": "at://did:plc:abc/app.bsky.feed.post/3mabc", "author": {"handle": "reuters.com"},
+            "record": {"text": "BREAKING: Lula wins Brazil's presidential\nrunoff, electoral authority says",
+                       "createdAt": "2026-10-26T00:00:05.000Z"},
+            "indexedAt": "2026-10-26T00:00:06.100Z", "likeCount": 420, "replyCount": 12, **more}
+
+
+def test_a_bluesky_search_gives_each_post_whole_with_the_time_it_was_made():
+    (p,) = posts.parse_bluesky({"posts": [sky()]})
+    assert p == {"url": "https://bsky.app/profile/reuters.com/post/3mabc", "handle": "reuters.com",
+                 "text": "BREAKING: Lula wins Brazil's presidential runoff, electoral authority says",
+                 "is_reply": False, "likes": 420, "replies": 12, "published": 1792972805.0}
+
+
+def test_a_bluesky_post_that_claims_another_time_than_it_arrived_or_is_malformed_is_left_out():
+    backdated = sky(indexedAt="2026-10-26T03:00:00Z")  # a post states its own time: this one arrived three hours after it
+    assert posts.parse_bluesky({"posts": [backdated, {"uri": "at://x"}, sky(record={"createdAt": "soon"})]}) == []
+    assert posts.parse_bluesky({}) == []
+
+
+def test_bluesky_replies_short_posts_and_ones_few_people_liked_are_not_worth_reading():
+    (good,) = posts.parse_bluesky({"posts": [sky()]})
+    assert posts.bluesky_worth(good)
+    assert not posts.bluesky_worth({**good, "is_reply": True})
+    assert not posts.bluesky_worth({**good, "likes": 19})
+    assert not posts.bluesky_worth({**good, "text": "Lula rn https://example.com/a-very-long-link @someone.bsky.social wow"})
