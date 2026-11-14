@@ -114,13 +114,25 @@ A microphone sentence, a typed headline, an article and a page change are all ti
 and differ only in their `kind`. This is what makes the demo opener cheap: it is the
 real pipeline with a different source.
 
-One thing runs the other way, from the price back to the web ("why did it move?"). When a
-real market's price is 3 points or more away from where it was within the last 10 minutes,
-the terminal searches for that market at once, outside its polling interval, and asks
-Decision 1 which of the items published from 30 minutes before the move began is its most
-likely cause, with "none of these" as a choice. The move is stored with that tick, how
-likely it is, and the sentence of the rules it touches; a move nothing explains is stored
-without a cause. Measured on 14 Nov, the tracked markets made about ten such moves a day.
+One thing runs the other way, from the price back to the web ("why did it move?").
+
+- **A jump.** When a real market's price is 3 points or more away from where it was
+  within the last 10 minutes, the terminal searches for that market at once, outside
+  its polling interval, and asks Decision 1 which of the items published in the three
+  hours before the move began is its most likely cause, with "none of these" as a
+  choice. Each item is shown to the model with how long before the move it appeared.
+- **On request.** `POST /markets/{id}/why` asks the same about the market's change over
+  the last day, for any market at any time, choosing among the day's strongest items
+  and what a search made at that moment brings.
+- **What is stored.** The move, the item (the `cause` when Decision 1 puts it at 0.4 or
+  more and above "none", otherwise only the `closest` item), the sentence of the rules a
+  cause touches, and the related contracts that moved 1.5 points or more over the same
+  stretch.
+
+Measured on 14 Nov: the tracked markets made about ten jumps a day, and for 10 of 11
+no item on the tape explained the jump, whether the look-back was 30 minutes or three
+hours. Most are thin markets moving on trades, not news, which is why a move also says
+what else moved: a contract falling while its rival rises is the whole story.
 
 ### Sources
 
@@ -365,8 +377,12 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   status `deleted`.
 - `GET /markets/{id}/ticks?limit=` and `GET /markets/{id}/prices?since=`: history for
   first paint.
-- `GET /markets/{id}/moves?limit=`: the market's price jumps, newest first, each with
-  its likely cause (see "A move" below).
+- `GET /markets/{id}/moves?limit=`: the market's price moves, newest first (see "A
+  move" below).
+- `POST /markets/{id}/why` (needs the key): why did this market move over the last
+  day? Searches the web now, takes a few seconds, and returns a move with `asked:
+  true`, which is also sent as a `move` event. Asked again within five minutes it
+  returns the same answer. 409 when the price moved less than a point.
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
 - `GET /record`: the weekend record numbers.
@@ -417,15 +433,21 @@ by search and pages that state no time never do. Instant-fill ticks carry
 A move:
 
     { "id", "market_id", "ts", "since", "from": 23.5, "to": 20.0,
-      "cause": { ...a tick... } | null, "confidence": 0.65 | null,
-      "rule": { "start", "end", "text", "confidence" } | null }
+      "summary": "Down 3.5 points in 1 minute. No news explains it. Will Rene Haas be the next CEO of NVIDIA? went up 4.0 at the same time.",
+      "explained": false, "asked": false,
+      "cause": { ...a tick... } | null, "closest": { ...a tick... } | null, "confidence": 0.65 | null,
+      "rule": { "start", "end", "text", "confidence" } | null,
+      "related": [ { "id", "title", "from": 20.0, "to": 24.0 } ] }
 
-The price went from `from` at `since` to `to` at `ts`. `cause` is the tick Decision 1 names
-as the most likely reason, a whole tick as above (it is also on the tape, or arrives as a
-`tick` event just before the `move`), and `confidence` is how likely. Both are null when
-nothing published around the move explains it. `rule` is the sentence of the rules the
-cause touches, in the same form as on a tick. Only real markets have moves: a made-up
-market's price moves by its own ticks.
+The price went from `from` at `since` to `to` at `ts`. `summary` says it in plain words
+and is enough to show by itself. `explained` tells whether an item is taken as the reason:
+if so it is in `cause` (a whole tick, also on the tape) and `rule` is the sentence of the
+rules it touches; if not, `cause` is null and `closest` holds the nearest item, to be
+shown as "closest news", never as the reason. `confidence` is Decision 1's probability
+for whichever of the two is set. `related` lists the related contracts whose price
+changed 1.5 points or more over the same stretch, biggest change first. `asked` is true
+for a move explained on request (the last day), false for a jump the terminal saw itself.
+Made-up markets have no jumps of their own, but can be asked about.
 
 The frontend owns speech-to-text (microphone to sentences), the spoken call-out of
 each verdict, and all layout. The concept mockup is at

@@ -23,7 +23,9 @@ Every item takes the same path: found, deduplicated, scored, stored, streamed to
 
 It also works backwards, from the price to the web: when a real market's price jumps 3 points within
 10 minutes, the terminal searches for that market at once and Decision 1 names the item most likely
-behind the jump, with the sentence of the rules it touches (`terminal/moves.py`).
+behind the jump, with the sentence of the rules it touches, or says that no news explains it and which
+related contracts moved at the same time. The same can be asked of any market's last day on request
+(`terminal/moves.py`).
 
 Each market also has one page watched for it by a Context.dev monitor: the page most likely to change
 when the outcome is decided (a newsroom, a results page, a Wikipedia article), found by search and chosen
@@ -73,7 +75,8 @@ and of every stream event, is in
 | `DELETE /markets/{id}` | stop tracking a market |
 | `POST /markets/mu-demo/reset` | put the demo market back to its starting price with an empty tape |
 | `GET /markets/{id}/ticks`, `GET /markets/{id}/prices` | history for the tape and the chart |
-| `GET /markets/{id}/moves` | "why did it move?": the market's price jumps, each with its likely cause |
+| `GET /markets/{id}/moves` | "why did it move?": the market's price moves, each in one sentence with its likely cause |
+| `POST /markets/{id}/why` | explain the market's move over the last day, now |
 | `POST /markets/{id}/ticks` | a spoken or typed sentence, scored like any other tick |
 | `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market`, `page_check` |
 | `GET /record` | of the ticks called up or down, how often the price then moved that way |

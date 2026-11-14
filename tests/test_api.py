@@ -424,13 +424,35 @@ def test_moves_are_listed_newest_first_with_their_cause_as_a_tick(path):
     with client(path) as c:
         tick = typed(c).json()
         db = c.app.state.db
-        store.add_move(db, "mu-demo", 100.0, 40.0, 20.0, 24.0, None, None, None)
-        store.add_move(db, "mu-demo", 200.0, 140.0, 24.0, 30.0, tick["id"], 0.8, '{"start": 0, "end": 4, "text": "Rule", "confidence": 0.9}')
+        store.add_move(db, "mu-demo", 100.0, 40.0, 20.0, 24.0, tick["id"], 0.2, None, False, [])
+        store.add_move(db, "mu-demo", 200.0, 140.0, 24.0, 30.0, tick["id"], 0.8,
+                       '{"start": 0, "end": 4, "text": "Rule", "confidence": 0.9}', True, [])
         first, second = c.get("/markets/mu-demo/moves").json()
         assert c.get("/markets/nope/moves").status_code == 404
     assert first == {"id": 2, "market_id": "mu-demo", "ts": 200.0, "since": 140.0, "from": 24.0, "to": 30.0,
-                     "confidence": 0.8, "rule": {"start": 0, "end": 4, "text": "Rule", "confidence": 0.9}, "cause": tick}
-    assert second["cause"] is None and second["rule"] is None and second["to"] == 24.0
+                     "confidence": 0.8, "rule": {"start": 0, "end": 4, "text": "Rule", "confidence": 0.9},
+                     "explained": True, "asked": False, "cause": tick, "closest": None, "related": [],
+                     "summary": "Up 6.0 points in 1 minute. Likely cause: typed: that is clever"}
+    assert second["cause"] is None and second["closest"] == tick and second["explained"] is False
+    assert second["summary"] == "Up 4.0 points in 1 minute. No news explains it."
+
+
+def test_why_is_answered_on_request_with_the_key_and_a_flat_market_is_a_409(path, monkeypatch):
+    from terminal import moves
+
+    asked = []
+
+    async def why(db, bus, market, *, fetch):
+        asked.append(market["id"])
+        return {"summary": "Up 6.0 points in the last day."} if len(asked) == 1 else None
+
+    monkeypatch.setattr(moves, "why", why)
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="k")) as c:
+        h = {"X-Terminal-Key": "k"}
+        assert c.post("/markets/mu-demo/why").status_code == 401 and asked == []  # it costs searches and model calls
+        assert c.post("/markets/nope/why", headers=h).status_code == 404
+        assert c.post("/markets/mu-demo/why", headers=h).json() == {"summary": "Up 6.0 points in the last day."}
+        assert c.post("/markets/mu-demo/why", headers=h).status_code == 409
 
 
 def test_the_demo_market_can_be_reset_before_a_presentation_and_no_other_market_can(path):
@@ -440,7 +462,7 @@ def test_the_demo_market_can_be_reset_before_a_presentation_and_no_other_market_
         h = {"X-Terminal-Key": "k"}
         c.post("/markets/mu-demo/ticks", json={"text": "that is clever", "kind": "typed"}, headers=h)
         db = c.app.state.db
-        store.add_move(db, "mu-demo", 100.0, 40.0, 20.0, 24.0, None, None, None)
+        store.add_move(db, "mu-demo", 100.0, 40.0, 20.0, 24.0, None, None, None, False, [])
         assert c.get("/markets/mu-demo").json()["price"] > 20.0
         assert c.post("/markets/mu-demo/reset").status_code == 401
         store.add_market(db, id="k-x", venue="kalshi", venue_ref="X", title="t", rules="r", url=None)
