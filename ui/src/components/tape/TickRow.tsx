@@ -6,6 +6,7 @@ import { shortSource } from '../../lib/sources'
 import { Badge } from '../common/Badge'
 import { SourceIcon } from '../common/SourceIcon'
 import { DecisionBar } from './DecisionBar'
+import { HoverPreview } from './HoverPreview'
 import { LifecycleBadge } from './LifecycleBadge'
 import { VerdictBadge } from './VerdictBadge'
 
@@ -44,6 +45,7 @@ export function TickRow({
   const arrived = playing || now - tick.ts < 12
   return (
     <li id={`tick-${tick.id}`} className={`grid ${arrived ? 'row-in' : ''}`}>
+      <HoverPreview url={tick.url} headline={tick.headline} source={tick.source} passage={tick.passage}>
       <div
         className={`flex min-h-0 flex-col gap-1 overflow-hidden border-l-2 px-3 py-2.5 ${fresh ? 'tick-flash' : ''} ${tick.backfill ? 'opacity-60' : ''} ${
           life?.state === 'edge' ? (tick.verdict === 'up' ? 'border-l-up' : 'border-l-down') : 'border-l-transparent'
@@ -112,6 +114,7 @@ export function TickRow({
         {tick.replies != null && tick.replies > 0 && <span className="num shrink-0 whitespace-nowrap">↩ {tick.replies}</span>}
       </p>
       </div>
+      </HoverPreview>
     </li>
   )
 }
