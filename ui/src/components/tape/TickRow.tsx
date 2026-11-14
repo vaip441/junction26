@@ -1,11 +1,10 @@
-import { absoluteTime, tickTime, timeAgo } from '../../lib/format'
+import { absoluteTime, pct, tickTime, timeAgo } from '../../lib/format'
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { Move, Tick, TickKind } from '../../lib/types'
 import { useStore } from '../../state/store'
 import { shortSource } from '../../lib/sources'
 import { Badge } from '../common/Badge'
 import { SourceIcon } from '../common/SourceIcon'
-import { MoveSpan } from '../market/MovesPanel'
 import { DecisionBar } from './DecisionBar'
 import { LifecycleBadge } from './LifecycleBadge'
 import { VerdictBadge } from './VerdictBadge'
@@ -47,17 +46,17 @@ export function TickRow({
           life?.state === 'edge' ? (tick.verdict === 'up' ? 'border-l-up' : 'border-l-down') : 'border-l-transparent'
         }`}
       >
-      <div className="flex items-center gap-2">
+      <div className="flex items-baseline gap-3">
         <span className={fresh ? 'verdict-late' : ''}>
           <VerdictBadge verdict={tick.verdict} confidence={tick.confidence} strength={tick.strength} />
         </span>
         <Badge tone={tick.test ? 'madeup' : 'neutral'}>{KIND_LABEL[tick.kind]}</Badge>
         {tick.backfill && <Badge>Earlier</Badge>}
-        <span className="ml-auto shrink-0 text-[11px] text-faint" title={absoluteTime(at)}>
+        <span className="num ml-auto shrink-0 text-xs text-faint" title={absoluteTime(at)}>
           {timeAgo(at)}
         </span>
       </div>
-      <p className={`text-sm leading-snug ${quiet ? 'line-clamp-1 text-muted' : 'line-clamp-3 text-text'}`}>
+      <p className={`text-[0.9375rem] leading-snug ${quiet ? 'line-clamp-1 text-muted' : 'line-clamp-3 font-medium text-text'}`}>
         {tick.url ? (
           <a href={tick.url} target="_blank" rel="noreferrer" className="hover:underline">
             {tick.headline}
@@ -88,20 +87,20 @@ export function TickRow({
         </button>
       )}
       {(life || move) && (
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {move && (
             <button
               onClick={() => setTab('moves')}
               title="The terminal names this as the likely cause of a price jump"
-              className="inline-flex items-center gap-1 rounded border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-text hover:border-accent"
+              className={`inv num text-xs ${move.to >= move.from ? 'inv-up' : 'inv-down'}`}
             >
-              Moved the price <MoveSpan move={move} />
+              Moved the price {pct(move.from)} → {pct(move.to)}
             </button>
           )}
           {life && <LifecycleBadge life={life} verdict={tick.verdict} />}
         </div>
       )}
-      <p className="flex items-center gap-3 text-[11px] text-faint">
+      <p className="flex items-center gap-3 text-xs text-faint">
         <span className="flex min-w-0 items-center gap-1.5">
           <SourceIcon source={tick.source} className="h-3 w-3" />
           <span className="truncate">{shortSource(tick.source)}</span>

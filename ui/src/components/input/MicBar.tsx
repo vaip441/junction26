@@ -4,11 +4,11 @@ import { sendTick } from '../../lib/actions'
 import { useStore } from '../../state/store'
 
 const LABEL: Record<MicState, string> = {
-  off: 'mic off · press Space',
-  starting: 'starting the mic…',
-  listening: 'listening',
-  unsupported: 'no speech input in this browser: type below',
-  denied: 'mic blocked: allow it in the address bar, or type below',
+  off: 'Press Space to turn the mic on',
+  starting: 'Starting the mic…',
+  listening: 'Listening',
+  unsupported: 'No speech input in this browser: type below',
+  denied: 'Mic blocked: allow it in the address bar, or type below',
 }
 
 /** Every sentence said near the laptop becomes a SPOKEN tick. Space toggles it. */
@@ -42,11 +42,10 @@ export function MicBar({ marketId }: { marketId: string }) {
           onClick={() => setMic(!micOn)}
           disabled={!usable}
           title="Space"
-          className={`press flex h-9 shrink-0 items-center gap-2 rounded border px-3 text-xs font-semibold uppercase tracking-wider disabled:opacity-40 ${
-            micOn ? 'border-down/60 text-text' : 'border-line text-muted hover:text-text'
-          }`}
+          aria-pressed={micOn}
+          className={`press btn flex h-9 shrink-0 items-center gap-2 px-3! ${micOn ? 'border-text! text-text!' : ''}`}
         >
-          <span className={`h-2.5 w-2.5 rounded-full ${live ? 'animate-pulse bg-down' : micOn ? 'bg-madeup' : 'bg-faint'}`} />
+          <span className={`h-2 w-2 ${live ? 'animate-pulse bg-down' : micOn ? 'bg-madeup' : 'bg-faint'}`} />
           {micOn ? 'Mic on' : 'Mic off'}
         </button>
         <span className="truncate text-xs text-muted">

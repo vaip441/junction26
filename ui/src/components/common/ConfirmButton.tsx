@@ -19,9 +19,7 @@ export function ConfirmButton({ label, question, title, onConfirm }: { label: st
         onConfirm()
       }}
       title={title}
-      className={`press rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${
-        armed ? 'border-down/60 text-down' : 'border-line text-faint hover:text-text'
-      }`}
+      className={`press btn ${armed ? 'border-down! text-down!' : ''}`}
     >
       {armed ? question : label}
     </button>

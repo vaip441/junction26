@@ -49,7 +49,7 @@ function Tween({ value }: { value: number }) {
 }
 
 function Spinner() {
-  return <span className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-accent border-t-transparent align-[-1px]" />
+  return <span className="inline-block h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-text border-t-transparent align-[-1px]" />
 }
 
 function Clock({ seconds, className = '' }: { seconds: number; className?: string }) {
@@ -66,7 +66,7 @@ function ContextMeter({ meter, live, compact = false }: { meter: Meter | null; l
   if (!meter) return null
   return (
     <span className="soft-in flex shrink-0 items-center gap-2 text-xs text-muted">
-      <span className={`h-1.5 w-1.5 rounded-full bg-accent ${live ? 'animate-pulse' : ''}`} />
+      <span className={`h-1.5 w-1.5 bg-text ${live ? 'animate-pulse' : ''}`} />
       Context.dev
       {meter.credits != null && (
         <span>
@@ -92,19 +92,19 @@ function ContextMeter({ meter, live, compact = false }: { meter: Meter | null; l
 function MarketCard({ card, index, state, picked }: { card: FoundMarket; index: number; state: 'open' | 'picked' | 'passed'; picked?: MarketEvent }) {
   return (
     <li
-      className={`rise-in flex flex-col gap-2 rounded border bg-panel-2 p-3 transition-[opacity,border-color,box-shadow,transform] duration-500 ${
-        state === 'picked' ? 'border-accent shadow-[0_0_0_1px_var(--color-accent)] lg:-translate-y-1' : state === 'passed' ? 'border-line opacity-35' : 'border-line'
+      className={`rise-in flex flex-col gap-2 rounded-xs border bg-panel-2 p-3 transition-[opacity,border-color,box-shadow,transform] duration-500 ${
+        state === 'picked' ? 'border-text lg:-translate-y-1' : state === 'passed' ? 'border-line opacity-35' : 'border-line'
       }`}
       style={{ animationDelay: `${index * 110}ms` }}
     >
       <div className="flex items-center justify-between gap-2">
         <VenueBadge venue={card.venue} />
-        <span className="num text-xl font-bold text-text">{pct(state === 'picked' && picked?.price != null ? picked.price : card.price)}</span>
+        <span className="board text-3xl text-text">{pct(state === 'picked' && picked?.price != null ? picked.price : card.price)}</span>
       </div>
       <p className="line-clamp-2 text-sm leading-snug text-text">{state === 'picked' && picked?.title ? picked.title : card.title}</p>
-      <p className="text-[11px] text-faint">
+      <p className="text-xs text-faint">
         {state === 'picked' ? (
-          <span className="font-semibold uppercase tracking-wider text-accent">Picked</span>
+          <span className="inv">Picked</span>
         ) : (
           <>
             <span className="num">{card.contracts}</span> {card.contracts === 1 ? 'contract' : 'contracts'}
@@ -159,10 +159,10 @@ function Takeover({ ask }: { ask: Ask }) {
   return (
     <div className={`absolute inset-0 z-30 flex flex-col justify-center gap-6 bg-panel p-8 lg:p-12 ${ask.opened ? 'soft-out' : 'soft-in'}`}>
       <div className="flex items-baseline justify-between gap-4">
-        <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-muted">{isLink ? 'Reading a link' : 'Asking'}</span>
-        <Clock seconds={seconds} className="text-2xl" />
+        <span className="text-sm font-semibold text-muted">{isLink ? 'Reading a link' : 'Asking'}</span>
+        <Clock seconds={seconds} className="board text-4xl" />
       </div>
-      <p className={`rise-in font-semibold leading-tight text-text ${isLink ? 'break-all text-xl' : 'text-3xl lg:text-4xl'}`}>
+      <p className={`rise-in font-semibold leading-tight text-text ${isLink ? 'break-all text-xl' : 'text-3xl tracking-[-0.02em] lg:text-[2.75rem]'}`}>
         {isLink ? ask.query : `“${ask.query}”`}
       </p>
       {/* keyed by its text, so each new line fades in over the last */}
@@ -260,7 +260,7 @@ function Strip({ ask, marketId }: { ask: Ask; marketId: string }) {
 
   const queries = sourcing?.queries ?? []
   return (
-    <div className="rise-in absolute left-4 right-4 top-3 z-20 overflow-hidden rounded border border-line bg-panel-2/95 shadow-xl backdrop-blur-sm">
+    <div className="rise-in absolute left-4 right-4 top-3 z-20 overflow-hidden rounded-xs border border-line bg-panel-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2.5">
         <div key={phase} className="soft-in min-w-0 flex-1">
           {body}
@@ -275,9 +275,9 @@ function Strip({ ask, marketId }: { ask: Ask; marketId: string }) {
       </div>
       {!done && queries.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 px-4 pb-2.5">
-          <span className="soft-in text-[10px] font-semibold uppercase tracking-wider text-faint">Searching for</span>
+          <span className="soft-in text-xs font-semibold text-muted">Searching for</span>
           {queries.map((q, i) => (
-            <span key={q} className="rise-in rounded border border-line bg-bg px-2 py-0.5 text-xs text-text" style={{ animationDelay: `${i * 120}ms` }}>
+            <span key={q} className="rise-in rounded-xs border border-line bg-bg px-2 py-0.5 text-xs text-text" style={{ animationDelay: `${i * 120}ms` }}>
               {q}
             </span>
           ))}
@@ -285,7 +285,7 @@ function Strip({ ask, marketId }: { ask: Ask; marketId: string }) {
       )}
       {!done && (
         <div className="relative h-0.5 overflow-hidden bg-line">
-          <span className="scan absolute inset-y-0 w-1/3 bg-accent/70" />
+          <span className="scan absolute inset-y-0 w-1/3 bg-text/70" />
         </div>
       )}
     </div>

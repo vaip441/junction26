@@ -7,10 +7,10 @@ import { HitBar } from './HitBar'
 function Figure({ value, label, note }: { value: number; label: string; note: string }) {
   return (
     <div className="flex flex-col items-center gap-1 text-center">
-      <span className="num text-6xl font-bold text-text">
+      <span className="board text-7xl text-text">
         <CountUp value={value} />
       </span>
-      <span className="text-xs font-semibold uppercase tracking-wider text-muted">{label}</span>
+      <span className="text-sm font-semibold text-text">{label}</span>
       <span className="max-w-48 text-xs text-faint">{note}</span>
     </div>
   )
@@ -30,7 +30,7 @@ export function RecordView() {
         onClick={() => close(false)}
         aria-label="Close"
         title="Close (Esc)"
-        className="press absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded text-sm text-muted hover:bg-panel-2 hover:text-text"
+        className="press absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-xs text-sm text-muted hover:bg-panel-2 hover:text-text"
       >
         ✕
       </button>
@@ -39,8 +39,8 @@ export function RecordView() {
       ) : (
         <div className="m-auto flex w-full max-w-3xl flex-col items-center gap-10">
           <div className="flex flex-col items-center gap-2 text-center">
-            <h1 className="text-sm font-semibold uppercase tracking-[0.3em] text-muted">The weekend record</h1>
-            <p className="max-w-xl text-sm text-faint">
+            <h1 className="text-3xl font-semibold tracking-[-0.015em] text-text">The weekend record</h1>
+            <p className="max-w-xl text-sm text-muted">
               Every up or down call on a real market since {f.since}, judged by the price {f.windowMinutes} minutes
               later. Moves under 1 pt count as no move.
             </p>
@@ -53,7 +53,7 @@ export function RecordView() {
           </div>
 
           <div className="flex w-full flex-col items-center gap-3">
-            <span className={`num text-8xl font-bold ${f.hitRate != null && f.hitRate >= 50 ? 'text-up' : 'text-text'}`}>
+            <span className={`board text-[9rem] ${f.hitRate != null && f.hitRate >= 50 ? 'text-up' : 'text-text'}`}>
               {f.hitRate == null ? '—' : <CountUp value={f.hitRate} ms={1600} format={(n) => `${Math.round(n)}%`} />}
             </span>
             <span className="text-sm text-muted">of the time the price moved, it moved the way we called it</span>

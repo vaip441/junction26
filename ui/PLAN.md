@@ -44,20 +44,23 @@ Every design choice below serves one of those four beats. If a feature doesn't, 
 
 A dark trading terminal, readable from three metres away on a projector.
 
-- Near-black background, one monospace face for numbers (tabular figures), one sans for text.
+- Warm graphite background, bone text. One family, Archivo, at three widths: regular for text (numbers
+  in tabular figures), the condensed cut for prices (the figures of an odds board), the wide cut for the
+  name. It is bundled with the build (`@fontsource-variable/archivo`), so the screen needs no network for it.
+- Labels are sentence case, not capitals. What must be seen first (a call not priced in yet, the item that
+  moved the price, what is picked) is a solid block reversed out; everything else is plain text.
 - Colour carries the verdict and nothing else: **green = up, red = down, grey = no effect**.
-  `strength` (−1…1) sets the intensity, so "up a lot" glows and "up a little" is muted.
+  `strength` (−1…1) sets the intensity, so "up a lot" is bright and "up a little" is muted. There is no
+  accent colour: what is picked, focused or linked is marked in the text colour.
 - The price is the largest thing on screen. When it moves it flashes the verdict colour and counts
   up/down to the new value (~400 ms).
 - New ticks slide in at the top of the tape with a brief highlight.
-- **Presentation mode** (`P` key): hides chrome, scales type ~1.5×, keeps price, chart and tape.
-  This is the mode used on stage.
 
 ## Layout
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ TopBar: name · AskBar (link or plain words) · stream ● · keys · ⚙        │
+│ TopBar: name · AskBar (link or plain words) · markets tracked           │
 ├──────────────┬──────────────────────────────────────────┬───────────────┤
 │ MarketList   │ MarketHeader: title · venue · 64% +18pts │ Tape          │
 │  demo  20%   │ ┌──────────────────────────────────────┐ │  ▲ UP 82%     │
@@ -77,9 +80,9 @@ ui/
   PLAN.md                this file
   public/                static assets (favicon)
   src/
-    app/                 App.tsx, routes/views, keyboard shortcuts, presentation mode
+    app/                 App.tsx, routes/views, keyboard shortcuts
     components/
-      layout/            TopBar, MarketList, Shell, ConnectionDot
+      layout/            TopBar, MarketList, Shell
       market/            MarketHeader, PriceChart, RelatedContracts, SourcesPanel, RulesPanel
       tape/              Tape, TickRow, VerdictBadge, ConfidenceBar, KindLabel
       input/             AskBar, AskStage, MicBar, TypeTickBox, KeyPrompt
@@ -116,8 +119,6 @@ Mirror the spec exactly: `MarketSummary`, `MarketDetail` (+ `related`, `sources`
   `price` → append point and update header. `move` → prepend to that market's moves (its cause
   tick is already on the tape, or arrives as a `tick` just before). `market` → update ask progress / list (`deleted`
   removes it, `tracking`/`made up` selects it, `ready` ends the "finding sources" state).
-- `ConnectionDot` is green while the stream (incl. keepalives every 15 s) is alive, amber while
-  reconnecting.
 
 ### `state/store.ts`
 Plain normalized store: `markets: Record<id, MarketSummary>`, `detail`, `ticks: Record<id, Tick[]>`
@@ -213,7 +214,7 @@ the pitch, and worth tracking one market where his posts move the price so the t
 
 ## Keyboard (stage control)
 
-`P` presentation mode · `/` focus AskBar · `Space` mic on/off ·
+`/` focus AskBar · `Space` mic on/off ·
 `1`–`9` jump to market in list · `R` record view · `W` why-did-it-move tab · `Esc` back.
 
 ## Differentiators
@@ -270,7 +271,7 @@ Each step ends with something demoable; stop where time runs out.
 4. **Chart.** PriceChart with tick markers, MarketList with switching. *Beat 2 works.*
 5. **Ask.** AskBar + AskStage + error states + KeyPrompt. *Beat 3 works.*
 6. **Record.** RecordCard and full-screen RecordView. *Beat 4 works.*
-7. **Polish for the stage.** Presentation mode, hotkeys, price flash/count animation, tick slide-in,
+7. **Polish for the stage.** Hotkeys, price flash/count animation, tick slide-in,
    related/sources/rules tabs, responsive stacking.
 8. **Why did it move?** `Move` and `rule` types, mock support, `/moves` + `move` event in the store,
    MovesPanel, rule quote on the tape, rules highlighting. Then the chart bands and the live banner.
@@ -285,7 +286,7 @@ Each step ends with something demoable; stop where time runs out.
 | Speech recognition fails or the hall is too loud | TypeTickBox is always visible next to the mic |
 | No news breaks during the demo | Backend instant fill; the tape is already full when a market opens |
 | No price jumps during the demo | Past moves are stored: the Moves tab and the chart bands are already there when the market opens |
-| Stream drops on venue wifi | Auto-reconnect + refetch; ConnectionDot shows it honestly |
+| Stream drops on venue wifi | Auto-reconnect + refetch |
 | Plain-words search is slow | AskStage narrates each step on the centre of the screen so the wait reads as work, not a hang |
 | Scoring down (503) | Inline "scoring unavailable, try again", the typed sentence stays in the box |
 

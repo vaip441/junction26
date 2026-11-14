@@ -1,36 +1,24 @@
 import { useStore } from '../../state/store'
 import { AskBar } from '../input/AskBar'
-import { ConnectionDot } from './ConnectionDot'
 
-function Key({ k, label, on, onClick }: { k: string; label: string; on?: boolean; onClick?: () => void }) {
-  return (
-    <button
-      onClick={onClick}
-      className={`press flex items-center gap-1 text-xs ${on ? 'text-text' : 'text-muted'} hover:text-text`}
-      title={`${label} (${k})`}
-    >
-      <kbd className="num rounded border border-line px-1 text-[10px] text-faint">{k}</kbd>
-      {label}
-    </button>
-  )
-}
-
+/**
+ * One bar across the top, cut into cells like the status line of a terminal: the name, the question box,
+ * and how many markets are tracked.
+ */
 export function TopBar() {
-  const presentation = useStore((s) => s.presentation)
-  const togglePresentation = useStore((s) => s.togglePresentation)
+  const count = useStore((s) => s.order.length)
   return (
-    <header className="flex h-12 shrink-0 items-center gap-4 border-b border-line bg-panel px-4">
-      <span className="num shrink-0 text-sm font-bold tracking-widest text-text">
-        TERMINAL
-      </span>
-      {!presentation && <AskBar />}
-      <div className={`flex shrink-0 items-center gap-4 ${presentation ? 'ml-auto' : ''}`}>
-        {/* keyboard hints: no use on a phone, and the ask box needs the width */}
-        <span className="hidden items-center gap-4 md:flex">
-          <Key k="P" label="present" on={presentation} onClick={() => togglePresentation()} />
-        </span>
-        <ConnectionDot />
+    <header className="flex h-11 shrink-0 items-stretch border-b border-line bg-panel">
+      <div className="flex shrink-0 items-center px-4">
+        <span className="wordmark text-[0.95rem] leading-none text-text">Terminal</span>
       </div>
+      <AskBar />
+      {/* no use on a phone, and the question box needs the width */}
+      {count > 0 && (
+        <span className="hidden shrink-0 items-center border-l border-line px-4 text-xs text-muted lg:flex">
+          <span className="num mr-1 text-text">{count}</span> {count === 1 ? 'market' : 'markets'}
+        </span>
+      )}
     </header>
   )
 }

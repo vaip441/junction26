@@ -2,6 +2,7 @@ import {
   AreaSeries,
   LineSeries,
   LineStyle,
+  TickMarkType,
   createChart,
   createSeriesMarkers,
   type IChartApi,
@@ -12,7 +13,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { useNow } from '../../hooks/useNow'
 import { pct, tickTime, timeAgo } from '../../lib/format'
 import { focusTick } from '../../lib/focus'
@@ -22,14 +23,16 @@ import { shortSource } from '../../lib/sources'
 import type { Move, PricePoint, Tick } from '../../lib/types'
 import { useStore } from '../../state/store'
 import { EmptyState } from '../common/EmptyState'
+import { Points } from '../common/Price'
+import { LifecycleBadge } from '../tape/LifecycleBadge'
 import { MoveSpan } from './MovesPanel'
 import { TickMarkers, type MoveBand, type TickMark } from './tickMarkers'
 
 const MAX_MARKERS = 300
 /** Lead-time lines drawn at once: the newest ones, so the chart stays readable. */
 const MAX_LEAD_LINES = 6
-/** Of those, how many carry their "N min early" label (more overlap and become unreadable). */
-const MAX_LEAD_LABELS = 3
+/** Of those, how many carry their "N min early" label: the newest only. The rest say it when pointed at. */
+const MAX_LEAD_LABELS = 1
 /** The price axis never spans less than this many points, so a flat price is a flat line with distinct labels. */
 const MIN_SPAN = 6
 
@@ -62,6 +65,82 @@ function showRange(c: IChartApi, data: { time: UTCTimestamp }[], id: RangeId): v
   // the bar just before the range starts, so the line enters from the left edge; never fewer than two bars
   from = Math.max(0, Math.min(from - 1, data.length - 2))
   c.timeScale().setVisibleLogicalRange({ from, to: data.length - 1 + RIGHT_OFFSET })
+}
+
+/** What the shown stretch is called, after the change over it: "+7 pts in the past day". */
+const RANGE_WORDS: Record<RangeId, string | null> = {
+  '1h': 'in the past hour',
+  '6h': 'in the past 6 hours',
+  '1d': 'in the past day',
+  '1w': 'in the past week',
+  all: null,
+}
+
+/** A moment as people at the table read it: their own clock, 24 hours, with the weekday. */
+function when(seconds: number): string {
+  return new Date(seconds * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+}
+
+/** The time axis in the viewer's own time. The library labels in UTC unless told how to. */
+function axisLabel(time: Time, type: TickMarkType): string {
+  const d = new Date((time as number) * 1000)
+  if (type === TickMarkType.Year) return String(d.getFullYear())
+  if (type === TickMarkType.Month) return d.toLocaleDateString([], { month: 'short' })
+  if (type === TickMarkType.DayOfMonth) return d.toLocaleDateString([], { day: 'numeric', month: 'short' })
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+}
+
+type Bar = { time: UTCTimestamp; value: number }
+
+/** The first and last bars on screen, as places in the data. */
+interface Shown {
+  from: number
+  to: number
+}
+
+/**
+ * One line that reads the chart out. Pointing at the line: the price there, when, and how far it has moved
+ * since. Otherwise: what the price did over the stretch on screen.
+ */
+function Readout({ chart, series, data, range, shown }: { chart: IChartApi; series: ISeriesApi<'Area'>; data: Bar[]; range: RangeId | null; shown: Shown | null }) {
+  const [point, setPoint] = useState<Bar | null>(null)
+
+  useEffect(() => {
+    const onMove = (p: MouseEventParams<Time>) => {
+      const d = p.time != null && p.point ? p.seriesData.get(series) : undefined
+      const next = d && 'value' in d && typeof d.value === 'number' ? { time: d.time as UTCTimestamp, value: d.value } : null
+      setPoint((was) => (was?.time === next?.time ? was : next))
+    }
+    chart.subscribeCrosshairMove(onMove)
+    return () => chart.unsubscribeCrosshairMove(onMove)
+  }, [chart, series])
+
+  const last = data[data.length - 1]
+  if (!last) return null
+  if (point) {
+    return (
+      <p className="num ml-auto text-xs text-muted" aria-live="off">
+        <span className="font-semibold text-text">{pct(point.value)}</span> {when(point.time)}
+        {point.time < last.time && (
+          <>
+            , <Points value={last.value - point.value} className="font-semibold" /> since
+          </>
+        )}
+      </p>
+    )
+  }
+  if (!shown || data.length < 2) return null
+  const a = data[Math.min(shown.from, data.length - 1)]
+  const b = data[Math.min(shown.to, data.length - 1)]
+  const words = b.time < last.time ? `${when(a.time)} to ${when(b.time)}` : ((range && RANGE_WORDS[range]) ?? `since ${when(a.time)}`)
+  return (
+    <p className="num ml-auto text-xs text-muted">
+      <span className="text-text">
+        {pct(a.value)} → {pct(b.value)}
+      </span>{' '}
+      <Points value={b.value - a.value} className="font-semibold" /> {words}
+    </p>
+  )
 }
 
 function cssVar(name: string): string {
@@ -134,8 +213,16 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const fitted = useRef<string | null>(null)
   const [hover, setHover] = useState<Hover | null>(null)
   const [range, setRange] = useState<RangeId>('all')
+  // the chart was dragged or zoomed by hand: no range button describes what is on screen any more
+  // (kept as the market it was done to, so the next market starts from the picked range again)
+  const [handOn, setHandOn] = useState<string | null>(null)
+  const byHand = handOn === marketId
+  // the first and last bars on screen, for the readout and for "back to latest"
+  const [onScreen, setOnScreen] = useState<Shown | null>(null)
+  const [api, setApi] = useState<{ chart: IChartApi; series: ISeriesApi<'Area'> } | null>(null)
   // the latest range and data, for the resize observer made once below
-  const view = useRef<{ range: RangeId; data: { time: UTCTimestamp }[] }>({ range: 'all', data: [] })
+  const view = useRef<{ range: RangeId; byHand: boolean; data: { time: UTCTimestamp }[] }>({ range: 'all', byHand: false, data: [] })
+  const drag = useRef<number | null>(null)
 
   const prices = useStore((s) => s.prices[marketId])
   const ticks = useStore((s) => s.ticks[marketId])
@@ -143,7 +230,6 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const wiping = useStore((s) => s.ask?.marketId === marketId && s.ask.opened)
   const moves = useStore((s) => s.moves[marketId])
   const market = useStore((s) => s.markets[marketId])
-  const presentation = useStore((s) => s.presentation)
   const now = useNow(5000)
 
   // create once
@@ -154,12 +240,17 @@ export function PriceChart({ marketId }: { marketId: string }) {
     const fg = cssVar('--color-text') || '#e6edf3'
     const c = createChart(box.current, {
       autoSize: true,
-      layout: { background: { color: 'transparent' }, textColor: text, fontFamily: cssVar('--font-mono'), attributionLogo: false },
+      layout: { background: { color: 'transparent' }, textColor: text, fontFamily: cssVar('--font-sans'), fontSize: 11, attributionLogo: false },
       grid: { vertLines: { color: withAlpha(line, 0.5) }, horzLines: { color: withAlpha(line, 0.5) } },
       rightPriceScale: { borderColor: line, scaleMargins: { top: 0.2, bottom: 0.15 } },
-      timeScale: { borderColor: line, timeVisible: true, secondsVisible: false, rightOffset: RIGHT_OFFSET },
+      timeScale: { borderColor: line, timeVisible: true, secondsVisible: false, rightOffset: RIGHT_OFFSET, tickMarkFormatter: axisLabel },
+      // a finger moving up or down over the chart scrolls the page, not the chart
+      handleScroll: { vertTouchDrag: false },
       crosshair: { vertLine: { color: text, labelBackgroundColor: line }, horzLine: { color: text, labelBackgroundColor: line } },
-      localization: { priceFormatter: (p: number) => pct(p) },
+      localization: {
+        priceFormatter: (p: number) => pct(p),
+        timeFormatter: (t: Time) => `${new Date((t as number) * 1000).toLocaleDateString([], { day: 'numeric', month: 'short' })} ${when(t as number)}`,
+      },
     })
     const s = c.addSeries(AreaSeries, {
       lineColor: fg,
@@ -181,6 +272,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
     })
     chart.current = c
     area.current = s
+    // a canvas draws with whatever font is there when it paints: paint again once the real one has loaded
+    void document.fonts?.ready.then(() => chart.current?.applyOptions({ layout: { fontFamily: cssVar('--font-sans') } }))
     markers.current = createSeriesMarkers(s, [], { zOrder: 'top' })
     const tm = new TickMarkers()
     s.attachPrimitive(tm)
@@ -208,19 +301,37 @@ export function PriceChart({ marketId }: { marketId: string }) {
     })
 
     // The chart has no width until its box is laid out, and a fit made then squeezes a short history into a
-    // sliver. Show the range again whenever the box changes width (first layout, window resize, presentation mode).
+    // sliver. Show the range again whenever the box changes width (first layout, window resize).
     let width = 0
     const resized = new ResizeObserver(([entry]) => {
       const w = Math.round(entry.contentRect.width)
       if (w === width) return
       width = w
-      if (w > 0 && fitted.current) showRange(c, view.current.data, view.current.range)
+      // a view set by hand is kept as it is; the library holds it through a resize
+      if (w > 0 && fitted.current && !view.current.byHand) showRange(c, view.current.data, view.current.range)
     })
     resized.observe(box.current)
+
+    // which bars are on screen, once a frame at most: a drag reports every pixel
+    let frame = 0
+    const onRange = (r: { from: number; to: number } | null) => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const n = view.current.data.length
+        if (!r || n === 0) return setOnScreen(null)
+        const from = Math.min(n - 1, Math.max(0, Math.ceil(r.from)))
+        const to = Math.min(n - 1, Math.max(from, Math.floor(r.to)))
+        setOnScreen((was) => (was?.from === from && was.to === to ? was : { from, to }))
+      })
+    }
+    c.timeScale().subscribeVisibleLogicalRangeChange(onRange)
+    setApi({ chart: c, series: s })
 
     const leadMap = leads.current
     return () => {
       resized.disconnect()
+      cancelAnimationFrame(frame)
+      setApi(null)
       leadMap.clear()
       c.remove()
       chart.current = null
@@ -230,14 +341,11 @@ export function PriceChart({ marketId }: { marketId: string }) {
     }
   }, [])
 
-  // a different market fits the view again
+  // a different market shows the picked range again, whatever was done by hand to the last one
   useEffect(() => {
     fitted.current = null
+    view.current.byHand = false
   }, [marketId])
-
-  useEffect(() => {
-    chart.current?.applyOptions({ layout: { fontSize: presentation ? 16 : 11 } })
-  }, [presentation])
 
   const data = useMemo(() => toSeries(prices ?? []), [prices])
 
@@ -254,13 +362,26 @@ export function PriceChart({ marketId }: { marketId: string }) {
 
   const pickRange = (id: RangeId) => {
     setRange(id)
+    setHandOn(null)
     view.current.range = id
+    view.current.byHand = false
     if (chart.current) showRange(chart.current, data, id)
+  }
+  const handled = () => {
+    if (view.current.byHand) return
+    view.current.byHand = true
+    setHandOn(marketId)
+  }
+  // a drag is a press that moves; a press alone is a click on a dot or a band
+  const onPointerMove = (e: PointerEvent) => {
+    if (drag.current != null && e.buttons > 0 && Math.abs(e.clientX - drag.current) > 4) handled()
   }
   // a range longer than this market's history would show the same as "All": it cannot be picked, and when
   // it was picked on another market, "All" is what is shown
   const span = historySpan(data)
-  const shown: RangeId = RANGES.some((r) => r.id === range && r.seconds < span) ? range : 'all'
+  const shown: RangeId | null = byHand ? null : RANGES.some((r) => r.id === range && r.seconds < span) ? range : 'all'
+  // the newest price has been dragged off the right edge
+  const away = onScreen != null && data.length > 1 && onScreen.to < data.length - 1
 
   // markers and lead-time lines
   useEffect(() => {
@@ -334,7 +455,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
       bandIndex.set(bid, m)
     }
     byBand.current = bandIndex
-    carets.current?.set(marks, bands, presentation ? 1.4 : 1, cssVar('--color-panel') || '#0d1117')
+    carets.current?.set(marks, bands, 1, cssVar('--color-panel') || '#0d1117')
     byMarker.current = index
 
     // keep one dashed line series per lead; drop the ones no longer wanted
@@ -363,7 +484,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
         { time: l.to, value: l.end },
       ])
     }
-  }, [ticks, moves, data, prices, market?.made_up, now, presentation])
+  }, [ticks, moves, data, prices, market?.made_up, now])
 
   const tick = hover?.tick
   // calls made before the first price we have: real, on the tape, but with no price to pin them to
@@ -378,8 +499,52 @@ export function PriceChart({ marketId }: { marketId: string }) {
           : 'No price yet: the venue has not answered'
         : null
 
+  const life = tick ? tickLifecycle(tick, prices, Boolean(market?.made_up), now) : null
+
   return (
-    <div className="relative h-full min-h-56">
+    <div className="flex h-full min-h-56 flex-col gap-2">
+      {/* the controls and the readout sit over the plot, not on it: nothing covers the line */}
+      {!empty && data.length > 1 && (
+        <div className="flex min-h-6 shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
+          <div role="group" aria-label="Chart range" className="flex gap-0.5">
+            {RANGES.map((r) => {
+              const available = r.id === 'all' || r.seconds < span
+              return (
+                <button
+                  key={r.id}
+                  type="button"
+                  aria-pressed={shown === r.id}
+                  disabled={!available}
+                  title={available ? undefined : 'The price history is shorter than this'}
+                  onClick={() => pickRange(r.id)}
+                  className={`num rounded-xs px-1.5 py-0.5 text-xs font-semibold transition-colors ${
+                    shown === r.id
+                      ? 'bg-text text-bg'
+                      : available
+                        ? 'text-muted hover:text-text'
+                        : 'cursor-not-allowed text-faint opacity-50'
+                  }`}
+                >
+                  {r.label}
+                </button>
+              )
+            })}
+          </div>
+          {away && (
+            <button type="button" onClick={() => pickRange(shown ?? range)} className="press btn py-0!">
+              Back to latest
+            </button>
+          )}
+          {api && <Readout chart={api.chart} series={api.series} data={data} range={shown} shown={onScreen} />}
+        </div>
+      )}
+      <div
+        className="relative min-h-0 flex-1"
+        onWheel={handled}
+        onPointerDown={(e) => (drag.current = e.clientX)}
+        onPointerMove={onPointerMove}
+        onPointerUp={() => (drag.current = null)}
+      >
       <div ref={box} className="absolute inset-0" />
       {wiping && !empty && (
         // the price history sweeps in from the left: a cover over the plot slides away (pure CSS, so it is
@@ -388,52 +553,24 @@ export function PriceChart({ marketId }: { marketId: string }) {
           <div className="chart-wipe absolute inset-0" />
         </div>
       )}
-      {!empty && data.length > 1 && (
-        <div role="group" aria-label="Chart range" className="absolute left-2 top-2 z-10 flex gap-0.5 rounded border border-line bg-panel/90 p-0.5">
-          {RANGES.map((r) => {
-            const available = r.id === 'all' || r.seconds < span
-            return (
-              <button
-                key={r.id}
-                type="button"
-                aria-pressed={shown === r.id}
-                disabled={!available}
-                title={available ? undefined : 'The price history is shorter than this'}
-                onClick={() => pickRange(r.id)}
-                className={`num rounded px-1.5 py-0.5 font-semibold uppercase tracking-wider transition-colors ${
-                  presentation ? 'text-sm' : 'text-[11px]'
-                } ${
-                  shown === r.id
-                    ? 'bg-panel-2 text-text'
-                    : available
-                      ? 'text-muted hover:text-text'
-                      : 'cursor-not-allowed text-faint opacity-50'
-                }`}
-              >
-                {r.label}
-              </button>
-            )
-          })}
-        </div>
-      )}
       {empty && (
         <div className="absolute inset-0">
           <EmptyState title={empty} />
         </div>
       )}
       {!empty && before > 0 && first != null && (
-        <p className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[70%] rounded bg-panel/90 px-2 py-1 text-[11px] leading-snug text-muted">
-          Price history starts {new Date(first * 1000).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' })}.{' '}
+        <p className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[70%] rounded-xs bg-panel/90 px-2 py-1 text-[11px] leading-snug text-muted">
+          Price history starts {when(first)}.{' '}
           <span className="num text-text">{before}</span> earlier {before === 1 ? 'call is' : 'calls are'} on the tape, from before this chart starts.
         </p>
       )}
       {hover?.move && !hover.tick && hover.move.market_id === marketId && (
         <div
-          className="pointer-events-none absolute z-10 max-w-72 rounded border border-line bg-panel-2/95 p-2 shadow-lg"
+          className="pointer-events-none absolute z-10 max-w-72 rounded-xs border border-muted bg-panel-2 p-2"
           style={{ left: Math.max(4, Math.min(hover.x + 12, hover.width - 290)), top: Math.max(4, hover.y - 70) }}
         >
           <p className="text-[11px]">
-            <span className="mr-2 font-semibold uppercase tracking-wider text-muted">Why did it move?</span>
+            <span className="mr-2 font-semibold text-muted">Why did it move?</span>
             <MoveSpan move={hover.move} />
           </p>
           {hover.move.explained && hover.move.cause ? (
@@ -454,25 +591,31 @@ export function PriceChart({ marketId }: { marketId: string }) {
               )}
             </p>
           )}
-          <p className="mt-0.5 text-[10px] text-faint">click for the answer under the chart</p>
+          <p className="mt-0.5 text-[11px] text-faint">click for the answer under the chart</p>
         </div>
       )}
       {hover && tick && tick.market_id === marketId && (
         <div
-          className="pointer-events-none absolute z-10 max-w-72 rounded border border-line bg-panel-2/95 p-2 shadow-lg"
+          className="pointer-events-none absolute z-10 max-w-72 rounded-xs border border-muted bg-panel-2 p-2"
           style={{
             left: Math.max(4, Math.min(hover.x + 12, hover.width - 290)),
             top: Math.max(4, hover.y - 70),
           }}
         >
-          <p className={`num text-[11px] font-bold ${tick.verdict === 'up' ? 'text-up' : 'text-down'}`}>
-            {tick.verdict === 'up' ? '▲ UP' : '▼ DOWN'} {Math.round(tick.confidence * 100)}%
+          <p className={`num text-xs font-bold ${tick.verdict === 'up' ? 'text-up' : 'text-down'}`}>
+            {tick.verdict === 'up' ? '▲ Up' : '▼ Down'} {Math.round(tick.confidence * 100)}%
             <span className="ml-2 font-normal text-faint">{timeAgo(tickTime(tick))}</span>
           </p>
           <p className="line-clamp-3 text-xs leading-snug text-text">{tick.headline}</p>
-          <p className="mt-0.5 text-[10px] text-faint">click to find it on the tape</p>
+          {life && (
+            <p className="mt-1">
+              <LifecycleBadge life={life} verdict={tick.verdict} />
+            </p>
+          )}
+          <p className="mt-0.5 text-[11px] text-faint">click to find it on the tape</p>
         </div>
       )}
+      </div>
     </div>
   )
 }

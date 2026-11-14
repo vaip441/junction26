@@ -1,23 +1,29 @@
 @import 'tailwindcss';
 
-/* Theme tokens. Colour carries the verdict and nothing else: up green, down red, no effect grey. */
+/* One family at three widths: Archivo for text, its condensed cut for the prices (the figures of an odds
+   board, readable from the back of a hall), its wide cut for the name. Bundled, so it needs no network. */
+@import '@fontsource-variable/archivo/wdth.css';
+@import '@fontsource-variable/archivo/wdth-italic.css';
+
+/* Theme tokens. Colour carries the verdict and nothing else: up green, down red, no effect grey. Everything
+   else is graphite and bone, warm so the green and the red both stand off it on a washed-out projector. */
 @theme {
-  --color-bg: #07090c;
-  --color-panel: #0d1117;
-  --color-panel-2: #131922;
-  --color-line: #1f2733;
-  --color-text: #e6edf3;
-  --color-muted: #8b96a5;
-  --color-faint: #4b5563;
+  --color-bg: #0f0e0c;
+  --color-panel: #181714;
+  --color-panel-2: #23211d;
+  --color-line: #34312b;
+  --color-text: #efe9dc;
+  --color-muted: #a49d8e;
+  --color-faint: #6f6a5f;
 
-  --color-up: #22c55e;
-  --color-down: #ef4444;
-  --color-none: #6b7280;
-  --color-madeup: #f59e0b;
-  --color-accent: #60a5fa;
+  --color-up: #3dcc7a;
+  --color-down: #f5503f;
+  --color-none: #8b8578;
+  --color-madeup: #e8ae45;
+  /* no accent hue: what is picked, focused or linked is marked in the text colour */
+  --color-accent: #efe9dc;
 
-  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-sans: 'Archivo Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
 
   /* One curve for things that arrive or answer a press: fast at first, so the screen feels like it heard. */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
@@ -71,34 +77,96 @@ body {
 
 /* Numbers line up in columns. */
 .num {
-  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
 
-/* A strong call the price has not caught up with yet: a slow pulse in the verdict colour. */
-@keyframes edge-glow {
-  0%,
-  100% {
-    box-shadow: 0 0 0 0 transparent;
-  }
-  50% {
-    box-shadow: 0 0 10px 1px currentColor;
-  }
+/* Board figures: the price, and the record's rate. Condensed and heavy, like the numbers on an odds board. */
+.board {
+  font-stretch: 62%;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 0.9;
 }
 
-.edge-glow {
-  animation: edge-glow 2.4s ease-in-out infinite;
+/* The name, in the wide cut. */
+.wordmark {
+  font-stretch: 125%;
+  font-weight: 800;
+  letter-spacing: -0.01em;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .edge-glow {
-    animation: none;
-  }
+/* The name of a panel or of a group of things: sentence case, quiet. */
+.label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--color-muted);
 }
 
-/* Presentation mode (P): everything is sized in rem, so scaling the root scales the screen. */
-html.presentation {
-  font-size: 150%;
+/* A small quiet button. */
+.btn {
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  color: var(--color-muted);
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--color-muted);
+  color: var(--color-text);
+}
+.btn:disabled {
+  opacity: 0.4;
+}
+/* The one button a form is for: reversed out, the way a terminal marks what matters. */
+.btn-solid {
+  border-color: var(--color-text);
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-weight: 600;
+}
+.btn-solid:hover:not(:disabled) {
+  background: #fff;
+  border-color: #fff;
+  color: var(--color-bg);
+}
+
+/* A text field: a well in the page colour; focus is a brighter edge, not a glow. */
+.field {
+  border: 1px solid var(--color-line);
+  border-radius: 2px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  transition: border-color 150ms ease;
+}
+.field::placeholder {
+  color: var(--color-faint);
+}
+.field:focus {
+  outline: none;
+  border-color: var(--color-muted);
+}
+
+/* Reversed out: a solid block with the page colour for its text. Kept for the few things that must be seen
+   first (a call the price has not caught up with, the item that moved the price, what is picked). */
+.inv {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.05rem 0.4rem;
+  border-radius: 2px;
+  background: var(--color-text);
+  color: var(--color-bg);
+  font-weight: 600;
+}
+.inv-up {
+  background: var(--color-up);
+}
+.inv-down {
+  background: var(--color-down);
 }
 
 /* A new row slides in at the top of the tape. */
@@ -262,8 +330,7 @@ html.presentation {
 }
 @keyframes price-pop-big {
   25% {
-    transform: scale(1.18);
-    text-shadow: 0 0 24px currentColor;
+    transform: scale(1.14);
   }
 }
 .price-pop {

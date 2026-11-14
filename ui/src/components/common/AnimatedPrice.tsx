@@ -47,7 +47,7 @@ export function AnimatedPrice({ value, className = '' }: { value: number; classN
   return (
     <span
       key={flash?.n ?? 0}
-      className={`num inline-block transition-colors duration-700 ${tone} ${flash ? (flash.big ? 'price-pop-big' : 'price-pop') : ''} ${className}`}
+      className={`inline-block transition-colors duration-700 ${tone} ${flash ? (flash.big ? 'price-pop-big' : 'price-pop') : ''} ${className}`}
     >
       {pct(shown)}
     </span>

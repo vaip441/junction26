@@ -24,7 +24,7 @@ export function RelatedContracts({ related }: { related: MarketSummary[] }) {
             disabled={!r.url || busy}
             onClick={() => r.url && void askFor(r.url)}
             title={r.url ? 'Give it its own tape' : 'No link to track it by'}
-            className="press rounded border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-40"
+            className="press btn"
           >
             Track
           </button>

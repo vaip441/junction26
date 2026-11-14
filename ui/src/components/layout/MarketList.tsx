@@ -19,16 +19,15 @@ export function MarketList() {
         <li key={m.id}>
           <button
             onClick={() => select(m.id)}
-            className={`flex w-full flex-col gap-1 px-3 py-2.5 text-left transition-colors hover:bg-panel-2 ${
-              m.id === selectedId ? 'bg-panel-2 shadow-[inset_2px_0_0_var(--color-accent)]' : ''
+            aria-current={m.id === selectedId}
+            className={`grid w-full grid-cols-[1fr_auto] gap-x-3 gap-y-1 px-3 py-2.5 text-left transition-colors hover:bg-panel-2 ${
+              m.id === selectedId ? 'bg-panel-2 shadow-[inset_3px_0_0_var(--color-text)]' : ''
             }`}
           >
-            <span className="line-clamp-2 text-xs leading-snug text-text">{m.title}</span>
-            <span className="flex items-center gap-2">
-              <VenueBadges market={m} />
-              <Price value={m.price} flash className="text-sm font-semibold" />
-              {m.change_24h != null && <Points value={m.change_24h} className="text-xs" />}
-            </span>
+            <span className={`line-clamp-2 text-[0.8125rem] leading-snug ${m.id === selectedId ? 'font-medium text-text' : 'text-text/85'}`}>{m.title}</span>
+            <Price value={m.price} flash className="board text-right text-2xl text-text" />
+            <VenueBadges market={m} />
+            {m.change_24h != null ? <Points value={m.change_24h} className="text-right text-xs" /> : <span />}
           </button>
         </li>
       ))}

@@ -26,7 +26,7 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
   ]
   return (
     <div className="flex h-44 shrink-0 flex-col border-t border-line">
-      <div role="tablist" className="flex shrink-0 gap-4 border-b border-line px-3">
+      <div role="tablist" className="flex shrink-0 gap-5 border-b border-line px-3">
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -36,8 +36,8 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
               setPicked(true)
               setTab(t.id)
             }}
-            className={`-mb-px border-b-2 py-1.5 text-[11px] transition-colors font-semibold uppercase tracking-wider ${
-              tab === t.id ? 'border-accent text-text' : 'border-transparent text-muted hover:text-text'
+            className={`-mb-px border-b-2 py-2 text-xs font-semibold transition-colors ${
+              tab === t.id ? 'border-text text-text' : 'border-transparent text-muted hover:text-text'
             }`}
           >
             {t.label}

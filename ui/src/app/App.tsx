@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { EmptyState } from '../components/common/EmptyState'
 import { AskStrip, AskTakeover } from '../components/input/AskStage'
 import { JudgePrompt } from '../components/input/JudgePrompt'
@@ -24,9 +24,7 @@ import { useStore } from '../state/store'
 function Panel({ title, children, className = '' }: { title: string; children: ReactNode; className?: string }) {
   return (
     <section className={`flex min-h-0 flex-col bg-panel ${className}`}>
-      <h2 className="shrink-0 border-b border-line px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-muted">
-        {title}
-      </h2>
+      <h2 className="label shrink-0 border-b border-line px-3 py-2">{title}</h2>
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </section>
   )
@@ -41,31 +39,19 @@ export function App() {
   // a question fills the centre of the screen: the tape of the market behind it would only distract
   const asking = useStore((s) => s.ask != null && !s.ask.opened && !s.ask.error)
   const pending = useStore((s) => (id ? s.pending[id] : undefined))
-  const presentation = useStore((s) => s.presentation)
   // nobody has said anything to this made-up market yet: tell the judge to talk
   const silent = Boolean(market?.made_up && ticks && !ticks.some((t) => t.test) && !pending?.length)
-
-  // presentation mode scales everything (all sizes are rem) and hides the market list
-  useEffect(() => {
-    document.documentElement.classList.toggle('presentation', presentation)
-  }, [presentation])
 
   return (
     <div className="flex h-full flex-col">
       <TopBar />
-      <main
-        className={`grid min-h-0 flex-1 grid-cols-1 gap-px bg-line max-lg:auto-rows-max max-lg:overflow-y-auto ${
-          presentation ? 'lg:grid-cols-[1fr_minmax(0,0.75fr)]' : 'lg:grid-cols-[260px_1fr_380px]'
-        }`}
-      >
-        {!presentation && (
-          <div className="flex min-h-0 flex-col bg-panel">
-            <Panel title="Markets" className="min-h-0 flex-1 max-lg:max-h-48">
-              <MarketList />
-            </Panel>
-            <RecordCard />
-          </div>
-        )}
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-px bg-line max-lg:auto-rows-max max-lg:overflow-y-auto lg:grid-cols-[260px_1fr_380px]">
+        <div className="flex min-h-0 flex-col bg-panel">
+          <Panel title="Markets" className="min-h-0 flex-1 max-lg:max-h-48">
+            <MarketList />
+          </Panel>
+          <RecordCard />
+        </div>
 
         <section className="relative flex min-h-0 flex-col bg-panel">
           <AskTakeover />
@@ -82,7 +68,7 @@ export function App() {
                   </div>
                 )}
               </div>
-              {!presentation && <MarketTabs marketId={id} madeUp={market.made_up} detail={detail} />}
+              <MarketTabs marketId={id} madeUp={market.made_up} detail={detail} />
               {market.made_up && <SpeakBar marketId={id} />}
             </>
           ) : (
