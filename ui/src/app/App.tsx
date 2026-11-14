@@ -8,9 +8,12 @@ import { MarketList } from '../components/layout/MarketList'
 import { TopBar } from '../components/layout/TopBar'
 import { MarketHeader } from '../components/market/MarketHeader'
 import { PriceChart } from '../components/market/PriceChart'
+import { RecordCard } from '../components/record/RecordCard'
+import { RecordView } from '../components/record/RecordView'
 import { Tape } from '../components/tape/Tape'
 import { useSelectedMarket } from '../hooks/useMarket'
 import { useHotkeys } from '../hooks/useHotkeys'
+import { useRecord } from '../hooks/useRecord'
 import { useStream } from '../hooks/useStream'
 import { useVoiceCallout } from '../hooks/useVoiceCallout'
 import { useStore } from '../state/store'
@@ -29,6 +32,7 @@ function Panel({ title, children, className = '' }: { title: string; children: R
 export function App() {
   useStream()
   useHotkeys()
+  useRecord()
   useVoiceCallout()
   const { id, market, ticks, prices } = useSelectedMarket()
   const pending = useStore((s) => (id ? s.pending[id] : undefined))
@@ -50,9 +54,12 @@ export function App() {
         }`}
       >
         {!presentation && (
-          <Panel title="Markets" className="max-lg:max-h-56">
-            <MarketList />
-          </Panel>
+          <div className="flex min-h-0 flex-col bg-panel max-lg:max-h-72">
+            <Panel title="Markets" className="min-h-0 flex-1">
+              <MarketList />
+            </Panel>
+            <RecordCard />
+          </div>
         )}
 
         <section className="flex min-h-0 flex-col bg-panel">
@@ -78,6 +85,7 @@ export function App() {
       </main>
       <EdgeFlash />
       <KeyPrompt />
+      <RecordView />
     </div>
   )
 }

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { StreamStatus } from '../lib/stream'
-import type { MarketDetail, MarketEvent, MarketSummary, PricePoint, StreamEvent, Tick } from '../lib/types'
+import type { MarketDetail, MarketEvent, MarketSummary, PricePoint, StreamEvent, Tick, WeekendRecord } from '../lib/types'
 
 const MAX_TICKS = 500
 
@@ -45,6 +45,8 @@ interface State {
   presentation: boolean
   /** A write was refused for want of the key: the key prompt is open. */
   needKey: boolean
+  record: WeekendRecord | null
+  recordOpen: boolean
 
   setMarkets: (list: MarketSummary[]) => void
   setDetail: (d: MarketDetail) => void
@@ -63,6 +65,8 @@ interface State {
   setMic: (on: boolean) => void
   togglePresentation: (on?: boolean) => void
   setNeedKey: (on: boolean) => void
+  setRecord: (r: WeekendRecord) => void
+  toggleRecord: (open?: boolean) => void
 }
 
 export const useStore = create<State>((set) => ({
@@ -79,6 +83,8 @@ export const useStore = create<State>((set) => ({
   micOn: false,
   presentation: false,
   needKey: false,
+  record: null,
+  recordOpen: false,
 
   setMarkets: (list) =>
     set((s) => ({
@@ -116,6 +122,8 @@ export const useStore = create<State>((set) => ({
   setMic: (micOn) => set({ micOn }),
   togglePresentation: (on) => set((s) => ({ presentation: on ?? !s.presentation })),
   setNeedKey: (needKey) => set({ needKey }),
+  setRecord: (record) => set({ record }),
+  toggleRecord: (open) => set((s) => ({ recordOpen: open ?? !s.recordOpen })),
 
   apply: (e) =>
     set((s) => {
