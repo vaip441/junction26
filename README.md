@@ -16,7 +16,7 @@ Every item takes the same path: found, deduplicated, scored, stored, streamed to
 
 | Step | What happens | Where |
 | --- | --- | --- |
-| Find | News through Context.dev web search, every query of a market on every pass. Posts on X and Reddit through the same search, plus the newest posts of subreddits that were relevant before. Trump's Truth Social posts within about 30 seconds, from the scraper in `trump-social-scraper/`. | `terminal/poller.py`, `terminal/posts.py`, `terminal/truth.py` |
+| Find | News through Context.dev web search, every query of a market on every pass, and for markets about a company through Context.dev's news index, which is minutes behind the publishers. Posts on X and Reddit through the same search, plus the newest posts of subreddits that were relevant before. Trump's Truth Social posts within about 30 seconds, from the scraper in `trump-social-scraper/`. | `terminal/poller.py`, `terminal/posts.py`, `terminal/truth.py` |
 | Filter | An item is looked at once per market. Replies, link-only posts, posts nobody liked, recurring Reddit threads and removed posts are kept off the tape without a model call. | `terminal/posts.py` |
 | Score | Gemini Decision 1 is told the market, its rules, the current price, the rival contracts and what was already reported, then asked how far the new item should move the price and whether it is news at all. | `terminal/scoring.py`, `terminal/pipeline.py` |
 | Store and stream | SQLite, and one server-sent-events stream for the frontend. | `terminal/db.py`, `terminal/api.py` |

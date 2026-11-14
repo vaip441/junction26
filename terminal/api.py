@@ -54,7 +54,7 @@ def summary(db, m: dict, now: float) -> dict:
 
 
 def detail(db, m: dict, now: float) -> dict:
-    return {**summary(db, m, now), "rules": m["rules"], "queries": m["queries"],
+    return {**summary(db, m, now), "rules": m["rules"], "queries": m["queries"], "companies": m["companies"] or [],
             "related": [summary(db, r, now) for r in store.related(db, m["id"])], "pages": [],
             "sources": store.sources(db, m["id"])}
 

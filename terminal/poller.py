@@ -87,7 +87,7 @@ async def unscored(*_) -> Score:
 
 
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
-                         search=None, scrape=None, lookup=None, feed=None) -> int:
+                         search=None, scrape=None, lookup=None, feed=None, news=None) -> int:
     """Search every query of a market, plus X and Reddit once, read the newest posts of the subreddits
     that were relevant to it before, and ingest what was not seen before. Returns how many ticks were stored.
 
@@ -95,19 +95,23 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     different results between them, so dropping or rotating them would lose coverage, not waste.
     """
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
-    lookup, feed = lookup or posts.x_post, feed or posts.subreddit_new
+    lookup, feed, news = lookup or posts.x_post, feed or posts.subreddit_new, news or contextdev.news
     queries, reserve = market["queries"], 0 if backfill else BACKGROUND_RESERVE
     # X and Reddit are left to the posts search: found here too, one post would be two ticks, one unfiltered
     searches = [("article", q, {"exclude_domains": NOT_NEWS + POST_SITES}) for q in queries]
     searches.append(("post", queries[0], {"include_domains": POST_SITES}))  # posts: the first query only
+    # the news index is minutes behind the publishers where the web search is hours, but knows companies only
+    companies = market.get("companies") or []
     found = await asyncio.gather(*(search(q, num_results=num_results, reserve=reserve, **kw) for _, q, kw in searches),
+                                 *(news(c, since=time.time() - FEED_WINDOW, reserve=reserve) for c in companies),
                                  return_exceptions=True)
     fresh, failed = {}, []
-    for (kind, q, _), results in zip(searches, found):
+    for (kind, q, _), results in zip(searches + [("news", c, None) for c in companies], found):
         if isinstance(results, BaseException):
             log.warning("%s search failed for %r on %s: %s", kind, q, market["id"], results)
             failed.append(kind)
             continue
+        kind = "article" if kind == "news" else kind
         for r in results:
             try:
                 key = dedupe_key(kind, r["url"], r["title"], 0)
@@ -139,6 +143,9 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             elif kind == "post":  # Reddit: a feed gives the time; a search result does not, nor does the page
                 published = r.get("published")
                 trash = source.split("/")[0].endswith("reddit.com") and posts.reddit_trash(r["url"], r["title"])
+            elif r.get("published"):
+                published = r["published"]  # the news index states the time: no page to read
+                read = (published,)
             elif (read := store.date_known(db, r["url"])) is not None:
                 published = read[0]  # this address was read before, under this or another market
             else:
@@ -206,7 +213,7 @@ MARKETS_AT_ONCE = 4
 
 
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *, queries_for=None,
-                       fetch=None, starting_price=None, limit: asyncio.Semaphore | None = None,
+                       companies_for=None, fetch=None, starting_price=None, limit: asyncio.Semaphore | None = None,
                        busy: set | None = None, fails: dict | None = None) -> None:
     """One round over the due markets. This is the only place articles are fetched, so a market's first
     completed pass is its backfill and every later pass is live; the two never race.
@@ -215,6 +222,7 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
     fetched a second time, and routine fetches stay capped across passes. A first fill does not queue.
     """
     queries_for, fetch = queries_for or watch.queries_for, fetch or fetch_articles
+    companies_for = companies_for or watch.companies_for
     starting_price = starting_price or madeup.starting_price
     limit = limit or asyncio.Semaphore(MARKETS_AT_ONCE)
     busy = set() if busy is None else busy
@@ -231,6 +239,13 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                 store.set_queries(db, id, await queries_for(m["title"], m["rules"]))
                 if (m := store.get_market(db, id)) is None:
                     return  # deleted meanwhile
+            if m["companies"] is None:  # asked once; the pass goes on without them if the model cannot be reached
+                try:
+                    store.set_companies(db, id, await companies_for(m["title"], m["rules"]))
+                    if (m := store.get_market(db, id)) is None:
+                        return
+                except Exception as e:
+                    log.warning("could not name the companies of %s, asking again next pass: %s", id, e)
             first = not m["filled"]
             if first:
                 bus.publish("market", {"market_id": m["id"], "status": "finding sources"})

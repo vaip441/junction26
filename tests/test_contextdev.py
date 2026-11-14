@@ -286,3 +286,32 @@ def test_a_batch_that_is_refused_or_fails_is_an_error(monkeypatch):
     cd = client_with(lambda request: httpx.Response(403, json={"error_code": "BATCH_LIMIT_EXCEEDED"}), monkeypatch)
     with pytest.raises(cd.ContextError):
         asyncio.run(cd.published_times(["https://a.example/1"]))
+
+
+def test_company_news_is_asked_newest_first_and_comes_with_its_publish_time(monkeypatch):
+    import asyncio
+    import time
+
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={"data": [
+            {"url": "https://news.example.com/a", "title": "Board names a CEO", "description": "It did.",
+             "published_at": "2026-11-14T10:08:00Z", "source": {"domain": "news.example.com"}},
+            {"url": "https://news.example.com/b", "title": "Clock set wrong", "description": None,
+             "published_at": "2999-01-01T00:00:00Z"},
+            {"url": "https://news.example.com/c", "title": "No time given", "published_at": None},
+            {"url": "", "title": "no address"}, {"url": "https://news.example.com/d"}]})
+
+    cd = client_with(handler, monkeypatch)
+    rows = asyncio.run(cd.news("Nvidia", since=1794600000.0))
+    assert seen == [("/v1/news/search", {"searchBy": {"type": "entity", "entity": {"type": "name", "name": "Nvidia"}},
+                                         "limit": 25, "filterBy": {"articleLanguage": ["en"],
+                                                                   "date": {"from": 1794600000000}}})]
+    assert rows[0] == {"url": "https://news.example.com/a", "title": "Board names a CEO", "description": "It did.",
+                       "text": "", "published": datetime(2026, 11, 14, 10, 8, tzinfo=UTC).timestamp()}
+    assert [r["url"][-1] for r in rows] == ["a", "b", "c"]
+    assert rows[1]["published"] is None and rows[2]["published"] is None  # a time in the far future is not believed

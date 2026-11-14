@@ -691,3 +691,88 @@ def test_a_market_that_keeps_failing_is_retried_less_and_less_often():
         fails["m"] = n
         assert poller.retry_delay(n) <= 3600
     assert poller.retry_delay(1) == 60 and poller.retry_delay(3) == 240
+
+
+def test_a_markets_companies_are_followed_through_the_news_index_without_page_reads():
+    db, bus, m = setup(queries=("a",))
+    store.set_companies(db, "m", ["Nvidia"])
+    m, asked, scraped, posted = store.get_market(db, "m"), [], [], time.time() - 300
+
+    async def search(query, **kw):
+        return [RESULTS[0]] if not kw.get("include_domains") else []
+
+    async def news(company, **kw):
+        asked.append((company, kw["reserve"], round(time.time() - kw["since"])))
+        return [{"url": "https://wire.example.com/ceo", "title": "Board names a CEO", "description": "It did.", "text": "",
+                 "published": posted},
+                {**RESULTS[0], "text": "", "published": posted}]  # also found by the web search: one tick
+
+    async def scrape(url):
+        scraped.append(url)
+        return "text", None
+
+    n = asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape,
+                                          news=news))
+    assert n == 2 and asked == [("Nvidia", poller.BACKGROUND_RESERVE, 86400)]
+    wire = next(t for t in store.ticks(db, "m") if t["source"] == "wire.example.com")
+    assert (wire["kind"], wire["published_ts"], wire["backfill"]) == ("article", posted, False)
+    assert "https://wire.example.com/ceo" not in scraped  # the index states the time: nothing to read
+    assert store.date_known(db, "https://wire.example.com/ceo") == (posted,)  # nor to look up later
+
+
+def test_a_news_index_that_fails_does_not_fail_the_pass():
+    db, bus, m = setup(queries=("a",))
+    store.set_companies(db, "m", ["Nvidia"])
+
+    async def search(query, **kw):
+        return RESULTS if not kw.get("include_domains") else []
+
+    async def news(company, **kw):
+        raise RuntimeError("news index down")
+
+    async def scrape(url):
+        return "", None
+
+    assert asyncio.run(poller.fetch_articles(db, bus, up, store.get_market(db, "m"), backfill=False, num_results=10,
+                                             search=search, scrape=scrape, news=news)) == 2
+
+
+def test_a_markets_companies_are_named_once_and_a_failure_is_tried_again_next_pass():
+    db, bus, m = setup()
+    assert m["companies"] is None
+    seen, answers = [], [RuntimeError("model down"), ["Nvidia"]]
+
+    async def queries_for(title, rules):
+        raise AssertionError("queries already exist")
+
+    async def companies_for(title, rules):
+        seen.append("asked")
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        seen.append(market["companies"])
+        return 0
+
+    last = {}
+    for now in (1000, 2000, 3000):
+        asyncio.run(poller.article_pass(db, bus, up, last, now=now, queries_for=queries_for, fetch=fetch,
+                                        companies_for=companies_for))
+    # the pass goes on without them, they are asked for once more, and then never again
+    assert seen == ["asked", None, "asked", ["Nvidia"], ["Nvidia"]]
+
+
+def test_company_names_are_cleaned_and_capped(monkeypatch):
+    async def answer(prompt):
+        return ["  Nvidia ", "", 7, "OpenAI", "Anthropic"]
+
+    monkeypatch.setattr(watch, "ask_json", answer)
+    assert asyncio.run(watch.companies_for("T", "R")) == ["Nvidia", "OpenAI"]
+
+    async def none(prompt):
+        return []
+
+    monkeypatch.setattr(watch, "ask_json", none)
+    assert asyncio.run(watch.companies_for("T", "R")) == []  # a market about no company is a fine answer

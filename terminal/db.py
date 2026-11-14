@@ -9,7 +9,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS markets (
     id TEXT PRIMARY KEY, venue TEXT NOT NULL, venue_ref TEXT, title TEXT NOT NULL, rules TEXT NOT NULL,
     url TEXT, lead_id TEXT, queries TEXT NOT NULL DEFAULT '[]', poll_seconds INTEGER NOT NULL DEFAULT 900,
-    filled INTEGER NOT NULL DEFAULT 0,
+    filled INTEGER NOT NULL DEFAULT 0, companies TEXT,
     created_ts REAL NOT NULL DEFAULT (unixepoch('subsec')));
 CREATE TABLE IF NOT EXISTS prices (
     market_id TEXT NOT NULL, ts REAL NOT NULL, price REAL NOT NULL, PRIMARY KEY (market_id, ts));
@@ -35,6 +35,8 @@ def connect(path: str) -> sqlite3.Connection:
     db.executescript(SCHEMA)
     if "filled" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores created before 13 Nov
         db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
+    if "companies" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov noon
+        db.execute("ALTER TABLE markets ADD COLUMN companies TEXT")
     if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
         db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
     if "likes" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov evening
@@ -44,7 +46,8 @@ def connect(path: str) -> sqlite3.Connection:
 
 
 def _market(row) -> dict | None:
-    return row and {**row, "queries": json.loads(row["queries"]), "filled": bool(row["filled"])}
+    return row and {**row, "queries": json.loads(row["queries"]), "filled": bool(row["filled"]),
+                    "companies": row["companies"] and json.loads(row["companies"])}  # None: not asked for yet
 
 
 def _tick(row) -> dict:
@@ -60,6 +63,11 @@ def add_market(db, *, id, venue, venue_ref, title, rules, url, lead_id=None, que
 
 def set_queries(db, id: str, queries: list[str]) -> None:
     db.execute("UPDATE markets SET queries = ? WHERE id = ?", (json.dumps(queries), id))
+
+
+def set_companies(db, id: str, companies: list[str]) -> None:
+    """The companies a market is about, whose news is followed; an empty list when it is about none."""
+    db.execute("UPDATE markets SET companies = ? WHERE id = ?", (json.dumps(companies), id))
 
 
 def set_filled(db, id: str) -> None:
