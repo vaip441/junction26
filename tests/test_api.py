@@ -265,6 +265,13 @@ def test_status_reports_context_dev_capacity(path, monkeypatch):
     assert s["per_minute"] == 30 and len(s["keys"]) == 3 and s["used_last_minute"] == 0
 
 
+def test_status_and_the_api_pages_are_not_public(path):
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="k")) as c:
+        assert c.get("/status").status_code == 401  # it shows how many credits each key has left
+        assert c.get("/status", headers={"X-Terminal-Key": "k"}).status_code == 200
+        assert [c.get(p).status_code for p in ("/docs", "/redoc", "/openapi.json")] == [404, 404, 404]
+
+
 def test_market_detail_lists_its_sources(path):
     with client(path) as c:
         assert c.get("/markets/mu-demo").json()["sources"] == []

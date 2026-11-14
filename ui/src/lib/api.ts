@@ -66,7 +66,7 @@ export const api = {
   prices: (id: string, since = 0) => request<PricePoint[]>(`/markets/${encodeURIComponent(id)}/prices?since=${since}`),
   moves: (id: string, limit = 20) => request<Move[]>(`/markets/${encodeURIComponent(id)}/moves?limit=${limit}`),
   status: () =>
-    request<{ context_dev: { keys: { credits_remaining: number | null }[]; per_minute: number; used_last_minute: number } }>('/status'),
+    request<{ context_dev: { keys: { credits_remaining: number | null }[]; per_minute: number; used_last_minute: number } }>('/status', {}, true),
   record: () => request<WeekendRecord>('/record'),
 
   addMarket: (query: string, pollSeconds = 900) =>

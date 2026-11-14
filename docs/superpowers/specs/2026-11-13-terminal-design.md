@@ -433,7 +433,7 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
 - `GET /record`: the weekend record numbers.
-- `GET /status`: Context.dev capacity per key (use, resting time, credits left).
+- `GET /status`: Context.dev capacity per key (use, resting time, credits left). Needs the write key.
 - `GET /stream`: server-sent events. Event types: `tick`, `tick_update`, `price`,
   `move`, `market`, `page_check`. A `page_check` is `{ "market_id", "url", "ts",
   "changed" }`, sent each time Context.dev has checked a watched page (every 10

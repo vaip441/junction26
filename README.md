@@ -106,7 +106,7 @@ and of every stream event, is in
 | `POST /markets/{id}/ticks` | a spoken or typed sentence, scored like any other tick |
 | `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market`, `page_check` |
 | `GET /record` | of the ticks called up or down, how often the price then moved that way |
-| `GET /status` | Context.dev use and credits per key |
+| `GET /status` | Context.dev use and credits per key (needs the key) |
 
 ## Deploy
 

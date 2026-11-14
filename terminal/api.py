@@ -135,7 +135,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         await asyncio.gather(*tasks, return_exceptions=True)
         db.close()
 
-    app = FastAPI(title="Prediction market terminal", lifespan=lifespan)
+    # no /docs: the address is public, and the README lists the interface
+    app = FastAPI(title="Prediction market terminal", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     def market_or_404(id: str) -> dict:
@@ -374,7 +375,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(503, "could not score the change, deliver it again")
         return {"ok": True}
 
-    @app.get("/status")
+    @app.get("/status", dependencies=[Depends(write_access)])
     async def status():
         """How much Context.dev capacity the key pool has and is using. Keys are numbered, never shown."""
         return {"context_dev": contextdev.status()}
