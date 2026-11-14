@@ -147,6 +147,7 @@ what else moved: a contract falling while its rival rises is the whole story.
 | Spoken or typed ticks | Posted by the frontend |
 | Reddit posts | Context.dev web search restricted to reddit.com; Reddit's own API is the upgrade if results lag |
 | Trader chatter | The comment thread on the Polymarket market itself, from Polymarket's comments endpoint, as `post` ticks with the source `polymarket.com/<author>` |
+| Bluesky posts | Bluesky's own search (`api.bsky.app`, no login), each query of the market, the last day's most-liked posts, as `post` ticks with the source `bsky.app/<handle>`. Found on 14 Nov while building the replays: it takes a time window and a post carries its exact time, likes and replies |
 | Wikipedia edits | Context.dev monitors on the watch list's Wikipedia pages (see Monitors below) |
 | Moves on related contracts | Our own price samples: a jump on the other venue is a tick |
 | Tech-heavy markets | Hacker News search |

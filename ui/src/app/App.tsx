@@ -11,7 +11,7 @@ import { MarketHeader } from '../components/market/MarketHeader'
 import { MoveBanner } from '../components/market/MoveBanner'
 import { MarketTabs } from '../components/market/MarketTabs'
 import { PriceChart } from '../components/market/PriceChart'
-import { ReplayBar } from '../components/market/ReplayBar'
+import { ReplayBar, ReplayResult } from '../components/market/ReplayBar'
 import { RecordCard } from '../components/record/RecordCard'
 import { RecordView } from '../components/record/RecordView'
 import { Tape } from '../components/tape/Tape'
@@ -77,6 +77,7 @@ export function App() {
               <div className="relative min-h-64 flex-1 p-4 max-lg:h-80 max-lg:flex-none">
                 <PriceChart marketId={id} />
                 {!market.made_up && <MoveBanner marketId={id} />}
+                {market.replay && <ReplayResult market={market} replay={market.replay} />}
                 <AskStrip marketId={id} />
                 {silent && (
                   <div className="absolute inset-0 z-10 flex items-center justify-center bg-panel p-6">

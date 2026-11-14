@@ -1,9 +1,47 @@
 import { useEffect } from 'react'
 import { useNow } from '../../hooks/useNow'
+import { pct } from '../../lib/format'
 import { WINDOW_SECONDS } from '../../lib/lifecycle'
 import { playReplay, stopReplay, tally } from '../../lib/replay'
 import type { MarketSummary, Replay } from '../../lib/types'
 import { useStore } from '../../state/store'
+
+/**
+ * The punchline, over the chart, when a replay has played to its end: how the market resolved, how far
+ * the price travelled, and how the calls did. It leaves on a click, after a while, or with the next replay.
+ */
+export function ReplayResult({ market, replay }: { market: MarketSummary; replay: Replay }) {
+  const shown = useStore((s) => s.replayDone === market.id)
+  const ticks = useStore((s) => s.ticks[market.id])
+  const prices = useStore((s) => s.prices[market.id])
+  useEffect(() => {
+    if (!shown) return
+    const timer = setTimeout(() => useStore.setState({ replayDone: null }), 12_000)
+    return () => clearTimeout(timer)
+  }, [shown])
+  if (!shown || !prices?.length) return null
+  const score = tally(ticks, prices, replay.end + WINDOW_SECONDS)
+  const moved = score.followed + score.against
+  return (
+    <button
+      type="button"
+      onClick={() => useStore.setState({ replayDone: null })}
+      title="Dismiss"
+      className="pop-in absolute left-1/2 top-1/2 z-20 w-[min(26rem,90%)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line bg-panel/95 p-5 text-center shadow-2xl"
+    >
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Resolved</p>
+      <p className="mt-0.5 text-4xl font-bold leading-none text-text">{replay.outcome === 'yes' ? 'Yes' : 'No'}</p>
+      <p className="num mt-3 text-sm text-muted">
+        {pct(prices[0].price)} → {pct(prices[prices.length - 1].price)} in {Math.round((replay.end - replay.start) / 3600)} hours
+      </p>
+      <p className="mt-3 text-sm text-text">
+        The price moved after <span className="num font-semibold">{moved}</span> of the model’s{' '}
+        <span className="num font-semibold">{moved + score.flat}</span> calls,{' '}
+        <span className="num font-semibold">{score.followed}</span> {score.followed === 1 ? 'time' : 'times'} the way it called.
+      </p>
+    </button>
+  )
+}
 
 function when(seconds: number): string {
   return new Date(seconds * 1000).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })

@@ -76,6 +76,8 @@ interface State {
   recordOpen: boolean
   /** A replay being played back on this screen: the simulated time, and how many prices the whole of it holds. */
   replay: { id: string; clock: number; total: number } | null
+  /** The replay that has just played to its end: its result is shown over the chart until dismissed. */
+  replayDone: string | null
 
   setMarkets: (list: MarketSummary[]) => void
   setDetail: (d: MarketDetail) => void
@@ -107,7 +109,8 @@ interface State {
   startReplay: (id: string, first: PricePoint, clock: number, total: number) => void
   /** One step of a replay: the prices so far, the ticks that just appeared (newest first), and the price to show big. */
   replayFrame: (clock: number, prices: PricePoint[], added: Tick[], price: number | null) => void
-  endReplay: () => void
+  /** `finished`: it played to its end, as opposed to being stopped. */
+  endReplay: (finished?: boolean) => void
 }
 
 export const useStore = create<State>((set) => ({
@@ -132,6 +135,7 @@ export const useStore = create<State>((set) => ({
   otherPrices: {},
   recordOpen: false,
   replay: null,
+  replayDone: null,
 
   setMarkets: (list) =>
     set((s) => ({
@@ -201,6 +205,7 @@ export const useStore = create<State>((set) => ({
       const m = s.markets[id]
       return {
         replay: { id, clock, total },
+        replayDone: null,
         ticks: { ...s.ticks, [id]: [] },
         moves: { ...s.moves, [id]: [] },
         prices: { ...s.prices, [id]: [first] },
@@ -221,7 +226,7 @@ export const useStore = create<State>((set) => ({
           : s.markets,
       }
     }),
-  endReplay: () => set({ replay: null }),
+  endReplay: (finished = false) => set((s) => ({ replay: null, replayDone: finished ? (s.replay?.id ?? null) : null })),
 
   apply: (e) =>
     set((s) => {

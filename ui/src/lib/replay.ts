@@ -48,17 +48,17 @@ export async function playReplay(id: string): Promise<void> {
     const big = frame++ % PRICE_EVERY === 0 || k === 1 ? prices[shownPrices - 1].price : null
     useStore.getState().replayFrame(clock, prices.slice(0, shownPrices), [...added].reverse(), big)
     added.forEach(announceTick)
-    if (k === 1) stopReplay()
+    if (k === 1) stopReplay(true)
   }, FRAME_MS)
 }
 
-/** Stop where it is and show the whole of it again. */
-export function stopReplay(): void {
+/** Stop where it is and show the whole of it again. `finished`: it reached its end by itself. */
+export function stopReplay(finished = false): void {
   clearInterval(timer)
   timer = undefined
   const id = useStore.getState().replay?.id
   if (!id) return
-  useStore.getState().endReplay()
+  useStore.getState().endReplay(finished)
   void loadMarket(id)
 }
 
