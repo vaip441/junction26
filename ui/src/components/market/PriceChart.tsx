@@ -19,6 +19,7 @@ import { tickLifecycle } from '../../lib/lifecycle'
 import type { PricePoint, Tick } from '../../lib/types'
 import { useStore } from '../../state/store'
 import { EmptyState } from '../common/EmptyState'
+import { TickMarkers, type TickMark } from './tickMarkers'
 
 const MAX_MARKERS = 300
 /** Lead-time lines drawn at once: the newest ones, so the chart stays readable. */
@@ -97,6 +98,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const chart = useRef<IChartApi | null>(null)
   const area = useRef<ISeriesApi<'Area'> | null>(null)
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
+  const carets = useRef<TickMarkers | null>(null)
   const leads = useRef(new Map<number, ISeriesApi<'Line'>>())
   const byMarker = useRef(new Map<string, Tick>())
   const fitted = useRef<string | null>(null)
@@ -135,6 +137,9 @@ export function PriceChart({ marketId }: { marketId: string }) {
     chart.current = c
     area.current = s
     markers.current = createSeriesMarkers(s, [], { zOrder: 'top' })
+    const tm = new TickMarkers()
+    s.attachPrimitive(tm)
+    carets.current = tm
 
     const markerTick = (p: MouseEventParams<Time>) => {
       const id = p.hoveredInfo?.objectId ?? p.hoveredObjectId
@@ -168,6 +173,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
       chart.current = null
       area.current = null
       markers.current = null
+      carets.current = null
     }
   }, [])
 
@@ -200,6 +206,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
     const down = cssVar('--color-down') || '#ef4444'
     const times = data.map((d) => d.time)
     const out: SeriesMarker<Time>[] = []
+    const marks: TickMark[] = []
+    const valueAt = new Map(data.map((d) => [d.time, d.value]))
     const index = new Map<string, Tick>()
     const wantLeads: { tick: Tick; from: UTCTimestamp; to: UTCTimestamp; start: number; end: number }[] = []
     const madeUp = Boolean(market?.made_up)
@@ -211,13 +219,13 @@ export function PriceChart({ marketId }: { marketId: string }) {
       const colour = t.verdict === 'up' ? up : down
       const id = `t${t.id}`
       index.set(id, t)
-      out.push({
+      marks.push({
         id,
         time: at,
-        position: t.verdict === 'up' ? 'belowBar' : 'aboveBar',
-        shape: t.verdict === 'up' ? 'arrowUp' : 'arrowDown',
+        value: valueAt.get(at) ?? 0,
+        up: t.verdict === 'up',
         color: t.backfill ? withAlpha(colour, 0.4) : colour,
-        size: 0.6 + 1.4 * Math.min(1, Math.abs(t.strength)),
+        strength: Math.min(1, Math.abs(t.strength)),
       })
 
       const life = tickLifecycle(t, prices, madeUp, now)
@@ -244,6 +252,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
     }
     out.sort((a, b) => (a.time as number) - (b.time as number))
     markers.current.setMarkers(out)
+    marks.reverse() // oldest first, so the newest call sits on the line and draws on top
+    carets.current?.set(marks, presentation ? 1.4 : 1, cssVar('--color-panel') || '#0d1117')
     byMarker.current = index
 
     // keep one dashed line series per lead; drop the ones no longer wanted
@@ -272,7 +282,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
         { time: l.to, value: l.end },
       ])
     }
-  }, [ticks, data, prices, market?.made_up, now])
+  }, [ticks, data, prices, market?.made_up, now, presentation])
 
   const empty =
     prices === undefined
