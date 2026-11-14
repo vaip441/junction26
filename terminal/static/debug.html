@@ -40,7 +40,7 @@ function row(t) {
   li.append(b, s, document.createElement("br"), document.createTextNode(t.headline));
   if (t.rule) {  // the sentence of the market's rules that makes this tick matter
     const r = document.createElement("small");
-    r.textContent = `rule (${Math.round(t.rule.confidence * 100)}%): ${t.rule.text}`;
+    r.textContent = `Rule: ${t.rule.text}`;
     li.append(document.createElement("br"), r);
   }
   return li;
@@ -55,7 +55,7 @@ function moveRow(m) {  // a price jump and the item named as its cause
                         : "no cause found on the web";
   li.append(b, s, document.createElement("br"), document.createTextNode(cause));
   if (m.rule) {
-    const r = document.createElement("small"); r.textContent = `rule: ${m.rule.text}`;
+    const r = document.createElement("small"); r.textContent = `Rule: ${m.rule.text}`;
     li.append(document.createElement("br"), r);
   }
   return li;

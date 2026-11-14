@@ -42,7 +42,7 @@ def shown(db, id="m"):
     return [moves.public_move(m) for m in store.moves(db, id)]
 
 
-async def no_rule(market, item):
+async def no_rule(market, item, closest=False):
     return None
 
 

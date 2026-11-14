@@ -86,8 +86,9 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
                  ruler=None) -> dict | None:
     """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried).
 
-    A tick that moves the price, and every spoken or typed one, also carries the sentence of the market's
-    rules that makes it matter (`ruler`, by default rules.deciding wherever the real scorer is used).
+    A tick that moves the price also carries the sentence of the market's rules that makes it matter
+    (`ruler`, by default rules.deciding wherever the real scorer is used): for an item from the web only
+    a sentence that stands out, for a spoken or typed one the closest sentence, however weak.
     """
     ruler = ruler or (rules.deciding if scorer is scoring.score else None)
     now = time.time() if now is None else now
@@ -102,7 +103,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
             + (f"\n{clean(body, 2000)}" if body else ""))
     async def rule_for() -> dict | None:
         try:
-            return await ruler(market, item)
+            return await ruler(market, item, spoken)
         except ScoringError as e:  # the tick is worth having without its rule
             log.warning("no rule found for %r on %s: %s", headline[:60], market["id"], e)
 
@@ -123,7 +124,9 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     if store.get_market(db, market["id"]) is None:
         return None  # deleted while this item was being scored
     v, confidence = verdict(s)
-    if ruler and not spoken and v != "none":
+    if v == "none":
+        rule = None  # no movement: there is nothing for a rule to explain
+    elif ruler and not spoken:
         rule = await rule_for()
         if store.get_market(db, market["id"]) is None:
             return None

@@ -51,3 +51,14 @@ def test_no_sentence_is_marked_when_none_fits_or_the_model_is_unsure():
     for odd in ({"s9": 0.9}, {"s0": "high"}, {"s0": float("nan")}):
         with pytest.raises(ScoringError):
             ask(odd)
+
+
+def test_asked_for_the_closest_sentence_one_is_always_named_however_weak():
+    closest = lambda p: asyncio.run(rules.deciding(MARKET, "typed: an item", True, decide=decide_with(p)))
+    assert closest({"s0": 0.21, "s1": 0.02, "none": 0.67})["text"].startswith("This market will resolve to")
+    assert closest({"s0": 0.21, "s1": 0.02, "none": 0.67})["confidence"] == 0.21
+    assert closest({"s1": 0.3, "s2": 0.3, "s3": 0.31, "none": 0.09})["text"].startswith("The resolution source")
+    one_sentence = {"title": "t", "rules": "Resolves yes if X happens before 2027"}
+    assert asyncio.run(rules.deciding(one_sentence, "an item", True, decide=decide_with({"s0": 1.0}))) is None
+    with pytest.raises(ScoringError):
+        closest({"none": 1.0})  # no sentence in the answer at all

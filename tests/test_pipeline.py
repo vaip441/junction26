@@ -275,8 +275,8 @@ def test_a_tick_that_moves_the_price_names_the_rule_behind_it():
     db, bus, q, m = setup(venue="kalshi")
     asked = []
 
-    async def ruler(market, item):
-        asked.append(item)
+    async def ruler(market, item, closest):
+        asked.append((item, closest))
         return {"start": 3, "end": 9, "text": "a rule", "confidence": 0.8}
 
     moved = run(db, bus, up, m, url="https://a.example/1", headline="Board names a new chief executive", ruler=ruler)
@@ -284,18 +284,25 @@ def test_a_tick_that_moves_the_price_names_the_rule_behind_it():
     assert store.ticks(db, "m")[0]["rule"] == moved["rule"] and drain(q)[0][1]["rule"] == moved["rule"]
     quiet = run(db, bus, no_effect, m, url="https://a.example/2", headline="Nothing much happened in the markets", ruler=ruler)
     assert quiet["rule"] is None and len(asked) == 1  # an item that moves nothing costs no second call
+    assert asked[0][1] is False  # from the web: only a sentence that stands out
 
 
-def test_a_spoken_sentence_always_gets_its_rule_and_a_failing_lookup_loses_nothing():
+def test_a_spoken_sentence_that_moves_the_price_gets_its_closest_rule_and_a_failing_lookup_loses_nothing():
     db, bus, q, m = setup()
+    asked = []
 
-    async def ruler(market, item):
-        return {"start": 0, "end": 1, "text": "r", "confidence": 0.9}
+    async def ruler(market, item, closest):
+        asked.append(closest)
+        return {"start": 0, "end": 1, "text": "r", "confidence": 0.2}
 
-    async def broken_ruler(market, item):
+    async def broken_ruler(market, item, closest):
         raise ScoringError("api down")
 
-    assert run(db, bus, no_effect, m, kind="typed", headline="Trump was killed", ruler=ruler)["rule"]["text"] == "r"
+    assert run(db, bus, up, m, kind="typed", headline="Trump was killed", ruler=ruler)["rule"]["text"] == "r"
+    assert asked == [True]  # a person is watching: the closest sentence, however weak
+    still = run(db, bus, no_effect, m, kind="typed", headline="The weather is nice", ruler=ruler)
+    assert still["rule"] is None and still["verdict"] == "none"  # no movement, nothing to explain
+    assert drain(q)[-1][1]["rule"] is None
     tick = run(db, bus, up, m, kind="typed", headline="The team shipped", ruler=broken_ruler)
     assert tick is not None and tick["rule"] is None and tick["verdict"] == "up"
     assert run(db, bus, up, m, kind="typed", headline="No ruler given")["rule"] is None  # a stand-in scorer brings no ruler

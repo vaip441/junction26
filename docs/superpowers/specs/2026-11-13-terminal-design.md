@@ -379,8 +379,9 @@ being made, and are scored for every market whose search queries share a word wi
 `rule` is the sentence of the market's rules that makes this tick matter, chosen by Decision 1 from
 the sentences of the rules text: `start` and `end` are character positions in the market's `rules`
 (from `GET /markets/{id}`), so it can be highlighted in place, and `text` is that exact stretch. It is
-set on spoken and typed ticks and on ticks that call a move, and null otherwise or when no sentence
-stands out.
+set only on ticks that call a move (verdict up or down) and is null on every "no effect" tick. For a
+spoken or typed tick it is the closest sentence, however weak; for a tick from the web it is null
+when no sentence stands out.
 `likes` and `replies` are the post's counts on X when it was found, and null for everything else
 (Reddit gives no vote counts without a login). Replies, posts that are only a link, posts on X past
 their first hour with under 20 likes, and Reddit's recurring threads and removed posts are never shown.
