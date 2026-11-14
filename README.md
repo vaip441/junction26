@@ -1,14 +1,140 @@
-# Prediction market terminal
+# Terminal
 
-A terminal for tracking how news and other signals move prediction market prices and the likelihood of events.
-Built at Junction 2026 for the Context.dev challenge: a product that reacts to the live web.
+**Terminal turns the live web into sourced explanations for prediction-market movements.**
 
-Ask a question in plain words, or paste a Kalshi or Polymarket link. The terminal finds the market that
-asks the same thing, watches the web for it, and puts every new article and post on a tape with a verdict:
-does this move the price of YES up, down, or not at all. If no market exists for the question, it makes
-one up and sets the odds itself.
+When a prediction market moves, an analyst has to search the news, the social posts and the contract's own
+rules by hand to work out why. Terminal does that as it happens: it watches the web for each market, scores
+every new article and post for which way it should move the price of YES, shows the passage and the rules
+sentence behind each call, and when the price jumps it names the likeliest explanation among what it found.
 
-It reads public data only and places no trades.
+Built at Junction 2026 for the Context.dev challenge: a product that reacts to the live web. It reads public
+data only and places no trades.
+
+![The offline replay demo in presentation mode: a finished market played back, tagged REPLAY](docs/img/offline-replay.png)
+
+*The offline replay demo (`?presentation=1`): a finished Polymarket market played back from stored data. It
+is tagged REPLAY everywhere; nothing on it was found or scored live.*
+
+**Quick links:** [Offline replay demo](#offline-replay-demo) · [Live setup](#run-it-live) ·
+[Context.dev integration](#contextdev-integration) · [Evaluation methodology](#evaluation-methodology) ·
+[Presentation script](docs/PRESENTATION.md)
+
+```mermaid
+flowchart LR
+    C["Context.dev<br/>web search · news search · scrape · monitors"] --> D
+    O["Other sources<br/>Google News · Bluesky · Reddit · Polymarket comments · Truth Social"] --> D
+    V["Kalshi · Polymarket<br/>prices and rules"] --> S
+    D["Discovery and deduplication<br/>one story, one tick; how it was found is recorded"] --> G["Gemini Decision 1<br/>up, down or no effect; rules sentence"]
+    G --> S[("SQLite")]
+    S --> E["Server-sent events"]
+    E --> R["React terminal<br/>tape · chart · why did it move? · record"]
+```
+
+## Limitations
+
+- **A likely explanation is not proof of causation.** When a price jumps, the model picks the best match
+  among the items the terminal found. The same news reaches traders by other roads, and prices move for
+  reasons nobody posted.
+- **Directional follow-through is not trading accuracy.** It counts how often the price moved the called
+  way within 15 minutes of a call. Nothing was bought or sold, and a market drifting one way flatters
+  every call made that way.
+- **Synthetic (made-up) markets are illustrative.** Their price is nudged by model-scored input and is not
+  a real market forecast. They are tagged as made up wherever they appear.
+- **Replay results are separate from live results.** Replays are prerecorded, tagged REPLAY, and never
+  counted in the live record or in the measured latency.
+
+## Offline replay demo
+
+One command starts the real backend and the built screen with the three bundled replays. It needs no API
+key and makes no outside request: nothing is polled, searched or scored.
+
+```sh
+uv run python -m terminal.offline
+# then open http://127.0.0.1:18912/?presentation=1
+```
+
+- The screen is built on the first run if `ui/dist` is missing (this step needs Node.js and, once, the
+  npm registry). After that the demo runs with the network unplugged.
+- It keeps its own store in a temporary folder, deleted on exit, so a live terminal's `terminal.db` is
+  never touched. `--db PATH` keeps the store at a path of your choice; `--port` moves it off 18912.
+- Every write is refused (`503`), so no Gemini or Context.dev call can be made from it. The made-up market
+  is listed but takes no sentences: there is no scorer offline, and none is imitated.
+- Replays stay tagged REPLAY in the market list, the header, the replay bar and the status line.
+
+## Presentation mode
+
+Add `?presentation=1` to the address of either the offline demo or the live terminal:
+
+| Address | What it does |
+| --- | --- |
+| `/?presentation=1` | Larger type scaled to the window, a wider tape, and it opens on a populated real market when there is one, else on a populated replay. It never opens on the empty made-up market, which stays in the list for the closing interaction. |
+| `/?presentation=1&market=<market-id>` | The same, opening on that market (ids are in `GET /markets`, for example `replay-lula`). `?market=` also works without presentation mode. |
+
+Nothing starts by itself: a replay waits for its Replay button (or Space), the microphone for Space on the
+made-up market, and no sound is played. Without the parameter the screen behaves as before.
+
+Keys: `1`-`9` pick a market, `Space` plays or stops a replay (and toggles the mic on the made-up market),
+`W` opens "Why did it move?", `R` opens the record, `/` focuses the question box, `Esc` closes.
+
+## Context.dev integration
+
+Context.dev is how the terminal finds and reads the live web. These are the endpoints the code calls
+(`terminal/contextdev.py`), and what each one puts on the screen:
+
+| Endpoint | What it is used for | Where it shows |
+| --- | --- | --- |
+| `POST /web/search` | Finds market-relevant pages and posts: every query of a market on every pass, restricted to the last 24 hours, with the passages of each page that match the query (`highlightsOptions`). Also finds the venue market for a question asked in plain words, and the page worth monitoring. | Ticks tagged "Found via Context.dev web search", with the passage quoted under the headline; the cards shown while a question is matched to a market. |
+| `POST /news/search` | Fresh news about the companies a market is about, filtered by publish time. | Ticks tagged "Found via Context.dev news", with their publish time. |
+| `POST /web/scrape` | Reads a page found a moment ago: its main text for the scorer and its publish time. Sent with `maxAgeMs: 0`, so the page is fetched fresh, not from a cache. | The "published … ago" time on article ticks, and better-informed verdicts. |
+| `POST /batch/submit`, `GET /batch/{id}` | Reads the publish times still missing on shown articles, in one batch a minute. The cache is left on here: a publish time does not change. | "published … ago" appearing on a tick a little after it lands. |
+| `POST /monitors`, `DELETE /monitors/{id}`, signed webhooks | Optional: one page per market watched for changes every ten minutes, each change delivered to a signed webhook and scored. Needs a public address (`PUBLIC_URL`), so it is not part of the offline demo and the main demo does not depend on it. | Ticks tagged "Found via Context.dev monitor", and the "Watched page" row in the Sources tab. |
+
+**Provenance is recorded, not inferred.** Every tick stores how it was found (`provenance`), apart from who
+published it (`source`). Only items Context.dev found are labelled as such; Google News, Bluesky, Reddit,
+Polymarket comments, Truth Social, spoken and typed lines and replays are each labelled as themselves, and
+ticks stored before this was recorded say "not recorded". When two ways find the same item in one pass it
+is one tick, credited to one way by a fixed priority (`PROVENANCE` in `terminal/db.py`). The Sources tab
+counts a market's items by how they were found.
+
+**Freshness.** Search runs against the live web when asked and is limited to the last 24 hours
+(`freshness`); the news index is filtered by publish time; a page read at discovery is fetched fresh
+(`maxAgeMs: 0`). No cache parameter is sent to search or news: the documentation gives none for the parts
+of those endpoints used here.
+
+**Measured latency.** Each live tick stores when it was published (where known), when it reached the
+terminal and when it had been scored. `GET /metrics` reports the median and 95th percentile of
+publication-to-discovery and discovery-to-scored over the last day, plus the durations of recent
+Context.dev and Gemini requests. The status line at the foot of the screen shows them. Replays, made-up
+markets, spoken and typed ticks and backfill are left out, and with fewer than five ticks no figure is
+given at all.
+
+## Evaluation methodology
+
+The record (press `R`, or `GET /record`) measures **directional follow-through**: for each up or down call
+on a real, live market, the price 15 minutes later is compared with the price at the call.
+
+| Count | Meaning |
+| --- | --- |
+| `calls` | up or down calls whose 15-minute window is over |
+| `evaluable` | of those, followed by a price move of at least 1 point (`min_move_points`) |
+| `same_direction` | the price moved the way the call said |
+| `opposite_direction` | the price moved the other way |
+| `no_qualifying_move` | the price moved less than 1 point |
+| `markets` | distinct real markets the calls were made on |
+| `window_seconds`, `start`, `since` | the window, where counting starts, and the first tick after that |
+
+`calls = evaluable + no_qualifying_move` and `evaluable = same_direction + opposite_direction`. The screen
+always shows the share with its denominator ("Of 97 calls followed by a qualifying price move, 71 moved in
+the predicted direction" is the form; the numbers are whatever the store holds), with the opposite and
+no-move counts beside it.
+
+Left out: made-up markets, replays, spoken and typed ticks, backfill (history found on a market's first
+pass, or a page more than a day old), and calls made when the market had no price to stand on. Counting
+starts on 14 Nov at 15:53 UTC, when the scorer began to be told each item's age.
+
+This measures association with later price movement. It does not show that an item caused a move, and it
+is not accuracy, a win rate or a trading result. A replay shows the same counts for its own calls at the
+end of its playback, kept apart from the live record.
 
 ## How it works
 
@@ -51,13 +177,15 @@ The tape then judges every call against the price 15 minutes on, as it does live
 pages, because a post cannot be edited: a news page's headline is rewritten once the result is known,
 which would hand the model the ending. `scripts/make_replay.py` builds them into `replays/`, and the
 service loads that folder when it starts (`terminal/replay.py`); nothing polls or changes a replay, and
-its calls stay out of the weekend record. Rebuild them with
+its calls stay out of the live record and the measured latency. Rebuild them with
 
     PYTHONPATH=. uv run --env-file .env python scripts/make_replay.py
 
 Prices are percentages from 0 to 100 and times are unix seconds, everywhere.
 
-## Run it
+## Run it live
+
+For the offline replay demo, which needs no keys, see [above](#offline-replay-demo). The live terminal:
 
 Python 3.12 or newer and [uv](https://docs.astral.sh/uv/).
 
@@ -74,13 +202,16 @@ The real screen is the React app in `ui/`. Built once, the terminal serves it at
 (cd ui && npm ci && VITE_API_URL= npm run build)   # an empty VITE_API_URL: the screen talks to the address it came from
 ```
 
+Open http://127.0.0.1:18911/?presentation=1 to present from it (see [Presentation mode](#presentation-mode)).
+
 http://127.0.0.1:18911/debug is a plain debug page: ask a question, pick a market, type a sentence and
 watch it become a tick. It is also what `/` shows until the screen is built.
 
 | Variable | Meaning |
 | --- | --- |
 | `GEMINI_API_KEY` | Google AI key with access to `gemini-decision-1` and the text model |
-| `CONTEXT_DEV_API_KEY` | one Context.dev key, or several separated by commas; each adds 10 requests a minute |
+| `CONTEXT_DEV_API_KEY` | one Context.dev key, or several separated by commas; each adds its own per-minute allowance |
+| `CONTEXT_DEV_RPM` | requests a minute the terminal allows itself per key (default 10): set it to your plan's per-minute limit. This is a rate, not a concurrency limit: how many requests may be in flight at once is a separate limit on Context.dev's side, and the terminal bounds its own parallelism apart from this (ten items scored at once per market, four markets searched at once) |
 | `TERMINAL_KEY` | shared secret that every write must send in an `X-Terminal-Key` header |
 | `DB_PATH` | the SQLite file |
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |
@@ -101,12 +232,13 @@ and of every stream event, is in
 | `DELETE /markets/{id}` | stop tracking a market (the venues are also asked every ten minutes which markets have resolved, and those are dropped the same way) |
 | `POST /markets/mu-demo/reset` | put the demo market back to its starting price with an empty tape |
 | `GET /markets/{id}/ticks`, `GET /markets/{id}/prices` | history for the tape and the chart |
-| `GET /markets/{id}/moves` | "why did it move?": the market's price moves, each in one sentence with its likely cause |
+| `GET /markets/{id}/moves` | "why did it move?": the market's price moves, each in one sentence with its likely explanation |
 | `POST /markets/{id}/why` | explain the market's move over the last day, now |
 | `POST /markets/{id}/pair` | look for the same question on the other venue; found, the two prices are shown as one `consensus` |
 | `POST /markets/{id}/ticks` | a spoken or typed sentence, scored like any other tick |
 | `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market`, `page_check` |
-| `GET /record` | of the ticks called up or down, how often the price then moved that way |
+| `GET /record` | directional follow-through: every count behind how often the price moved the called way (see [Evaluation methodology](#evaluation-methodology)) |
+| `GET /metrics` | measured latency of live ticks over the last day, and whether this is the offline demo; figures are null until there are enough ticks |
 | `GET /status` | Context.dev use and credits per key (needs the key) |
 
 ## Deploy

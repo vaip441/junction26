@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { StreamStatus } from '../lib/stream'
-import type { MarketDetail, MarketEvent, MarketSummary, Move, PricePoint, RuleRef, StreamEvent, Tick, WeekendRecord } from '../lib/types'
+import { openingMarket } from '../lib/presentation'
+import type { MarketDetail, MarketEvent, MarketSummary, Metrics, Move, PricePoint, RuleRef, StreamEvent, Tick, WeekendRecord } from '../lib/types'
 
 const MAX_TICKS = 500
 const MAX_MOVES = 100
@@ -52,7 +53,7 @@ interface State {
   details: Record<string, MarketDetail>
   ticks: Record<string, Tick[]>
   prices: Record<string, PricePoint[]>
-  /** "Why did it move?": price jumps with their likely cause, newest first. Real markets only. */
+  /** "Why did it move?": price jumps with their likely explanation, newest first. Real markets only. */
   moves: Record<string, Move[]>
   /** A move that arrived on the stream just now, for the banner over the chart. */
   liveMove: Move | null
@@ -70,6 +71,10 @@ interface State {
   /** A write was refused for want of the key: the key prompt is open. */
   needKey: boolean
   record: WeekendRecord | null
+  /** Measured latency and the backend's mode (GET /metrics); null until it answers. */
+  metrics: Metrics | null
+  /** When the stream last carried a tick or a price for each market, by this screen's clock. Never set by a replay. */
+  lastLive: Record<string, number>
   /** Latest streamed price of contracts that are not in the market list (related contracts). */
   otherPrices: Record<string, number>
   recordOpen: boolean
@@ -102,6 +107,7 @@ interface State {
   setMic: (on: boolean) => void
   setNeedKey: (on: boolean) => void
   setRecord: (r: WeekendRecord) => void
+  setMetrics: (metrics: Metrics) => void
   toggleRecord: (open?: boolean) => void
   /** Empty the market's tape and chart down to its first price, and start the replay's clock. */
   startReplay: (id: string, first: PricePoint, clock: number, total: number) => void
@@ -129,6 +135,8 @@ export const useStore = create<State>((set) => ({
   micOn: false,
   needKey: false,
   record: null,
+  metrics: null,
+  lastLive: {},
   otherPrices: {},
   recordOpen: false,
   replay: null,
@@ -138,7 +146,7 @@ export const useStore = create<State>((set) => ({
     set((s) => ({
       markets: Object.fromEntries(list.map((m) => [m.id, m])),
       order: list.map((m) => m.id),
-      selectedId: s.selectedId && list.some((m) => m.id === s.selectedId) ? s.selectedId : (list[0]?.id ?? null),
+      selectedId: s.selectedId && list.some((m) => m.id === s.selectedId) ? s.selectedId : openingMarket(list),
     })),
   setDetail: (d) =>
     set((s) => ({
@@ -195,6 +203,7 @@ export const useStore = create<State>((set) => ({
   setMic: (micOn) => set({ micOn }),
   setNeedKey: (needKey) => set({ needKey }),
   setRecord: (record) => set({ record }),
+  setMetrics: (metrics) => set({ metrics }),
   toggleRecord: (open) => set((s) => ({ recordOpen: open ?? !s.recordOpen })),
   startReplay: (id, first, clock, total) =>
     set((s) => {
@@ -236,6 +245,7 @@ export const useStore = create<State>((set) => ({
           const waiting = s.pending[t.market_id] ?? []
           const match = t.test ? waiting.find((p) => p.text.trim() === t.headline.trim()) : undefined
           return {
+            lastLive: { ...s.lastLive, [t.market_id]: Date.now() / 1000 },
             pending: match ? { ...s.pending, [t.market_id]: waiting.filter((p) => p !== match) } : s.pending,
             ticks: { ...s.ticks, [t.market_id]: [t, ...list].slice(0, MAX_TICKS) },
             markets: m ? { ...s.markets, [m.id]: { ...m, ticks_today: m.ticks_today + 1 } } : s.markets,
@@ -253,6 +263,7 @@ export const useStore = create<State>((set) => ({
           const points = s.prices[market_id]
           if (!m) return { otherPrices: { ...s.otherPrices, [market_id]: price } }
           return {
+            lastLive: { ...s.lastLive, [market_id]: Date.now() / 1000 },
             markets: m ? { ...s.markets, [market_id]: { ...m, price } } : s.markets,
             prices: points ? { ...s.prices, [market_id]: [...points, { ts, price }] } : s.prices,
           }

@@ -42,13 +42,13 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
           title="Find it on the tape"
           className="flex min-w-0 items-baseline gap-1.5 text-left hover:underline"
         >
-          <span className="shrink-0 text-[11px] font-semibold text-muted">
+          <span className="shrink-0 text-xs font-semibold text-muted" title="The model's confidence that this item, of those found, best explains the move. Not a probability that it caused it.">
             {label}
             {percent != null && <span className="num"> {percent}%</span>}
           </span>
           <span className="line-clamp-2 text-text">{cause.headline}</span>
         </button>
-        <span className="flex items-center gap-1.5 text-[11px] text-faint">
+        <span className="flex items-center gap-1.5 text-xs text-faint">
           <SourceIcon source={cause.source} className="h-3 w-3" />
           <span className="truncate">{shortSource(cause.source)}</span>
         </span>
@@ -59,9 +59,9 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
               onRule?.()
             }}
             title="Show it in the rules"
-            className="line-clamp-1 text-left text-[11px] italic text-muted hover:text-text"
+            className="line-clamp-2 text-left text-xs italic text-muted hover:text-text"
           >
-            § “{move.rule.text}”
+            <span className="not-italic font-semibold">Contract rule</span> “{move.rule.text}”
           </button>
         )}
       </div>
@@ -71,11 +71,11 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
   return (
     <div className="flex min-w-0 flex-col gap-0.5" title={move.summary}>
       <p className="text-muted">
-        No news explains it
+        No item found explains it
         {move.related.length > 0 && <span className="text-faint">: the contracts beside it moved at the same time</span>}
       </p>
       {move.related.length > 0 && (
-        <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-text">
+        <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-text">
           {move.related.map((r) => (
             <span key={r.id} className="flex min-w-0 items-baseline gap-1.5">
               <span className="truncate">{r.title}</span>
@@ -91,7 +91,7 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
             focusTick(closest.id)
           }}
           title="Find it on the tape"
-          className="flex min-w-0 items-center gap-1.5 text-left text-[11px] text-faint hover:text-text"
+          className="flex min-w-0 items-center gap-1.5 text-left text-xs text-faint hover:text-text"
         >
           <span className="shrink-0 font-semibold">Closest news</span>
           <SourceIcon source={closest.source} className="h-3 w-3" />
@@ -128,8 +128,8 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
         >
           {state.busy ? 'Working out why it moved…' : 'Explain today’s move'}
         </button>
-        <span className={`min-w-0 truncate text-[11px] ${state.note ? 'text-down' : 'text-faint'}`}>
-          {state.note ?? 'Why did this market move over the last day? Asked now, answered in about a second.'}
+        <span className={`line-clamp-2 min-w-0 text-xs leading-snug ${state.note ? 'text-down' : 'text-muted'}`}>
+          {state.note ?? 'Likely explanation: the model’s best match among the items found. Not proof of what caused the move.'}
         </span>
       </div>
       {moves === undefined ? (
@@ -145,7 +145,7 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
             <li key={m.id} id={`move-${m.id}`} className="grid grid-cols-[7.5rem_1fr] gap-x-3 px-3 py-2 text-xs">
               <div className="flex flex-col gap-0.5">
                 <MoveSpan move={m} className="text-sm" />
-                <span className="text-[11px] text-faint" title={`${absoluteTime(m.since)} to ${absoluteTime(m.ts)}`}>
+                <span className="text-xs text-faint" title={`${absoluteTime(m.since)} to ${absoluteTime(m.ts)}`}>
                   {m.asked ? 'over the last day' : `in ${minutes(m.ts - m.since)}`}, {timeAgo(m.ts)}
                 </span>
               </div>

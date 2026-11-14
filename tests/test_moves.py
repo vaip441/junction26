@@ -108,7 +108,7 @@ def test_the_cause_is_chosen_by_decision_1_among_what_was_published_around_the_m
     assert (out["market_id"], out["ts"], out["since"], out["from"], out["to"]) == ("m", NOW, NOW - 300, 40.0, 46.0)
     assert out["cause"]["headline"] == "headline found" and out["confidence"] == 0.7 and out["rule"] == RULE
     assert out["explained"] is True and out["closest"] is None and out["related"] == []
-    assert out["summary"] == "Up 6.0 points in 5 minutes. Likely cause: found.example: headline found"
+    assert out["summary"] == "Up 6.0 points in 5 minutes. Likely explanation: found.example: headline found"
     assert "dedupe_key" not in out["cause"]  # a tick as the frontend sees it
     assert q.get_nowait() == ("move", out) and shown(db) == [out]
     assert near["rule"] is None
@@ -180,8 +180,8 @@ def test_a_move_says_which_related_contracts_moved_with_it_and_reads_as_one_sent
     assert moves.summary({**quiet, "since": NOW - 86400, "from": 40.0, "to": 41.0}).startswith("Up 1.0 point in the last day.")
     assert moves.summary({**quiet, "since": NOW - 47880}).startswith("Down 6.0 points in 13 hours.")  # not "798 minutes"
     weak = {**quiet, "explained": True, "confidence": 0.17, "cause": {"source": "a.example", "headline": "A headline"}}
-    assert moves.summary(weak) == "Down 6.0 points in 5 minutes. Possible cause: a.example: A headline"
-    assert moves.summary({**weak, "confidence": 0.4}) == "Down 6.0 points in 5 minutes. Likely cause: a.example: A headline"
+    assert moves.summary(weak) == "Down 6.0 points in 5 minutes. Possible explanation: a.example: A headline"
+    assert moves.summary({**weak, "confidence": 0.4}) == "Down 6.0 points in 5 minutes. Likely explanation: a.example: A headline"
 
 
 def test_what_the_search_behind_a_move_finds_counts_even_though_it_arrives_after_the_move_was_seen(monkeypatch):
@@ -212,7 +212,7 @@ def test_why_a_market_moved_today_is_answered_on_request_from_its_strongest_item
     criteria = seen[0][1]["cause"]["criteria"]
     assert list(criteria) == ["t0", "t1", "none"] and "headline strong" in criteria["t0"]  # strongest first, not newest
     assert "over the last day" in seen[0][0]
-    assert out["cause"]["headline"] == "headline strong" and out["summary"].startswith("Up 14.0 points in the last day. Likely cause")
+    assert out["cause"]["headline"] == "headline strong" and out["summary"].startswith("Up 14.0 points in the last day. Likely explanation")
 
     async def never(input, questions):
         raise AssertionError("asked again within minutes")

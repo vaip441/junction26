@@ -149,6 +149,8 @@ function makeTick(marketId, f) {
     up: round(up * 1000) / 1000, none: round((1 - up - down) * 1000) / 1000, down: round(down * 1000) / 1000,
     strength, verdict, confidence, price_at: f.price_at === undefined ? priceAt(marketId, ts) : f.price_at,
     test: f.kind === 'mic' || f.kind === 'typed', backfill: f.backfill ?? false,
+    // the mock finds nothing anywhere, so how an item was "found" is not recorded and nothing is credited to anyone
+    provenance: f.kind === 'mic' ? 'microphone' : f.kind === 'typed' ? 'typed' : 'unknown', discovered_ts: null, scored_ts: null,
     likes: f.kind === 'post' && f.source?.startsWith('x.com') ? Math.round(rand(20, 4000)) : null,
     replies: f.kind === 'post' && f.source?.startsWith('x.com') ? Math.round(rand(2, 300)) : null,
     // the rules sentence that makes it matter: only on a tick that moves the price; for a spoken or typed one
@@ -559,7 +561,15 @@ async function route(req, url) {
     return [200, { text: pick(HEARD) }]
   }
   if (req.method === 'GET' && url.pathname === '/record') {
-    return [200, { called: 142, moved: 97, same_way: 71, window_seconds: WINDOW, since: startedAt - 2 * 86400 }]
+    // made-up counts in the real shape, to lay the record out: calls = evaluable + no_qualifying_move
+    return [200, { calls: 142, evaluable: 97, same_direction: 71, opposite_direction: 26, no_qualifying_move: 45,
+      window_seconds: WINDOW, min_move_points: 1, markets: 3, start: startedAt - 2 * 86400, since: startedAt - 2 * 86400 }]
+  }
+  if (req.method === 'GET' && url.pathname === '/metrics') {
+    // nothing is measured here, so no figure is given: the status line shows none, as it does on a quiet day
+    const none = { n: 0, median: null, p95: null }
+    return [200, { mode: 'live', window_seconds: 86400, min_samples: 5, ticks: 0, publication_to_discovery: none,
+      discovery_to_scored: none, requests: {}, price_check_seconds: 60 }]
   }
   if (req.method === 'GET' && url.pathname === '/status') {
     creditsUsed += Math.round(rand(0, 6))

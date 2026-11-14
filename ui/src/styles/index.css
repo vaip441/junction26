@@ -13,8 +13,9 @@
   --color-panel-2: #23211d;
   --color-line: #34312b;
   --color-text: #efe9dc;
-  --color-muted: #a49d8e;
-  --color-faint: #6f6a5f;
+  /* secondary and tertiary text, both readable from the back of a hall: 8:1 and 5.5:1 on a panel */
+  --color-muted: #bdb6a7;
+  --color-faint: #958f82;
 
   --color-up: #3dcc7a;
   --color-down: #f5503f;
@@ -31,6 +32,13 @@
 
 :root {
   color-scheme: dark;
+}
+
+/* Presentation mode (?presentation=1): every size on the screen is in rem, so one step up scales the lot
+   for a projector without a second set of styles. */
+html.presentation {
+  /* with the window: 17px on a 1366-wide laptop panel, where room is short, up to 20px on a full-HD projector */
+  font-size: clamp(17px, 1.2vw, 20px);
 }
 
 html,
@@ -167,6 +175,23 @@ body {
 }
 .inv-down {
   background: var(--color-down);
+}
+
+/* REPLAY: prerecorded data, never to be taken for live. Outlined and spaced out so it reads as a stamp, in
+   the made-up colour: the one hue that means "this is not a live real market". */
+.tag-replay {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 0.4rem;
+  border: 1px solid var(--color-madeup);
+  border-radius: 2px;
+  color: var(--color-madeup);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.15rem;
+  white-space: nowrap;
 }
 
 /* A new row slides in at the top of the tape. */

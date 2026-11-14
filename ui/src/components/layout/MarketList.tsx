@@ -1,6 +1,6 @@
 import { useShallow } from 'zustand/react/shallow'
 import { selectMarketList, useStore } from '../../state/store'
-import { Badge, VenueBadges } from '../common/Badge'
+import { VenueBadges } from '../common/Badge'
 import { EmptyState } from '../common/EmptyState'
 import { Points, Price } from '../common/Price'
 
@@ -20,7 +20,7 @@ export function MarketList() {
           <button
             onClick={() => select(m.id)}
             aria-current={m.id === selectedId}
-            className={`grid w-full grid-cols-[1fr_auto] gap-x-3 gap-y-1 px-3 py-2.5 text-left transition-colors hover:bg-panel-2 ${
+            className={`grid w-full grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 px-3 py-2.5 text-left transition-colors hover:bg-panel-2 ${
               m.id === selectedId ? 'bg-panel-2 shadow-[inset_3px_0_0_var(--color-text)]' : ''
             }`}
           >
@@ -28,7 +28,7 @@ export function MarketList() {
             <Price value={m.price} flash className="board text-right text-2xl text-text" />
             <span className="flex items-center gap-2">
               <VenueBadges market={m} />
-              {m.replay && <Badge>Replay</Badge>}
+              {m.replay && <span className="tag-replay">REPLAY</span>}
             </span>
             {m.change_24h != null ? <Points value={m.change_24h} className="text-right text-xs" /> : <span />}
           </button>

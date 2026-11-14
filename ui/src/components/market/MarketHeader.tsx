@@ -3,7 +3,7 @@ import { removeMarket } from '../../lib/actions'
 import { pct } from '../../lib/format'
 import type { Consensus, MarketSummary } from '../../lib/types'
 import { useStore } from '../../state/store'
-import { Badge, VenueBadges } from '../common/Badge'
+import { VenueBadges } from '../common/Badge'
 import { AnimatedPrice } from '../common/AnimatedPrice'
 import { ConfirmButton } from '../common/ConfirmButton'
 import { Points } from '../common/Price'
@@ -91,12 +91,26 @@ export function MarketHeader({ market }: { market: MarketSummary }) {
       <div className="flex min-w-0 flex-col gap-2">
         <div className="flex min-h-7 items-center gap-3">
           <Venue market={market} />
-          {market.replay && <Badge>Replay</Badge>}
+          {market.replay && (
+            <span className="tag-replay" title="A finished market played back from stored data: prerecorded, not live">
+              REPLAY
+            </span>
+          )}
           {!market.replay && <Remove key={market.id} marketId={market.id} />}
         </div>
-        <h1 className="text-balance text-[1.6rem] font-semibold leading-[1.15] tracking-[-0.015em] text-text">{market.title}</h1>
+        <h1 className="line-clamp-3 text-balance text-[1.6rem] font-semibold leading-[1.15] tracking-[-0.015em] text-text" title={market.title}>
+          {market.title}
+        </h1>
+        {market.made_up && (
+          <p className="max-w-prose text-xs leading-snug text-muted">
+            Illustrative market. Its price is nudged by model-scored input and is not a real market forecast.
+          </p>
+        )}
       </div>
       <div className="text-right">
+        <p className="label mb-1.5" title="The price of YES on this market, as a percentage: what the market takes the chance of YES to be">
+          YES probability
+        </p>
         {market.price == null ? (
           <p className="max-w-40 text-sm text-muted">Setting the starting odds from the coverage…</p>
         ) : (

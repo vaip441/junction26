@@ -1,4 +1,6 @@
-import { absoluteTime, pct, tickTime, timeAgo } from '../../lib/format'
+import { absoluteTime, pct, timeAgo } from '../../lib/format'
+import { causeLabel } from '../../lib/moves'
+import { foundVia, viaContextDev } from '../../lib/provenance'
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { Move, Tick, TickKind } from '../../lib/types'
 import { useStore } from '../../state/store'
@@ -25,6 +27,7 @@ export function TickRow({
   move,
   now,
   playing = false,
+  featured = false,
 }: {
   tick: Tick
   life: Lifecycle | null
@@ -32,10 +35,15 @@ export function TickRow({
   now: number
   /** A replay is playing: every row that appears is arriving, however fast its clock runs. */
   playing?: boolean
+  /** The newest call on the tape: its headline is larger, and its evidence and rules sentence are shown whole. */
+  featured?: boolean
 }) {
   const showRule = useStore((s) => s.showRule)
   const setTab = useStore((s) => s.setTab)
-  const at = tickTime(tick)
+  // two different times: when the publisher says it came out, and when it reached the terminal
+  const found = tick.discovered_ts ?? tick.ts
+  const published = tick.published_ts != null && tick.published_ts <= found ? tick.published_ts : null
+  const via = foundVia(tick.provenance)
   const quiet = tick.verdict === 'none'
   // arrived in the last few seconds: animate the decision (first paint of history stays still)
   const fresh = !tick.backfill && (playing || now - tick.ts < 15)
@@ -55,11 +63,24 @@ export function TickRow({
         </span>
         <Badge tone={tick.test ? 'madeup' : 'neutral'}>{KIND_LABEL[tick.kind]}</Badge>
         {tick.backfill && <Badge>Earlier</Badge>}
-        <span className="num ml-auto shrink-0 text-xs text-faint" title={absoluteTime(at)}>
-          {timeAgo(at, now)}
+        <span className="num ml-auto text-right text-[0.8125rem] text-muted">
+          {tick.test || tick.provenance === 'replay' ? (
+            <span title={absoluteTime(published ?? found)}>{timeAgo(published ?? found, now)}</span>
+          ) : (
+            <>
+              {published != null && (
+                <span title={`Published ${absoluteTime(published)}, by the publisher's own clock`}>published {timeAgo(published, now)} · </span>
+              )}
+              <span title={`Reached the terminal ${absoluteTime(found)}`}>found {timeAgo(found, now)}</span>
+            </>
+          )}
         </span>
       </div>
-      <p className={`text-[0.9375rem] leading-snug ${quiet ? 'line-clamp-1 text-muted' : 'line-clamp-3 font-medium text-text'}`}>
+      <p
+        className={`leading-snug ${
+          quiet ? 'line-clamp-1 text-[0.9375rem] text-muted' : `font-medium text-text ${featured ? 'line-clamp-4 text-[1.125rem]' : 'line-clamp-3 text-base'}`
+        }`}
+      >
         {tick.url ? (
           <a href={tick.url} target="_blank" rel="noreferrer" className="hover:underline">
             {tick.headline}
@@ -74,7 +95,7 @@ export function TickRow({
         // sentence under it, the row reads "this, in the article" against "this, in the rules".
         <blockquote
           title={tick.passage}
-          className="line-clamp-2 border-l-2 border-line pl-2 text-xs leading-snug text-muted"
+          className={`border-l-2 border-muted pl-2 text-[0.8125rem] leading-snug text-text/80 ${featured ? 'line-clamp-6' : 'line-clamp-2'}`}
         >
           {tick.passage}
         </blockquote>
@@ -84,9 +105,9 @@ export function TickRow({
           onClick={() => showRule(tick.rule!)}
           // the figure only where it means something: a spoken sentence gets its closest rule however weak
           title={`The sentence of the rules that makes this matter${tick.rule.confidence >= 0.4 ? ` (${Math.round(tick.rule.confidence * 100)}%)` : ''}: ${tick.rule.text}`}
-          className="line-clamp-1 text-left text-[11px] italic text-muted hover:text-text"
+          className={`text-left text-[0.8125rem] italic leading-snug text-muted hover:text-text ${featured ? 'line-clamp-4' : 'line-clamp-1'}`}
         >
-          § “{tick.rule.text}”
+          <span className="not-italic font-semibold">Contract rule</span> “{tick.rule.text}”
         </button>
       )}
       {(life || move) && (
@@ -94,20 +115,29 @@ export function TickRow({
           {move && (
             <button
               onClick={() => setTab('moves')}
-              title="The terminal names this as the likely cause of a price jump"
+              title="Of the items found around this price move, the one the model finds the most probable explanation. Not proof that it caused the move."
               className={`inv num text-xs ${move.to >= move.from ? 'inv-up' : 'inv-down'}`}
             >
-              Moved the price {pct(move.from)} → {pct(move.to)}
+              {causeLabel(move).label} of {pct(move.from)} → {pct(move.to)}
             </button>
           )}
           {life && <LifecycleBadge life={life} verdict={tick.verdict} />}
         </div>
       )}
-      <p className="flex items-center gap-3 text-xs text-faint">
-        <span className="flex min-w-0 items-center gap-1.5">
+      <p className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted">
+        {/* who published it, and apart from that, how the terminal found it */}
+        <span className="flex min-w-0 items-center gap-1.5" title="Who published it">
           <SourceIcon source={tick.source} className="h-3 w-3" />
           <span className="truncate">{shortSource(tick.source)}</span>
         </span>
+        {via && (
+          <span
+            title="How the terminal found this item, as recorded when it was found"
+            className={`shrink-0 whitespace-nowrap ${viaContextDev(tick.provenance) ? 'font-semibold text-text' : 'text-faint'}`}
+          >
+            {via}
+          </span>
+        )}
         {tick.likes != null && tick.likes > 0 && <span className="num shrink-0 whitespace-nowrap">♥ {tick.likes}</span>}
         {tick.replies != null && tick.replies > 0 && <span className="num shrink-0 whitespace-nowrap">↩ {tick.replies}</span>}
       </p>

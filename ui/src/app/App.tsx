@@ -6,6 +6,7 @@ import { KeyPrompt } from '../components/input/KeyPrompt'
 import { SpeakBar } from '../components/input/SpeakBar'
 import { EdgeFlash } from '../components/layout/EdgeFlash'
 import { MarketList } from '../components/layout/MarketList'
+import { StatusLine } from '../components/layout/StatusLine'
 import { TopBar } from '../components/layout/TopBar'
 import { MarketHeader } from '../components/market/MarketHeader'
 import { MoveBanner } from '../components/market/MoveBanner'
@@ -18,14 +19,19 @@ import { Tape } from '../components/tape/Tape'
 import { useSelectedMarket } from '../hooks/useMarket'
 import { useAskShow } from '../hooks/useAskShow'
 import { useHotkeys } from '../hooks/useHotkeys'
+import { useMetrics } from '../hooks/useMetrics'
 import { useRecord } from '../hooks/useRecord'
 import { useStream } from '../hooks/useStream'
+import { presentation } from '../lib/presentation'
 import { useStore } from '../state/store'
 
-function Panel({ title, children, className = '' }: { title: string; children: ReactNode; className?: string }) {
+function Panel({ title, note, children, className = '' }: { title: string; note?: string; children: ReactNode; className?: string }) {
   return (
     <section className={`flex min-h-0 flex-col bg-panel ${className}`}>
-      <h2 className="label shrink-0 border-b border-line px-3 py-2">{title}</h2>
+      <h2 className="label flex shrink-0 flex-wrap items-baseline gap-x-3 border-b border-line px-3 py-2">
+        {title}
+        {note && <span className="font-normal text-faint">{note}</span>}
+      </h2>
       <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
     </section>
   )
@@ -35,6 +41,7 @@ export function App() {
   useStream()
   useHotkeys()
   useRecord()
+  useMetrics()
   useAskShow()
   const { id, market, detail, ticks, prices } = useSelectedMarket()
   // a question fills the centre of the screen: the tape of the market behind it would only distract
@@ -46,7 +53,12 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <TopBar />
-      <main className="grid min-h-0 flex-1 grid-cols-1 gap-px bg-line max-lg:auto-rows-max max-lg:overflow-y-auto lg:grid-cols-[260px_1fr_380px]">
+      {/* the tape gets the width its headlines and evidence need; from a projector, more of it still */}
+      <main
+        className={`grid min-h-0 flex-1 grid-cols-1 gap-px bg-line max-lg:auto-rows-max max-lg:overflow-y-auto ${
+          presentation ? 'lg:grid-cols-[232px_minmax(0,1fr)_minmax(430px,36vw)]' : 'lg:grid-cols-[250px_minmax(0,1fr)_minmax(400px,31vw)]'
+        }`}
+      >
         <div className="flex min-h-0 flex-col bg-panel">
           <Panel title="Markets" className="min-h-0 flex-1 max-lg:max-h-48">
             <MarketList />
@@ -54,13 +66,13 @@ export function App() {
           <RecordCard />
         </div>
 
-        <section className="relative flex min-h-0 flex-col bg-panel">
+        <section className="relative flex min-h-0 flex-col overflow-hidden bg-panel">
           <AskTakeover />
           {market && id ? (
             <>
               <MarketHeader market={market} />
               {market.replay && <ReplayBar key={id} market={market} replay={market.replay} />}
-              <div className="relative min-h-64 flex-1 p-4 max-lg:h-80 max-lg:flex-none">
+              <div className="relative min-h-40 flex-1 overflow-hidden p-4 max-lg:h-80 max-lg:flex-none">
                 <PriceChart marketId={id} />
                 {!market.made_up && <MoveBanner marketId={id} />}
                 {market.replay && <ReplayResult market={market} replay={market.replay} />}
@@ -72,14 +84,14 @@ export function App() {
                 )}
               </div>
               <MarketTabs marketId={id} madeUp={market.made_up || Boolean(market.replay)} detail={detail} />
-              {market.made_up && <SpeakBar marketId={id} />}
+              {market.made_up && !market.replay && <SpeakBar marketId={id} />}
             </>
           ) : (
             <EmptyState title="Pick a market">Or paste a link or ask a question in the bar above.</EmptyState>
           )}
         </section>
 
-        <Panel title="Tape" className="max-lg:h-[36rem]">
+        <Panel title="Tape" note="% is the model’s confidence in its call, not the chance the call proves right" className="max-lg:h-[36rem]">
           {asking ? (
             <EmptyState title="The tape fills as the terminal reads the web">Each item it scores lands here.</EmptyState>
           ) : id ? (
@@ -89,6 +101,7 @@ export function App() {
           )}
         </Panel>
       </main>
+      <StatusLine />
       <EdgeFlash />
       <KeyPrompt />
       <RecordView />

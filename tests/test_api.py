@@ -507,7 +507,7 @@ def test_moves_are_listed_newest_first_with_their_cause_as_a_tick(path):
     assert first == {"id": 2, "market_id": "mu-demo", "ts": 200.0, "since": 140.0, "from": 24.0, "to": 30.0,
                      "confidence": 0.8, "rule": {"start": 0, "end": 4, "text": "Rule", "confidence": 0.9},
                      "explained": True, "asked": False, "cause": tick, "closest": None, "related": [],
-                     "summary": "Up 6.0 points in 1 minute. Likely cause: typed: that is clever"}
+                     "summary": "Up 6.0 points in 1 minute. Likely explanation: typed: that is clever"}
     assert second["cause"] is None and second["closest"] == tick and second["explained"] is False
     assert second["summary"] == "Up 4.0 points in 1 minute. No news explains it."
 

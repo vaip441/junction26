@@ -128,7 +128,7 @@ One thing runs the other way, from the price back to the web ("why did it move?"
   than "none of these", otherwise only the `closest` item), the sentence of the rules a
   cause touches, and the related contracts that moved 1.5 points or more over the same
   stretch. With a dozen items to choose from the vote is split, so a cause can carry a
-  low probability: under 0.4 the summary says "possible cause", from 0.4 "likely cause".
+  low probability: under 0.4 the summary says "possible explanation", from 0.4 "likely explanation" (an explanation, never a proven cause).
 
 Measured on 14 Nov: the tracked markets made about ten jumps a day, and for 10 of 11
 no item on the tape explained the jump, whether the look-back was 30 minutes or three
@@ -438,7 +438,13 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 - `POST /transcribe`, body one short `audio/wav` recording: `{ "text": "..." }`, the
   words said in it, written down by a Gemini model with the same key as scoring. Empty
   when nobody spoke. 502 when the model cannot be reached.
-- `GET /record`: the weekend record numbers.
+- `GET /record`: directional follow-through of the live calls, with every count behind it:
+  `calls`, `evaluable`, `same_direction`, `opposite_direction`, `no_qualifying_move`,
+  `window_seconds`, `min_move_points`, `markets`, `start`, `since`. Association with later
+  price movement, not causal attribution (see `terminal/record.py`).
+- `GET /metrics`: `mode` (`live`, or `offline` for the replay demo), and the measured
+  latency of live ticks over the last day: `publication_to_discovery` and
+  `discovery_to_scored`, each `{n, median, p95}` in seconds, null below `min_samples`.
 - `GET /status`: Context.dev capacity per key (use, resting time, credits left). Needs the write key.
 - `GET /stream`: server-sent events. Event types: `tick`, `tick_update`, `price`,
   `move`, `market`, `page_check`. A `page_check` is `{ "market_id", "url", "ts",
@@ -466,6 +472,7 @@ A tick:
       "up", "none", "down", "strength", "verdict": "up|none|down", "confidence",
       "price_at", "test": false, "backfill": false,
       "likes": 2126, "replies": 113,
+      "provenance": "context_web_search", "discovered_ts", "scored_ts",
       "rule": { "start": 412, "end": 598, "text": "If it becomes impossible ...", "confidence": 0.89 },
       "passage": "On Thursday, the board announced that ..." }
 

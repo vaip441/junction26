@@ -150,7 +150,8 @@ def summary(move: dict) -> str:
             f"in {span(move['ts'] - move['since'])}.")
     if move["explained"] and move.get("cause"):
         how = "Likely" if (move["confidence"] or 0) >= LIKELY else "Possible"
-        return f"{text} {how} cause: {move['cause']['source']}: {move['cause']['headline']}"
+        # an explanation, not a proven cause: the item the model finds most probable among those found
+        return f"{text} {how} explanation: {move['cause']['source']}: {move['cause']['headline']}"
     text += " No news explains it."
     for r in move["related"][:1]:
         text += f" {r['title']} went {'up' if r['to'] > r['from'] else 'down'} {abs(r['to'] - r['from']):.1f} at the same time."

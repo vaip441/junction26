@@ -22,9 +22,19 @@ npm run dev                  # http://localhost:5173, talking to http://localhos
 Writes (asking a question, typing or speaking a sentence) need the backend's `TERMINAL_KEY`: the UI asks
 for it once and keeps it in the browser.
 
-### Offline, without the backend
+### Presentation mode and the offline replay demo
 
-Only for working on the screen when the backend or its keys are not at hand:
+`?presentation=1` scales the type for a projector, widens the tape, and opens on a populated market (a
+real one when there is one, else a replay; never the empty made-up market). `?market=<id>` opens on that
+market. For a demo with no keys and no network, the repository root has
+`uv run python -m terminal.offline`: the real backend and this screen with the bundled replays (see
+`../README.md`).
+
+### The mock backend, for working on the screen
+
+Only for working on the screen when the backend or its keys are not at hand. It is not the offline replay
+demo, has no replays, and its data is made up (every title starts with `MOCK`); it reports no latency figures
+and credits no item to any way of finding it:
 
 ```bash
 npm run dev:mock             # mock backend on :8765 + the UI pointed at it

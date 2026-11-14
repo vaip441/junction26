@@ -71,10 +71,10 @@ export function RulesPanel({ marketId, rules, queries }: { marketId: string; rul
   return (
     <div className="flex flex-col gap-3 p-3">
       {rules && <p className="whitespace-pre-line text-xs leading-relaxed text-muted">{parts}</p>}
-      {cited.length > 0 && <p className="text-[11px] text-faint">Highlighted: the sentences that made an item on the tape matter.</p>}
+      {cited.length > 0 && <p className="text-xs text-faint">Highlighted: the sentences that made an item on the tape matter.</p>}
       {queries && queries.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-semibold text-faint">What it searches the web for</span>
+          <span className="text-xs font-semibold text-faint">What it searches the web for</span>
           <div className="flex flex-wrap gap-1.5">
             {queries.map((q) => (
               <span key={q} className="rounded-xs border border-line bg-bg px-2 py-0.5 text-xs text-text">

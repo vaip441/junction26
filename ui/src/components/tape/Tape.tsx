@@ -27,6 +27,8 @@ export function Tape({
     for (const m of moves ?? []) if (m.cause && !by.has(m.cause.id)) by.set(m.cause.id, m)
     return by
   }, [moves])
+  // the newest call (up or down, found live) is the row a room should read first
+  const featured = useMemo(() => ticks?.find((t) => t.verdict !== 'none' && !t.backfill)?.id, [ticks])
   if (ticks === undefined) return <EmptyState title="Loading the tape…" />
   if (ticks.length === 0 && pending.length === 0) {
     return <EmptyState title="Nothing on the tape yet">Scored news, posts and spoken lines appear here as they arrive.</EmptyState>
@@ -37,7 +39,7 @@ export function Tape({
         <PendingRow key={`p${p.key}`} p={p} />
       ))}
       {ticks.map((t) => (
-        <TickRow key={t.id} tick={t} life={tickLifecycle(t, prices, madeUp, now)} move={caused.get(t.id)} now={now} playing={playing} />
+        <TickRow key={t.id} tick={t} life={tickLifecycle(t, prices, madeUp, now)} move={caused.get(t.id)} now={now} playing={playing} featured={t.id === featured} />
       ))}
     </ul>
   )

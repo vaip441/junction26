@@ -512,7 +512,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const life = tick ? tickLifecycle(tick, prices, Boolean(market?.made_up), now) : null
 
   return (
-    <div className="flex h-full min-h-56 flex-col gap-2">
+    <div className="flex h-full min-h-32 flex-col gap-2">
       {/* the controls and the readout sit over the plot, not on it: nothing covers the line */}
       {!empty && data.length > 1 && (
         <div className="flex min-h-6 shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -569,7 +569,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
         </div>
       )}
       {!empty && before > 0 && first != null && (
-        <p className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[70%] rounded-xs bg-panel/90 px-2 py-1 text-[11px] leading-snug text-muted">
+        <p className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[70%] rounded-xs bg-panel/90 px-2 py-1 text-xs leading-snug text-muted">
           Price history starts {when(first)}.{' '}
           <span className="num text-text">{before}</span> earlier {before === 1 ? 'call is' : 'calls are'} on the tape, from before this chart starts.
         </p>
@@ -579,7 +579,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
           className="pointer-events-none absolute z-10 max-w-72 rounded-xs border border-muted bg-panel-2 p-2"
           style={{ left: Math.max(4, Math.min(hover.x + 12, hover.width - 290)), top: Math.max(4, hover.y - 70) }}
         >
-          <p className="text-[11px]">
+          <p className="text-xs">
             <span className="mr-2 font-semibold text-muted">Why did it move?</span>
             <MoveSpan move={hover.move} />
           </p>
@@ -601,7 +601,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
               )}
             </p>
           )}
-          <p className="mt-0.5 text-[11px] text-faint">click for the answer under the chart</p>
+          <p className="mt-0.5 text-xs text-faint">click for the answer under the chart</p>
         </div>
       )}
       {hover && tick && tick.market_id === marketId && (
@@ -622,7 +622,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
               <LifecycleBadge life={life} verdict={tick.verdict} />
             </p>
           )}
-          <p className="mt-0.5 text-[11px] text-faint">click to find it on the tape</p>
+          <p className="mt-0.5 text-xs text-faint">click to find it on the tape</p>
         </div>
       )}
       </div>

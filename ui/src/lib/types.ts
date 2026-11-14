@@ -35,6 +35,29 @@ export interface Consensus {
   venues: { id: string; venue: Venue; price: number; url: string | null }[]
 }
 
+/** How an item was found, which is not who published it. Recorded by the backend; `unknown` for ticks stored
+ *  before this was written down. Only the three `context_*` ways are Context.dev's. */
+export type Provenance =
+  | 'context_monitor'
+  | 'context_web_search'
+  | 'context_news_search'
+  | 'google_news'
+  | 'reddit'
+  | 'polymarket_comments'
+  | 'bluesky'
+  | 'truth_social'
+  | 'microphone'
+  | 'typed'
+  | 'replay'
+  | 'unknown'
+
+/** How many of a market's items one way of finding found; `shown` of them are on the tape. */
+export interface FoundBy {
+  provenance: Provenance
+  items: number
+  shown: number
+}
+
 export interface Source {
   source: string
   ticks: number
@@ -67,6 +90,8 @@ export interface MarketDetail extends MarketSummary {
   /** The page Context.dev watches for this market; empty until one is found (needs a public backend address). */
   pages: WatchedPage[]
   sources: Source[]
+  /** Items found for this market, by how they were found. Missing on an older backend. */
+  found_by?: FoundBy[]
 }
 
 export interface Tick {
@@ -94,6 +119,12 @@ export interface Tick {
   rule?: RuleRef | null
   /** The excerpt of an article that the search found relevant: the evidence shown beside a call. Articles from the web search only. */
   passage?: string | null
+  /** How it was found (not who published it). Missing on an older backend. */
+  provenance?: Provenance
+  /** When it reached the terminal, and when it had been scored and stored. Null on replays and older ticks.
+   *  `ts` is unchanged: the moment ingestion began. */
+  discovered_ts?: number | null
+  scored_ts?: number | null
 }
 
 /** A related contract that moved over the same stretch as a move: often the whole story when no news explains it. */
@@ -134,12 +165,45 @@ export interface PricePoint {
   price: number
 }
 
+/**
+ * Directional follow-through of the live calls: of the up or down calls on real markets, what the price did
+ * in the window after each. Association with a later price move, not proof that the item caused it.
+ */
 export interface WeekendRecord {
-  called: number
-  moved: number
-  same_way: number
+  /** Up or down calls whose window is over. */
+  calls: number
+  /** Of those, followed by a move of at least `min_move_points`. */
+  evaluable: number
+  same_direction: number
+  opposite_direction: number
+  no_qualifying_move: number
   window_seconds: number
-  since: number
+  min_move_points: number
+  /** Distinct real markets the calls were made on. */
+  markets: number
+  /** Calls are counted from here. */
+  start: number
+  /** The first tick stored after that, or null. */
+  since: number | null
+}
+
+/** Median and 95th percentile in seconds; both null until there are enough samples (`n` says how many there are). */
+export interface Timing {
+  n: number
+  median: number | null
+  p95: number | null
+}
+
+/** GET /metrics: measured latency of the live ticks of the last day, and whether this is the offline replay demo. */
+export interface Metrics {
+  mode: 'live' | 'offline'
+  window_seconds: number
+  min_samples: number
+  ticks: number
+  publication_to_discovery: Timing
+  discovery_to_scored: Timing
+  requests: Record<string, Timing>
+  price_check_seconds: number
 }
 
 /** A `market` stream event. While plain words are being worked on, market_id is null and query is set. */

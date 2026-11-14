@@ -15,9 +15,21 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
   const wanted = useStore((s) => s.tab)
   const setTab = useStore((s) => s.setTab)
   const moves = useStore((s) => s.moves[marketId])
-  // the made-up market's first tab is its sources unless "why did it move?" was asked for there
+  // Until a tab is picked by hand, the one shown is one with something in it: "why did it move?" where there
+  // is a move to explain, else the sources, else the rules. A made-up market and a replay have no jumps of
+  // their own, so they open on their sources unless "why did it move?" was asked for there.
   const [picked, setPicked] = useState(false)
-  const tab: Tab = madeUp && wanted === 'moves' && !picked ? 'sources' : wanted
+  const hasSources = Boolean(detail?.sources.length)
+  const tab: Tab =
+    picked || wanted !== 'moves'
+      ? wanted
+      : madeUp
+        ? hasSources || !detail ? 'sources' : 'rules'
+        : moves === undefined || moves.length > 0 || !detail
+          ? 'moves'
+          : hasSources
+            ? 'sources'
+            : 'rules'
   const tabs: { id: Tab; label: string; count?: number }[] = [
     { id: 'moves', label: 'Why did it move?', count: moves?.length },
     { id: 'sources', label: 'Sources', count: detail?.sources.length },
@@ -25,7 +37,7 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
     { id: 'rules', label: 'Rules' },
   ]
   return (
-    <div className="flex h-44 shrink-0 flex-col border-t border-line">
+    <div className="flex h-[min(12rem,22vh)] shrink-0 flex-col border-t border-line bg-panel">
       <div role="tablist" className="flex shrink-0 gap-5 border-b border-line px-3">
         {tabs.map((t) => (
           <button
@@ -51,7 +63,7 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
         ) : !detail ? (
           <p className="p-3 text-xs text-faint">Loading…</p>
         ) : tab === 'sources' ? (
-          <SourcesPanel sources={detail.sources} pages={detail.pages} />
+          <SourcesPanel sources={detail.sources} pages={detail.pages} found={detail.found_by} />
         ) : tab === 'related' ? (
           <RelatedContracts related={detail.related} />
         ) : (
