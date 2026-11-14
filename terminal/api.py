@@ -192,13 +192,11 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         if m["venue"] == "made_up":
             raise HTTPException(409, "a made-up market is on no venue")
         try:
-            twin = await match.twin(m, await match.candidates(m["title"]))
+            await with_history(await pair_up(m))
         except match.SearchFailed:
             raise HTTPException(502, "could not reach search, try again")
         except scoring.ScoringError:
             raise HTTPException(503, "scoring unavailable, try again")
-        if twin is not None:
-            await with_history(keep_twin(m, twin))
         return detail(app.state.db, store.get_market(app.state.db, id), time.time())
 
     @app.post("/markets/{id}/ticks", dependencies=[Depends(write_access)])
@@ -256,6 +254,12 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         fresh = [] if store.get_market(db, id) else [keep(twin, m["lead_id"] or m["id"], m["poll_seconds"], time.time())]
         store.pair(db, m["id"], id)
         return fresh
+
+    async def pair_up(m: dict) -> list[str]:
+        """Search the other venue for the market's question and pair the two when it is there. Returns the
+        ids stored just now. SearchFailed or ScoringError when it could not be looked for."""
+        twin = await match.twin(m, await match.candidates(m["title"]))
+        return keep_twin(m, twin) if twin is not None else []
 
     async def from_words(words: str, poll_seconds: int) -> tuple[str, bool, list[str]]:
         """Plain words -> (id of the market now tracked, whether a venue contract matched, markets stored just now)."""
@@ -316,6 +320,11 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         """Track a market from a Kalshi or Polymarket link, or from a question in plain words."""
         try:
             (lead_id, fresh), matched = track(await venues.resolve(body.query), [], body.poll_seconds), True
+            if fresh:  # tracked just now: the same question on the other venue is looked for once, here
+                try:
+                    fresh += await pair_up(store.get_market(app.state.db, lead_id))
+                except (match.SearchFailed, scoring.ScoringError):
+                    pass  # tracked all the same; POST /markets/{id}/pair looks again
         except venues.NotAVenueLink:
             lead_id, matched, fresh = await from_words(body.query, body.poll_seconds)
         except venues.MarketNotFound as e:

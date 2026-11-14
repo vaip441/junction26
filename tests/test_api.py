@@ -18,6 +18,18 @@ def path(tmp_path):
     return str(tmp_path / "t.db")
 
 
+@pytest.fixture(autouse=True)
+def no_venue_search_over_the_network(monkeypatch):
+    """A market tracked from a link looks for the same question on the other venue: here it finds nothing
+    unless a test says otherwise (see plain())."""
+    from terminal import match
+
+    async def nothing(words):
+        return []
+
+    monkeypatch.setattr(match, "candidates", nothing)
+
+
 def client(path, scorer=up):
     return TestClient(create_app(db_path=path, scorer=scorer, poll=False))
 
@@ -565,16 +577,47 @@ def test_no_consensus_without_the_same_question_on_the_other_venue(path, monkeyp
         assert c.get("/markets").json()[0]["consensus"] is None  # a made-up market is on no venue
 
 
-def test_a_market_tracked_earlier_can_be_paired_with_the_other_venue(path, monkeypatch):
+def resolving(monkeypatch):
     from terminal import venues
 
     async def resolve(link):
-        return [dict(c) for c in CONTRACTS]
+        return [dict(c) for c in (KALSHI if "kalshi" in link else CONTRACTS)]
 
     monkeypatch.setattr(venues, "resolve", resolve)
+
+
+def test_a_market_tracked_from_a_link_is_paired_with_the_other_venue_at_once(path, monkeypatch):
+    resolving(monkeypatch)
     plain(monkeypatch, [CONTRACTS, KALSHI], twin=KALSHI[0])
     with client(path) as c:
+        m = c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()
+        assert m["consensus"]["venues"][1]["id"] == "k-KX-0" and m["related"][-1]["id"] == "k-KX-0"
+        # the link again: already tracked and paired, so the other venue is not searched a second time
+        plain(monkeypatch, RuntimeError("searched again"))
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()["consensus"]["gap"] == 5.0
+
+
+def test_a_link_is_tracked_even_when_the_other_venue_cannot_be_searched(path, monkeypatch):
+    from terminal import match
+    from terminal.scoring import ScoringError
+
+    resolving(monkeypatch)
+    plain(monkeypatch, match.SearchFailed("down"))
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "https://polymarket.com/event/e"})
+        assert r.status_code == 200 and r.json()["id"] == "pm-m0" and r.json()["consensus"] is None
+    plain(monkeypatch, [CONTRACTS, KALSHI], twin=ScoringError("down"))
+    with client(path + "2") as c:
+        r = c.post("/markets", json={"query": "https://kalshi.com/markets/kx/e/kx"})
+        assert r.status_code == 200 and r.json()["id"] == "k-KX-0" and r.json()["consensus"] is None
+
+
+def test_a_market_tracked_earlier_can_be_paired_with_the_other_venue(path, monkeypatch):
+    resolving(monkeypatch)
+    plain(monkeypatch, [CONTRACTS])  # the other venue did not list it yet
+    with client(path) as c:
         assert c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()["consensus"] is None
+        plain(monkeypatch, [CONTRACTS, KALSHI], twin=KALSHI[0])
         r = c.post("/markets/pm-m0/pair")
         assert r.status_code == 200 and r.json()["consensus"]["venues"][1]["id"] == "k-KX-0"
         assert r.json()["related"][-1]["id"] == "k-KX-0"
@@ -584,16 +627,12 @@ def test_a_market_tracked_earlier_can_be_paired_with_the_other_venue(path, monke
 
 
 def test_two_markets_already_tracked_are_paired_where_they_stand(path, monkeypatch):
-    from terminal import venues
-
-    async def resolve(link):
-        return [dict(c) for c in (KALSHI if "kalshi" in link else CONTRACTS)]
-
-    monkeypatch.setattr(venues, "resolve", resolve)
-    plain(monkeypatch, [CONTRACTS, KALSHI], twin=KALSHI[0])
+    resolving(monkeypatch)
+    plain(monkeypatch)
     with client(path) as c:
         c.post("/markets", json={"query": "https://polymarket.com/event/e"})
         c.post("/markets", json={"query": "https://kalshi.com/markets/kx/e/kx"})
+        plain(monkeypatch, [CONTRACTS, KALSHI], twin=KALSHI[0])
         m = c.post("/markets/pm-m0/pair").json()
         assert [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2"]  # the Kalshi one stays a market of its own
         listed = {x["id"]: x["consensus"] for x in c.get("/markets").json()}

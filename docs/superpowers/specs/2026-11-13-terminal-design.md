@@ -392,9 +392,10 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 - `POST /markets/{id}/pair` (needs the key): looks for the same question on the other
   venue and, when Decision 1 is at least 50% sure a contract there resolves in exactly
   the same cases, pairs the two; the answer is the market's detail, with `consensus`
-  set when a pair was found. A question in plain words is paired this way when it is
-  first tracked; this route is for markets tracked from a link or before pairing
-  existed. 409 for a made-up market.
+  set when a pair was found. A market is paired this way when it is first tracked, from
+  plain words or from a link (a link takes a few seconds longer for it); this route
+  looks again, for a market whose other venue was not listed yet or could not be
+  searched. 409 for a made-up market.
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
 - `GET /record`: the weekend record numbers.
