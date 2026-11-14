@@ -81,6 +81,10 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ text, kind }) },
       true,
     ),
+  /** Explain the market's move over the last day, now. The answer also arrives as a `move` event. 409 when it barely moved. */
+  why: (id: string) => request<Move>(`/markets/${encodeURIComponent(id)}/why`, { method: 'POST' }, true),
+  /** Put the demo market back to its starting price with an empty tape, after a rehearsal. 409 for any other market. */
+  resetMarket: (id: string) => request<MarketDetail>(`/markets/${encodeURIComponent(id)}/reset`, { method: 'POST' }, true),
   deleteMarket: (id: string) =>
     request<{ deleted: string }>(`/markets/${encodeURIComponent(id)}`, { method: 'DELETE' }, true),
 }

@@ -231,6 +231,14 @@ export const useStore = create<State>((set) => ({
             ticks: tape && cause ? { ...s.ticks, [mv.market_id]: tape.map((x) => (x.id === cause.id ? cause : x)) } : s.ticks,
           }
         }
+        case 'page_check': {
+          // Context.dev has just checked the market's watched page
+          const { market_id, url, ts, changed } = e.data
+          const d = s.details[market_id]
+          if (!d) return {}
+          const pages = d.pages.map((p) => (p.url === url ? { ...p, checked_ts: ts, changed_ts: changed ? ts : p.changed_ts } : p))
+          return { details: { ...s.details, [market_id]: { ...d, pages } } }
+        }
         case 'market': {
           const ev = e.data
           if (ev.status === 'deleted' && ev.market_id) {
@@ -239,6 +247,19 @@ export const useStore = create<State>((set) => ({
               markets,
               order: s.order.filter((id) => id !== ev.market_id),
               selectedId: s.selectedId === ev.market_id ? (s.order.find((id) => id !== ev.market_id) ?? null) : s.selectedId,
+            }
+          }
+          if (ev.status === 'reset' && ev.market_id) {
+            // the demo market, put back after a rehearsal: its tape, moves and prices start over (the price
+            // event that follows gives the starting price)
+            const id = ev.market_id
+            const m = s.markets[id]
+            return {
+              ticks: { ...s.ticks, [id]: [] },
+              moves: { ...s.moves, [id]: [] },
+              prices: { ...s.prices, [id]: [] },
+              pending: { ...s.pending, [id]: [] },
+              markets: m ? { ...s.markets, [id]: { ...m, ticks_today: 0, change_24h: null } } : s.markets,
             }
           }
           const ask = s.ask

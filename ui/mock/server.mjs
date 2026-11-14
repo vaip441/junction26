@@ -1,7 +1,7 @@
 // Mock of the terminal backend, for building and testing the UI without the real one.
 //
 // Serves the whole "Interface for the frontend" contract (docs/superpowers/specs/2026-11-13-terminal-design.md)
-// with made-up data, and keeps the stream busy: prices drift, new ticks arrive, a strong call is often
+// with made-up data (moves in one sentence with their closest news, a watched page, the demo reset), and keeps the stream busy: prices drift, new ticks arrive, a strong call is often
 // followed by a move its way, so the tape's lifecycle badges change while you watch, and now and then a
 // price jumps and a `move` event names its cause ("why did it move?"). Every market title starts
 // with "MOCK" so mock data is never mistaken for real data on a screenshot.
@@ -78,12 +78,28 @@ function ruleOf(m, confidence = rand(0.45, 0.95)) {
   return { start, end, text: m.rules.slice(start, end), confidence: round(confidence * 1000) / 1000 }
 }
 
-/** Store a move and return it as the frontend sees it. `cause` is a tick or null. */
+/**
+ * Store a move and return it as the frontend sees it, like terminal/moves.py: `tick` is the item nearest to
+ * explaining it; it is the `cause` only when `explained`, otherwise just the `closest` news. Related
+ * contracts that moved over the same stretch are named, and `summary` says it all in a sentence or two.
+ */
 function addMove(id, f) {
-  const cause = f.cause ?? null
-  if (cause && !cause.rule) cause.rule = ruleOf(markets.get(id))
-  const move = { id: nextMoveId++, market_id: id, ts: f.ts, since: f.since, from: round(f.from), to: round(f.to),
-    cause, confidence: cause ? round((f.confidence ?? rand(0.45, 0.9)) * 1000) / 1000 : null, rule: cause?.rule ?? null }
+  const tick = f.tick ?? null
+  const explained = Boolean(tick && f.explained)
+  if (explained && !tick.rule) tick.rule = ruleOf(markets.get(id))
+  const from = round(f.from), to = round(f.to)
+  const related = explained ? [] : [...markets.values()].filter((r) => r.lead_id === id).slice(0, 1)
+    .map((r) => ({ id: r.id, title: r.title, from: round(latest(r.id) + (to > from ? 2.5 : -2.5)), to: round(latest(r.id)) }))
+  const span = f.asked ? 'the last day' : `${Math.max(1, Math.round((f.ts - f.since) / 60))} minute${Math.round((f.ts - f.since) / 60) > 1 ? 's' : ''}`
+  let summary = `${to > from ? 'Up' : 'Down'} ${Math.abs(to - from).toFixed(1)} points in ${span}.`
+  if (explained) summary += ` Likely cause: ${tick.source}: ${tick.headline}`
+  else {
+    summary += ' No news explains it.'
+    for (const r of related) summary += ` ${r.title} went ${r.to > r.from ? 'up' : 'down'} ${Math.abs(r.to - r.from).toFixed(1)} at the same time.`
+  }
+  const move = { id: nextMoveId++, market_id: id, ts: f.ts, since: f.since, from, to, summary, explained, asked: Boolean(f.asked),
+    cause: explained ? tick : null, closest: explained ? null : tick,
+    confidence: tick ? round((f.confidence ?? rand(0.2, 0.9)) * 1000) / 1000 : null, rule: explained ? tick.rule : null, related }
   moves.get(id).unshift(move)
   return move
 }
@@ -132,8 +148,9 @@ function makeTick(marketId, f) {
     test: f.kind === 'mic' || f.kind === 'typed', backfill: f.backfill ?? false,
     likes: f.kind === 'post' && f.source?.startsWith('x.com') ? Math.round(rand(20, 4000)) : null,
     replies: f.kind === 'post' && f.source?.startsWith('x.com') ? Math.round(rand(2, 300)) : null,
-    // the rules sentence that makes it matter: on spoken and typed ticks, and later on ticks that call a move
-    rule: f.kind === 'mic' || f.kind === 'typed' ? ruleOf(markets.get(marketId)) : null,
+    // the rules sentence that makes it matter: only on a tick that moves the price; for a spoken or typed one
+    // the closest sentence, however weak
+    rule: (f.kind === 'mic' || f.kind === 'typed') && verdict !== 'none' ? ruleOf(markets.get(marketId), rand(0.15, 0.9)) : null,
   }
 }
 
@@ -165,7 +182,7 @@ function detail(m) {
   }
   return {
     ...summary(m), rules: m.rules, queries: m.queries, companies: [],
-    related: [...markets.values()].filter((r) => r.lead_id === m.id).map(summary), pages: [],
+    related: [...markets.values()].filter((r) => r.lead_id === m.id).map(summary), pages: m.page ? [m.page] : [],
     sources: [...counts.values()].sort((a, b) => b.ticks - a.ticks),
   }
 }
@@ -217,9 +234,7 @@ addMarket({ id: NV, venue: 'polymarket', title: 'MOCK · Will Ian Buck be the ne
   for (const [mins, f] of seed) addTick(makeTick(NV, { ...f, ts: m(mins) }))
   // Past moves: one with a cause from each direction of the search, and one nothing explains.
   const seeded = (headline) => ticks.get(NV).find((t) => t.headline.startsWith(headline))
-  addMove(NV, { since: m(120), ts: m(115), from: 40, to: 44, cause: seeded('Jensen Huang said'), confidence: 0.72 })
-  addMove(NV, { since: m(100), ts: m(80), from: 45, to: 48, cause: null })
-  addMove(NV, { since: m(9), ts: m(6), from: 51, to: 53, cause: seeded('Analysts list Buck'), confidence: 0.58 })
+  addMove(NV, { since: m(120), ts: m(115), from: 40, to: 44, tick: seeded('Jensen Huang said'), explained: true, confidence: 0.72 })
   for (const [id, title, venue, p, url] of [
     ['mock-nvidia-ceo-2027', 'MOCK · Nvidia CEO change announced by March 2027?', 'polymarket', 18, 'https://polymarket.com/event/next-ceo-of-nvidia/nvidia-ceo-change-by-march-2027'],
     ['mock-kx-nvidia-ceo', 'MOCK · Will Ian Buck be named Nvidia CEO? (Kalshi)', 'kalshi', 51, 'https://kalshi.com/markets/kxnvdaceo/nvidia-ceo/kxnvdaceo-buck'],
@@ -227,6 +242,16 @@ addMarket({ id: NV, venue: 'polymarket', title: 'MOCK · Will Ian Buck be the ne
     addMarket({ id, venue, title, lead_id: NV, url })
     history(id, p, 30, 1800, 0.5)
   }
+}
+
+// its related contracts exist now, so a move nothing explains can say which of them moved with it
+{
+  const m = (mins) => now() - mins * 60
+  const seeded = (headline) => ticks.get(NV).find((t) => t.headline.startsWith(headline))
+  addMove(NV, { since: m(100), ts: m(80), from: 45, to: 48, tick: seeded('Nvidia board reaffirms'), explained: false, confidence: 0.22 })
+  addMove(NV, { since: m(9), ts: m(6), from: 51, to: 53, tick: seeded('Analysts list Buck'), explained: true, confidence: 0.58 })
+  // the page Context.dev watches for it
+  markets.get(NV).page = { url: 'https://nvidianews.nvidia.com/news', title: 'MOCK · NVIDIA Newsroom: press releases', checked_ts: m(4), changed_ts: m(190) }
 }
 
 const AI = 'mock-openai-anthropic-ipo'
@@ -332,25 +357,35 @@ async function liveMoves() {
     }
     await sleep(rand(3, 6) * 1000) // the web is searched first
     if (!markets.has(m.id)) continue
+    // like the real markets, most jumps are trades, not news: one in three is explained, one more has only "closest news"
     let cause = null
-    if (Math.random() < 0.75) {
+    const explained = Math.random() < 0.35
+    if (explained || Math.random() < 0.5) {
       const verdict = dir > 0 ? 'up' : 'down'
       const kind = pick(['article', 'article', 'post'])
       cause = makeTick(m.id, { verdict, strength: rand(0.5, 0.95), confidence: rand(0.6, 0.95), kind,
         source: kind === 'post' ? pick(['x.com/marketsdesk', TRUTH]) : pick(SOURCES.slice(0, 5)), headline: pick(LIVE_HEADLINES[verdict]),
         published_ts: since - rand(60, 600), price_at: from })
-      cause.rule = ruleOf(m)
       emitTick(cause)
     }
-    send('move', addMove(m.id, { since, ts: now(), from, to: latest(m.id), cause }))
+    send('move', addMove(m.id, { since, ts: now(), from, to: latest(m.id), tick: cause, explained }))
   }
 }
 void liveMoves()
 
-/** A deciding page checked now and then. */
+/** A watched page is checked every 30 s here (ten minutes on Context.dev); one check in six finds a change, which becomes a tick. */
 setInterval(() => {
-  const m = pick(venueMarkets())
-  if (m) send('page_check', { market_id: m.id, url: m.url, status: 'unchanged', checked_ts: now() })
+  for (const m of venueMarkets()) {
+    if (!m.page) continue
+    const changed = !QUIET && Math.random() < 1 / 6
+    m.page.checked_ts = now()
+    if (changed) m.page.changed_ts = now()
+    send('page_check', { market_id: m.id, url: m.page.url, ts: now(), changed })
+    if (changed) {
+      emitTick(makeTick(m.id, { verdict: 'up', strength: rand(0.4, 0.9), confidence: rand(0.6, 0.9), kind: 'page',
+        source: new URL(m.page.url).hostname.replace(/^www\./, ''), url: m.page.url, headline: 'The page now lists a new press release naming a successor' }))
+    }
+  }
 }, 30000)
 
 // ---- writes --------------------------------------------------------------------------------------------
@@ -527,6 +562,28 @@ async function route(req, url) {
       return [200, ticks.get(m.id).slice(0, limit)]
     }
     if (parts[2] === 'ticks' && req.method === 'POST') return postTick(m, await readBody(req))
+    if (parts[2] === 'reset' && req.method === 'POST') {
+      if (m.id !== DEMO) return [409, { detail: 'only the demo market can be reset' }]
+      ticks.set(m.id, [])
+      moves.set(m.id, [])
+      prices.set(m.id, [])
+      addPrice(m.id, now(), 20)
+      send('market', { market_id: m.id, status: 'reset' })
+      send('price', { market_id: m.id, ts: now(), price: 20 })
+      return [200, detail(m)]
+    }
+    if (parts[2] === 'why' && req.method === 'POST') {
+      // why did it move over the last day? searched now, answered in a few seconds, also sent as a move event
+      const from = priceAt(m.id, now() - 86400) ?? prices.get(m.id)[0]?.price
+      const to = latest(m.id)
+      if (from == null || to == null || Math.abs(to - from) < 1) return [409, { detail: 'the price has not moved a point in the last day' }]
+      await sleep(rand(1500, 3000))
+      const strongest = [...ticks.get(m.id)].filter((t) => t.verdict !== 'none').sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))[0]
+      const move = addMove(m.id, { since: now() - 86400, ts: now(), from, to, tick: strongest, asked: true,
+        explained: Boolean(strongest) && (strongest.verdict === 'up') === (to > from) })
+      send('move', move)
+      return [200, move]
+    }
     if (parts[2] === 'moves' && req.method === 'GET') {
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 20)))
       return [200, moves.get(m.id).slice(0, limit)]

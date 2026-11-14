@@ -46,3 +46,37 @@ export async function askFor(query: string): Promise<boolean> {
     return false
   }
 }
+
+/**
+ * Ask why a market moved over the last day. The answer arrives as a `move` event (and is stored here too,
+ * in case the stream is slow). Returns the text to show if it could not be answered, or null.
+ */
+export async function askWhy(marketId: string): Promise<string | null> {
+  try {
+    useStore.getState().apply({ type: 'move', data: await api.why(marketId) })
+    return null
+  } catch (e) {
+    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
+    if (err.status === 401) {
+      useStore.getState().setNeedKey(true)
+      return 'needs the terminal key: enter it, then ask again'
+    }
+    return err.detail
+  }
+}
+
+/** Put the demo market back to its starting price with an empty tape. Returns the error text, or null. */
+export async function resetDemo(marketId: string): Promise<string | null> {
+  try {
+    await api.resetMarket(marketId)
+    void loadMarket(marketId)
+    return null
+  } catch (e) {
+    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
+    if (err.status === 401) {
+      useStore.getState().setNeedKey(true)
+      return 'needs the terminal key: enter it, then reset again'
+    }
+    return err.detail
+  }
+}

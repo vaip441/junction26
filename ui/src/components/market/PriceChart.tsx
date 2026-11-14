@@ -17,7 +17,6 @@ import { useNow } from '../../hooks/useNow'
 import { pct, tickTime, timeAgo } from '../../lib/format'
 import { focusTick } from '../../lib/focus'
 import { tickLifecycle } from '../../lib/lifecycle'
-import { shortSource } from '../../lib/sources'
 import type { Move, PricePoint, Tick } from '../../lib/types'
 import { useStore } from '../../state/store'
 import { EmptyState } from '../common/EmptyState'
@@ -167,7 +166,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
         // the answer is in the tab under the chart, and its cause is on the tape
         useStore.getState().setTab('moves')
         requestAnimationFrame(() => document.getElementById(`move-${move.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
-        if (move.cause) focusTick(move.cause.id)
+        const item = move.cause ?? move.closest
+        if (item) focusTick(item.id)
       }
     })
 
@@ -278,11 +278,12 @@ export function PriceChart({ marketId }: { marketId: string }) {
     const bands: MoveBand[] = []
     const bandIndex = new Map<string, Move>()
     for (const m of moves ?? []) {
+      if (m.asked) continue // the last day, explained on request: a band a day wide would shade the whole chart
       const from = snap(times, m.since)
       const to = snap(times, m.ts)
       if (from == null || to == null) continue // before the price history starts
       const bid = `m${m.id}`
-      bands.push({ id: bid, from, to, color: !m.cause ? none : m.to >= m.from ? up : down })
+      bands.push({ id: bid, from, to, color: !m.explained ? none : m.to >= m.from ? up : down })
       bandIndex.set(bid, m)
     }
     byBand.current = bandIndex
@@ -360,16 +361,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
             <span className="mr-2 font-semibold uppercase tracking-wider text-muted">Why did it move?</span>
             <MoveSpan move={hover.move} />
           </p>
-          {hover.move.cause ? (
-            <p className="line-clamp-3 text-xs leading-snug text-text">
-              <span className="text-muted">
-                likely cause{hover.move.confidence != null && ` (${Math.round(hover.move.confidence * 100)}%)`}: {shortSource(hover.move.cause.source)}:{' '}
-              </span>
-              {hover.move.cause.headline}
-            </p>
-          ) : (
-            <p className="text-xs text-muted">No cause found on the web</p>
-          )}
+          <p className="line-clamp-4 text-xs leading-snug text-text">{hover.move.summary}</p>
           <p className="mt-0.5 text-[10px] text-faint">click for the answer under the chart</p>
         </div>
       )}

@@ -44,16 +44,10 @@ export function useStream(): void {
 /** First paint for one market: detail, ticks, prices and moves. The stream keeps them current afterwards. */
 export async function loadMarket(id: string): Promise<void> {
   const store = useStore.getState()
-  // a made-up market's price moves only by its own ticks: it has no moves to ask for
-  const madeUp = store.markets[id]?.made_up
-  const [detail, ticks, prices, moves] = await Promise.allSettled([
-    api.market(id),
-    api.ticks(id),
-    api.prices(id),
-    madeUp ? Promise.resolve([]) : api.moves(id),
-  ])
+  const [detail, ticks, prices, moves] = await Promise.allSettled([api.market(id), api.ticks(id), api.prices(id), api.moves(id)])
   if (detail.status === 'fulfilled') store.setDetail(detail.value)
   if (ticks.status === 'fulfilled') store.setTicks(id, ticks.value)
   if (prices.status === 'fulfilled') store.setPrices(id, prices.value)
-  if (moves.status === 'fulfilled') store.setMoves(id, moves.value)
+  // a backend without moves must not leave the tab loading for ever
+  store.setMoves(id, moves.status === 'fulfilled' ? moves.value : (useStore.getState().moves[id] ?? []))
 }

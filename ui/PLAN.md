@@ -96,10 +96,10 @@ ui/
 ### `lib/types.ts`
 Mirror the spec exactly: `MarketSummary`, `MarketDetail` (+ `related`, `sources`, `rules`,
 `queries`), `Tick`, `PricePoint`, `Record`, `StreamEvent` (union of `tick`, `tick_update`,
-`price`, `move`, `market`, `page_check`). `Tick` gains `rule: RuleRef | null`
+`price`, `move`, `market`, `page_check`). `Tick` has `rule: RuleRef | null`
 (`{ start, end, text, confidence }`, character positions in the market's `rules`). `Move` is
-`{ id, market_id, ts, since, from, to, cause: Tick | null, confidence: number | null, rule: RuleRef | null }`.
-`MarketDetail` gains `companies: string[]`.
+`{ id, market_id, ts, since, from, to, summary, explained, asked, cause, closest, confidence, rule, related }`.
+`MarketDetail` has `companies: string[]` and `pages: WatchedPage[]`.
 
 ### `lib/api.ts`
 - Base URL from `VITE_API_URL` (default `http://localhost:18911`, the real backend).
@@ -123,8 +123,7 @@ Mirror the spec exactly: `MarketSummary`, `MarketDetail` (+ `related`, `sources`
 Plain normalized store: `markets: Record<id, MarketSummary>`, `detail`, `ticks: Record<id, Tick[]>`
 (capped at 500, newest first), `prices: Record<id, PricePoint[]>`, `moves: Record<id, Move[]>`
 (newest first), `selectedId`, `ask` (query, steps[], error). First paint for a market =
-`GET /markets/{id}` + `/ticks` + `/prices` + `/moves`, then the stream keeps it current. Made-up
-markets have no moves: skip the request for them.
+`GET /markets/{id}` + `/ticks` + `/prices` + `/moves`, then the stream keeps it current.
 
 ## Components (what each one must get right)
 
@@ -137,9 +136,9 @@ markets have no moves: skip the request for them.
 | **AskStage** | The ask, as a sequence on the main stage. (1) The question takes over the centre panel: the judge's words large, a clock to a tenth of a second, and a Context.dev meter (credits spent on this question, from `GET /status`). (2) The markets found drop in as cards (`found contracts` carries one per market: venue, title, price); on `picked` the winner lifts out and the rest step back. Errors show here with the backend's text. (3) The question fades, the market opens and its week of price history is wiped in left to right. A strip over the chart shows the search phrases as chips (`finding sources` carries them), then "Found 148 items. Scoring the 50 most relevant." (`scoring`). (4) Items land on the tape as they are scored: the backend streams each one, so this is live, not staged; each row opens in place so the rows under it glide down. (5) On `ready` the strip ends on one line: "Read 148 items in 24 seconds. 10 made the tape, 4 are calls. Market says 25%." A market tracked before answers at once and goes straight to the closing line. Every animation is CSS (transform, opacity, grid rows), not timers, so it stays smooth on a slow or throttled page. |
 | **MicBar** | Only on made-up markets. Web Speech API `SpeechRecognition` (Chrome), continuous, final results only → `POST /ticks {kind: "mic"}`. Shows the live transcript. If recognition is unavailable or the hall is loud, `TypeTickBox` is the fallback (same endpoint, `kind: "typed"`). |
 | **RelatedContracts** | Other deadlines / the other venue, with prices; "track" button promotes one to its own market via its link. |
-| **MovesPanel** (new tab, first in the row, real markets only) | "Why did it move?": one row per move, newest first: `24% → 20%` in the move's colour, the time span, then `likely cause (65%)` with the cause's source logo and headline, and the rule sentence quoted beneath. A move with no cause says "no cause found on the web" in grey; never hide it. Click a row's cause → the tape scrolls to it; click its rule → the Rules tab opens on that sentence. |
+| **MovesPanel** (first tab, every market) | "Why did it move?": an **Explain today's move** button, then one row per move, newest first: `24% → 20%` in the move's colour and the backend's `summary` sentence. Beneath it the "likely cause" (explained) or the "closest news" (not explained), the related contracts that moved with it, and the rule sentence. Click the item → the tape scrolls to it; click the rule → the Rules tab opens on that sentence. |
 | **RulesPanel** | The rules text with every sentence that some tick's `rule` points at highlighted in place (`start`/`end`), tinted by how many ticks cite it. Clicking a tick's rule quote on the tape opens this tab scrolled to that sentence. |
-| **SourcesPanel** | `sources` from detail: where ticks came from, ticks and moved counts. Shows the judges the terminal found these by itself. |
+| **SourcesPanel** | Leads with the watched page when there is one (see below). Then `sources` from detail: where ticks came from, ticks and moved counts. Shows the judges the terminal found these by itself. |
 | **RecordCard / RecordView** | The three numbers from `/record` as large figures plus a hit-rate bar. Full-screen view for beat 4. |
 | **KeyPrompt** | Modal asking for the write key on first write or 401; stored locally. |
 
@@ -149,37 +148,50 @@ Main gained three things the screen does not show yet. All are in the spec's "In
 frontend"; the mock backend (`mock/server.mjs`) needs the same additions first so they can be built
 without the real one.
 
-### Why did it move? (`move` event, `GET /markets/{id}/moves`)
+### Why did it move? (`move` event, `GET /markets/{id}/moves`, `POST /markets/{id}/why`)
 
-The terminal used to go only from the web to the price. Now, when a real market's price jumps 3 points
-within 10 minutes, the backend searches at once and names the likeliest cause, or says there is none.
-This is the strongest answer to the challenge ("reacts to the live web") and to the trader's first
-question on seeing any chart, so it gets three places on screen:
+The terminal also goes from the price back to the web. Two ways in:
 
-- **On the chart:** a shaded vertical band over `since`…`ts`, green or red by direction, with a small
-  `?` handle at its top. Hover → "24% → 20% · likely cause (65%): reuters.com: headline". Click →
-  opens the Moves tab on that row. A move with no cause gets a grey band.
-- **In the Moves tab:** the list described under Components.
-- **Live moment:** when a `move` event arrives for the market on screen, a banner slides over the
-  top of the chart for ~8 s: **"Why did it move?  24% → 20%"**, then a second line that types in a
-  few seconds later with the cause. The backend sends the event only after it has searched, so the
-  banner arrives complete; the two-step reveal is ours, to make the answer land.
+- **A jump.** A real market moves 3 points within 10 minutes; the backend searches at once and stores a move.
+- **On request.** `POST /markets/{id}/why` explains the market's change over the last day, now, for any
+  market (made-up ones too). A few seconds; the answer is a move with `asked: true`, also sent as a `move` event.
 
-Rules: the band uses the verdict colours because a move is an up or a down, which keeps "colour means
-direction" intact. Show `confidence` as a percentage next to the cause, and say "likely cause", never
-"cause": it is the model's pick among what was found.
+What a move says matters more than how it looks. Measured on 14 Nov, 10 of 11 jumps had no news behind
+them: thin markets move on trades. So a move is honest by construction, and the screen shows it the way the
+backend means it:
+
+- `summary` is the move in one or two plain sentences and is enough by itself. Show it as it is.
+- `explained: true` → `cause` is the item taken as the reason: label it "likely cause", with the `rule` it touches.
+- `explained: false` → `closest` is only the nearest item: label it "closest news", never as the reason.
+  `related` names the related contracts that moved over the same stretch, which is often the whole story
+  ("a contract falling while its rival rises").
+- No confidence figure is shown on a move or on a rule: a closest item or closest rule can be weak, and a
+  small percentage beside it reads as the terminal doubting itself.
+
+On screen: a shaded band over each jump on the chart (grey when not explained; none for an asked move,
+which spans the whole day), the "Why did it move?" tab listing each move by its summary with an
+**Explain today's move** button, and a banner over the chart when a move arrives. The button is the demo
+moment: it does not wait for one of the ten jumps a day.
 
 ### The rules sentence behind a tick (`tick.rule`, `move.rule`)
 
-Decision 1 now picks the exact sentence of the market's rules that makes an item matter. It is set on
-spoken and typed ticks and on ticks that call a move.
+Decision 1 picks the exact sentence of the market's rules that makes an item matter. It is set only on
+ticks called up or down, never on "no effect". For a spoken or typed sentence it is the closest sentence
+however weak (a person who typed it is watching for it); for an item from the web only a sentence that
+stands out. Shown as a one-line `§` quote on the tape and highlighted in place in the Rules tab.
 
-- **Tape:** a one-line quote under the headline, faint, with a `§` mark: `§ "If it becomes impossible
-  for…"`. Full sentence on hover.
-- **Rules tab:** highlighted in place, as under Components.
-- **Demo market:** this matters most in beat 1. When a judge says something, the screen shows not
-  only UP or DOWN but which line of the rules their sentence touched. It answers "why did it score
-  that?" without anyone asking.
+### The watched page (`detail.pages`, `page_check` event, `page` ticks)
+
+Each market has one page a Context.dev monitor checks every ten minutes: the page most likely to change
+when the outcome is decided (a newsroom, a results page, a Wikipedia article). It needs the backend to
+have a public address (`PUBLIC_URL`), so it shows on the deployed instance, not on a laptop. The Sources tab
+leads with it: title, "checked 3m ago", "changed 2h ago", updated live by `page_check`. A change that bears
+on the market lands on the tape as a `PAGE` tick. This is the judges' own product watching the web for us.
+
+### Resetting the demo market (`POST /markets/mu-demo/reset`)
+
+After a rehearsal the demo market goes back to 20% with an empty tape. A small two-click "Reset" beside the
+mic on the demo market; the `reset` market event clears the tape, chart and moves on every open screen.
 
 ### Truth Social (`post` ticks from `truthsocial.com/@realDonaldTrump`)
 

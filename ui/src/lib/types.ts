@@ -23,6 +23,15 @@ export interface Source {
   moved: number
 }
 
+/** A page a Context.dev monitor checks every ten minutes; a change that bears on the market becomes a `page` tick. */
+export interface WatchedPage {
+  url: string
+  title: string | null
+  /** Null until the first check, and until the first change. */
+  checked_ts: number | null
+  changed_ts: number | null
+}
+
 /** A sentence of a market's rules: `start` and `end` are character positions in its `rules` text. */
 export interface RuleRef {
   start: number
@@ -37,7 +46,8 @@ export interface MarketDetail extends MarketSummary {
   companies?: string[]
   queries: string[] | null
   related: MarketSummary[]
-  pages: unknown[]
+  /** The page Context.dev watches for this market; empty until one is found (needs a public backend address). */
+  pages: WatchedPage[]
   sources: Source[]
 }
 
@@ -61,11 +71,23 @@ export interface Tick {
   backfill: boolean
   likes: number | null
   replies: number | null
-  /** The rules sentence that makes this tick matter: on spoken and typed ticks and on ticks that call a move. */
+  /** The rules sentence that makes this tick matter: only on ticks called up or down. For a spoken or typed
+   * one it is the closest sentence, however weak, so its confidence is not shown. */
   rule?: RuleRef | null
 }
 
-/** "Why did it move?": the price went from `from` at `since` to `to` at `ts`. Real markets only. */
+/** A related contract that moved over the same stretch as a move: often the whole story when no news explains it. */
+export interface MovedWith {
+  id: string
+  title: string
+  from: number
+  to: number
+}
+
+/**
+ * "Why did it move?": the price went from `from` at `since` to `to` at `ts`. Either a jump the terminal saw
+ * itself, or (`asked`) the market's last day, explained on request.
+ */
 export interface Move {
   id: number
   market_id: string
@@ -73,10 +95,18 @@ export interface Move {
   since: number
   from: number
   to: number
-  /** The tick named as the most likely reason; null when nothing published around the move explains it. */
+  /** The move in plain words, enough to show by itself. */
+  summary: string
+  /** Whether an item is taken as the reason: then it is `cause`; otherwise `closest` holds the nearest item. */
+  explained: boolean
+  /** Explained on request (the last day), not a jump the terminal saw. */
+  asked: boolean
   cause: Tick | null
+  /** The nearest item when nothing explains the move: "closest news", never the reason. */
+  closest: Tick | null
   confidence: number | null
   rule: RuleRef | null
+  related: MovedWith[]
 }
 
 export interface PricePoint {
@@ -136,4 +166,4 @@ export type StreamEvent =
   | { type: 'price'; data: PriceEvent }
   | { type: 'move'; data: Move }
   | { type: 'market'; data: MarketEvent }
-  | { type: 'page_check'; data: { market_id: string } & Record<string, unknown> }
+  | { type: 'page_check'; data: { market_id: string; url: string; ts: number; changed: boolean } }
