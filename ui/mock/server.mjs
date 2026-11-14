@@ -452,6 +452,7 @@ async function fill(id, words) {
   const found = Math.round(rand(90, 190))
   send('market', { market_id: id, status: 'scoring', found })
   const shown = Math.round(rand(8, 18))
+  const calls = []
   for (let i = 0; i < shown; i++) {
     await sleep(rand(120, 520)) // scored ten at a time: they land in uneven bursts
     if (!markets.has(id)) return
@@ -460,8 +461,23 @@ async function fill(id, words) {
       published_ts: now() - rand(1800, 3 * 86400), headline: pick(LIVE_HEADLINES[v]), source: pick(SOURCES) })
     if (v !== 'none' && Math.random() < 0.6) t.rule = ruleOf(m) // a call from the web names its rule when one stands out
     emitTick(t)
+    if (v !== 'none') calls.push(t)
   }
-  if (m.venue === 'made_up' && latest(id) == null) emitPrice(id, rand(10, 60)) // starting odds from the coverage found
+  if (m.venue === 'made_up' && latest(id) == null) {
+    // Like the backend: starting odds from the coverage found, and before them the path the coverage took
+    // there, each dated call undone in turn back from the odds. Sent oldest first, the starting odds last.
+    const start = now()
+    const odds = rand(10, 60)
+    const path = []
+    let price = odds
+    for (const t of calls.sort((a, b) => b.published_ts - a.published_ts)) {
+      path.push([t.published_ts, price])
+      price = nudge(price, -t.strength)
+    }
+    if (path.length) path.push([path[path.length - 1][0] - 3600, price])
+    for (const [ts, value] of path.reverse()) emitPrice(id, value, ts)
+    emitPrice(id, odds, start)
+  }
   send('market', { market_id: id, status: 'ready', ticks: found })
 }
 

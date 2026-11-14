@@ -41,8 +41,11 @@ export function App() {
   // a question fills the centre of the screen: the tape of the market behind it would only distract
   const asking = useStore((s) => s.ask != null && !s.ask.opened && !s.ask.error)
   const pending = useStore((s) => (id ? s.pending[id] : undefined))
-  // nobody has said anything to this made-up market yet: tell the judge to talk
-  const silent = Boolean(market?.made_up && ticks && !ticks.some((t) => t.test) && !pending?.length)
+  // Nobody has said anything to this made-up market yet, and it has no chart to show: tell the judge to talk.
+  // A made-up market whose coverage drew it a chart shows the chart: the prompt used to cover it until
+  // someone typed, so the news found for a question never showed as a line. One price is not a line yet.
+  const charted = (prices?.length ?? 0) > 1
+  const silent = Boolean(market?.made_up && ticks && !ticks.some((t) => t.test) && !pending?.length && !charted)
 
   return (
     <div className="flex h-full flex-col">
