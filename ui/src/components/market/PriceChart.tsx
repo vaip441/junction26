@@ -149,8 +149,20 @@ export function PriceChart({ marketId }: { marketId: string }) {
       if (t) focusTick(t.id)
     })
 
+    // The chart has no width until its box is laid out, and a fit made then squeezes a short history into a
+    // sliver. Fit again whenever the box changes width (first layout, window resize, presentation mode).
+    let width = 0
+    const resized = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry.contentRect.width)
+      if (w === width) return
+      width = w
+      if (w > 0 && fitted.current) c.timeScale().fitContent()
+    })
+    resized.observe(box.current)
+
     const leadMap = leads.current
     return () => {
+      resized.disconnect()
       leadMap.clear()
       c.remove()
       chart.current = null

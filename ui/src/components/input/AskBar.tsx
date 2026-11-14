@@ -15,7 +15,12 @@ export function AskBar() {
     e.preventDefault()
     const query = text.trim()
     if (!query || working) return
+    // leave the field while it works (it is disabled, and a disabled field with focus swallows every key),
+    // so P, R and the number keys work again as soon as the question is sent
+    const input = document.getElementById(ASK_INPUT_ID)
+    input?.blur()
     if (await askFor(query)) setText('')
+    else input?.focus() // it failed: back in the field, ready to fix the question
   }
 
   return (
