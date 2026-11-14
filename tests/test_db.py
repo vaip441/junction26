@@ -130,3 +130,19 @@ def test_a_markets_subreddits_are_those_whose_posts_were_shown_most():
         add_tick(db, tick(key=str(i), kind="post", source=source, hidden=hidden))
     add_tick(db, tick("n", key="z", kind="post", source="reddit.com/r/elsewhere"))
     assert subreddits(db, "m") == ["nvidia", "hardware"] and subreddits(db, "m", limit=1) == ["nvidia"]
+
+
+def test_a_tick_whose_page_turns_out_to_be_days_old_becomes_history():
+    from terminal.db import set_published
+
+    db = connect(":memory:")
+    market(db)
+    found = 1_000_000.0
+    add_tick(db, tick(key="a", url="https://a.example/old", ts=found))
+    add_tick(db, tick(key="b", url="https://a.example/fresh", ts=found))
+    add_tick(db, tick(key="c", url="https://a.example/unknown", ts=found))
+    [old] = set_published(db, "https://a.example/old", found - 3 * 86400)  # learned later, from the batch lookup
+    assert old["backfill"] is True  # and the frontend is told with the same update
+    assert set_published(db, "https://a.example/fresh", found - 3600)[0]["backfill"] is False
+    set_published(db, "https://a.example/unknown", None)
+    assert {t["dedupe_key"]: t["backfill"] for t in ticks(db, "m")} == {"a": True, "b": False, "c": False}

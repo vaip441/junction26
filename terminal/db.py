@@ -171,7 +171,9 @@ def set_published(db, url: str, ts: float | None) -> list[dict]:
     """Record what reading an address found, on every tick that has it. Returns the shown ticks that gained a time."""
     gained = [] if ts is None else [r["id"] for r in db.execute(
         "SELECT id FROM ticks WHERE url = ? AND published_ts IS NULL AND hidden = 0", (url,))]
-    db.execute("UPDATE ticks SET published_ts = COALESCE(published_ts, ?), date_checked = 1 WHERE url = ?", (ts, url))
+    # a page more than a day older than the moment it was found is history, not a live tick
+    db.execute("UPDATE ticks SET published_ts = COALESCE(published_ts, ?), date_checked = 1,"
+               " backfill = backfill OR COALESCE(COALESCE(published_ts, ?) < ts - 86400, 0) WHERE url = ?", (ts, ts, url))
     return [_tick(db.execute("SELECT * FROM ticks WHERE id = ?", (id,)).fetchone()) for id in gained]
 
 
