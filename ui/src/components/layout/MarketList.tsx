@@ -1,6 +1,6 @@
 import { useShallow } from 'zustand/react/shallow'
 import { selectMarketList, useStore } from '../../state/store'
-import { VenueBadges } from '../common/Badge'
+import { Badge, VenueBadges } from '../common/Badge'
 import { EmptyState } from '../common/EmptyState'
 import { Points, Price } from '../common/Price'
 
@@ -26,6 +26,7 @@ export function MarketList() {
             <span className="line-clamp-2 text-xs leading-snug text-text">{m.title}</span>
             <span className="flex items-center gap-2">
               <VenueBadges market={m} />
+              {m.replay && <Badge tone="accent">Replay</Badge>}
               <Price value={m.price} flash className="text-sm font-semibold" />
               {m.change_24h != null && <Points value={m.change_24h} className="text-xs" />}
             </span>

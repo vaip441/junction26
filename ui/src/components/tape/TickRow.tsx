@@ -25,21 +25,24 @@ export function TickRow({
   life,
   move,
   now,
+  playing = false,
 }: {
   tick: Tick
   life: Lifecycle | null
   move?: Move
   now: number
+  /** A replay is playing: every row that appears is arriving, however fast its clock runs. */
+  playing?: boolean
 }) {
   const showRule = useStore((s) => s.showRule)
   const setTab = useStore((s) => s.setTab)
   const at = tickTime(tick)
   const quiet = tick.verdict === 'none'
   // arrived in the last few seconds: animate the decision (first paint of history stays still)
-  const fresh = !tick.backfill && now - tick.ts < 15
+  const fresh = !tick.backfill && (playing || now - tick.ts < 15)
   // found in the last few seconds, live news or earlier coverage alike: the row opens up in place, so the
   // rows under it glide down (history already here on first paint stays still)
-  const arrived = now - tick.ts < 12
+  const arrived = playing || now - tick.ts < 12
   return (
     <li id={`tick-${tick.id}`} className={`grid ${arrived ? 'row-in' : ''}`}>
       <div
@@ -54,7 +57,7 @@ export function TickRow({
         <Badge tone={tick.test ? 'madeup' : 'neutral'}>{KIND_LABEL[tick.kind]}</Badge>
         {tick.backfill && <Badge>Earlier</Badge>}
         <span className="ml-auto shrink-0 text-[11px] text-faint" title={absoluteTime(at)}>
-          {timeAgo(at)}
+          {timeAgo(at, now)}
         </span>
       </div>
       <p className={`text-sm leading-snug ${quiet ? 'line-clamp-1 text-muted' : 'line-clamp-3 text-text'}`}>

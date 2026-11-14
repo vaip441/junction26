@@ -19,6 +19,7 @@ export function Tape({
   pending?: PendingTick[]
 }) {
   const now = useNow()
+  const playing = useStore((s) => s.replay != null && s.replay.id === s.selectedId)
   const moves = useStore((s) => (s.selectedId ? s.moves[s.selectedId] : undefined))
   // the tick each move names as its cause carries a badge; the newest move wins when a tick caused two
   const caused = useMemo(() => {
@@ -36,7 +37,7 @@ export function Tape({
         <PendingRow key={`p${p.key}`} p={p} />
       ))}
       {ticks.map((t) => (
-        <TickRow key={t.id} tick={t} life={tickLifecycle(t, prices, madeUp, now)} move={caused.get(t.id)} now={now} />
+        <TickRow key={t.id} tick={t} life={tickLifecycle(t, prices, madeUp, now)} move={caused.get(t.id)} now={now} playing={playing} />
       ))}
     </ul>
   )

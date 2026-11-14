@@ -1,10 +1,11 @@
 import { useEffect } from 'react'
 import { ASK_INPUT_ID } from '../components/input/AskBar'
+import { playReplay, stopReplay } from '../lib/replay'
 import { useStore } from '../state/store'
 
 /**
- * Stage control from the keyboard: / ask, R record, W why-did-it-move tab, P presentation, Space mic (made-up markets), 1-9 jump to a
- * market, Esc leaves presentation. Ignored while typing in a field, except Esc, which leaves the field.
+ * Stage control from the keyboard: / ask, R record, W why-did-it-move tab, P presentation, Space mic (made-up markets)
+ * or play/stop (replays), 1-9 jump to a market, Esc leaves presentation. Ignored while typing in a field, except Esc, which leaves the field.
  */
 export function useHotkeys(): void {
   useEffect(() => {
@@ -33,6 +34,12 @@ export function useHotkeys(): void {
       else if (e.key === 'w' || e.key === 'W') s.setTab('moves')
       else if (e.key === ' ') {
         const m = s.selectedId ? s.markets[s.selectedId] : undefined
+        if (m?.replay) {
+          e.preventDefault()
+          if (s.replay) stopReplay()
+          else void playReplay(m.id)
+          return
+        }
         if (!m?.made_up) return
         e.preventDefault()
         s.setMic(!s.micOn)

@@ -18,6 +18,15 @@ export interface MarketSummary {
   ticks_today: number
   made_up: boolean
   poll_seconds: number
+  /** A finished market the screen can play back: when its last hours ran and how it ended. Null for a live market.
+   *  Its price, ticks and prices are served whole, as of its last minute. */
+  replay?: Replay | null
+}
+
+export interface Replay {
+  start: number
+  end: number
+  outcome: 'yes' | 'no'
 }
 
 export interface Consensus {

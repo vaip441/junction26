@@ -144,6 +144,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const moves = useStore((s) => s.moves[marketId])
   const market = useStore((s) => s.markets[marketId])
   const presentation = useStore((s) => s.presentation)
+  // a replay playing on this chart: how many prices the whole of it holds
+  const replayTotal = useStore((s) => (s.replay?.id === marketId ? s.replay.total : null))
   const now = useNow(5000)
 
   // create once
@@ -159,7 +161,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
       rightPriceScale: { borderColor: line, scaleMargins: { top: 0.2, bottom: 0.15 } },
       timeScale: { borderColor: line, timeVisible: true, secondsVisible: false, rightOffset: RIGHT_OFFSET },
       crosshair: { vertLine: { color: text, labelBackgroundColor: line }, horzLine: { color: text, labelBackgroundColor: line } },
-      localization: { priceFormatter: (p: number) => pct(p) },
+      // the scale leaves room above the line, which at 100% would be labelled 110% and 120%
+      localization: { priceFormatter: (p: number) => (p > 100 || p < 0 ? '' : pct(p)) },
     })
     const s = c.addSeries(AreaSeries, {
       lineColor: fg,
@@ -246,11 +249,15 @@ export function PriceChart({ marketId }: { marketId: string }) {
     if (!area.current || !chart.current) return
     area.current.setData(data)
     view.current.data = data
-    if (data.length > 1 && fitted.current !== marketId) {
+    if (replayTotal) {
+      // the axis spans the whole replay from its first frame, so the line is drawn across it left to right
+      chart.current.timeScale().setVisibleLogicalRange({ from: 0, to: replayTotal - 1 + RIGHT_OFFSET })
+      fitted.current = null // once it is over the view is fitted again, to the range picked before
+    } else if (data.length > 1 && fitted.current !== marketId) {
       showRange(chart.current, data, view.current.range)
       fitted.current = marketId
     }
-  }, [data, marketId])
+  }, [data, marketId, replayTotal])
 
   const pickRange = (id: RangeId) => {
     setRange(id)
@@ -388,7 +395,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
           <div className="chart-wipe absolute inset-0" />
         </div>
       )}
-      {!empty && data.length > 1 && (
+      {!empty && data.length > 1 && !replayTotal && (
         <div role="group" aria-label="Chart range" className="absolute left-2 top-2 z-10 flex gap-0.5 rounded border border-line bg-panel/90 p-0.5">
           {RANGES.map((r) => {
             const available = r.id === 'all' || r.seconds < span

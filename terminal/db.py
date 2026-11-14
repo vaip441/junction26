@@ -10,7 +10,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS markets (
     id TEXT PRIMARY KEY, venue TEXT NOT NULL, venue_ref TEXT, title TEXT NOT NULL, rules TEXT NOT NULL,
     url TEXT, lead_id TEXT, queries TEXT NOT NULL DEFAULT '[]', poll_seconds INTEGER NOT NULL DEFAULT 900,
-    filled INTEGER NOT NULL DEFAULT 0, companies TEXT, twin_id TEXT,
+    filled INTEGER NOT NULL DEFAULT 0, companies TEXT, twin_id TEXT, replay TEXT,
     created_ts REAL NOT NULL DEFAULT (unixepoch('subsec')));
 CREATE TABLE IF NOT EXISTS prices (
     market_id TEXT NOT NULL, ts REAL NOT NULL, price REAL NOT NULL, PRIMARY KEY (market_id, ts));
@@ -51,6 +51,8 @@ def connect(path: str) -> sqlite3.Connection:
         db.execute("ALTER TABLE markets ADD COLUMN companies TEXT")
     if "twin_id" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov 13:00
         db.execute("ALTER TABLE markets ADD COLUMN twin_id TEXT")
+    if "replay" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov 17:00
+        db.execute("ALTER TABLE markets ADD COLUMN replay TEXT")
     if "title_key" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov noon
         db.execute("ALTER TABLE ticks ADD COLUMN title_key TEXT")
         db.execute("ALTER TABLE ticks ADD COLUMN rule TEXT")
@@ -72,7 +74,9 @@ def connect(path: str) -> sqlite3.Connection:
 
 def _market(row) -> dict | None:
     return row and {**row, "queries": json.loads(row["queries"]), "filled": bool(row["filled"]),
-                    "companies": row["companies"] and json.loads(row["companies"])}  # None: not asked for yet
+                    "companies": row["companies"] and json.loads(row["companies"]),  # None: not asked for yet
+                    # a finished market played back (see replay.py): when it ran and how it ended; None for a live one
+                    "replay": row["replay"] and json.loads(row["replay"])}
 
 
 def _tick(row) -> dict:
@@ -80,10 +84,12 @@ def _tick(row) -> dict:
             "rule": row["rule"] and json.loads(row["rule"])}
 
 
-def add_market(db, *, id, venue, venue_ref, title, rules, url, lead_id=None, queries=(), poll_seconds=900) -> dict:
-    db.execute("INSERT OR IGNORE INTO markets (id, venue, venue_ref, title, rules, url, lead_id, queries, poll_seconds)"
-               " VALUES (?,?,?,?,?,?,?,?,?)",
-               (id, venue, venue_ref, title, rules, url, lead_id, json.dumps(list(queries)), poll_seconds))
+def add_market(db, *, id, venue, venue_ref, title, rules, url, lead_id=None, queries=(), poll_seconds=900,
+               replay: dict | None = None) -> dict:
+    db.execute("INSERT OR IGNORE INTO markets (id, venue, venue_ref, title, rules, url, lead_id, queries, poll_seconds,"
+               " replay) VALUES (?,?,?,?,?,?,?,?,?,?)",
+               (id, venue, venue_ref, title, rules, url, lead_id, json.dumps(list(queries)), poll_seconds,
+                replay and json.dumps(replay)))
     return get_market(db, id)
 
 
@@ -147,7 +153,12 @@ def related(db, lead_id: str) -> list[dict]:
 
 
 def all_priced(db) -> list[dict]:
-    return [_market(r) for r in db.execute("SELECT * FROM markets WHERE venue != 'made_up'")]
+    """Every contract whose price a venue is asked for: not the made-up ones, and not the replays, which are over."""
+    return [_market(r) for r in db.execute("SELECT * FROM markets WHERE venue != 'made_up' AND replay IS NULL")]
+
+
+def replay_ids(db) -> list[str]:
+    return [r["id"] for r in db.execute("SELECT id FROM markets WHERE replay IS NOT NULL")]
 
 
 def add_price(db, market_id: str, ts: float, price: float) -> None:

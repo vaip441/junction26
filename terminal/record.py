@@ -8,7 +8,7 @@ from terminal import db as store
 
 ELIGIBLE = """
 SELECT t.market_id, t.ts, t.verdict, t.price_at FROM ticks t JOIN markets m ON m.id = t.market_id
-WHERE t.verdict IN ('up', 'down') AND t.test = 0 AND t.backfill = 0 AND m.venue != 'made_up'
+WHERE t.verdict IN ('up', 'down') AND t.test = 0 AND t.backfill = 0 AND m.venue != 'made_up' AND m.replay IS NULL
   AND t.price_at IS NOT NULL AND t.ts + ? <= ?
 """
 

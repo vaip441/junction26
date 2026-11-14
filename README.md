@@ -43,6 +43,18 @@ A market tracked just now starts with the venue's last week of prices, about one
 (`terminal/venues/`), so its chart is not empty and the news found for it has a price to stand on.
 From then on the terminal samples the price itself.
 
+**Replays.** Three finished markets can be played back on the screen (the Replay button, or Space): Lula's
+runoff night, control of the US Senate, and the Texas Senate race. Each is the market's real prices, one
+a minute, and the most-liked Bluesky posts of every half hour of those hours, each scored the way a live
+post is: the model is told the date, the price at that minute and the posts before it, and nothing later.
+The tape then judges every call against the price 15 minutes on, as it does live. Posts and not news
+pages, because a post cannot be edited: a news page's headline is rewritten once the result is known,
+which would hand the model the ending. `scripts/make_replay.py` builds them into `replays/`, and the
+service loads that folder when it starts (`terminal/replay.py`); nothing polls or changes a replay, and
+its calls stay out of the weekend record. Rebuild them with
+
+    PYTHONPATH=. uv run --env-file .env python scripts/make_replay.py
+
 Prices are percentages from 0 to 100 and times are unix seconds, everywhere.
 
 ## Run it

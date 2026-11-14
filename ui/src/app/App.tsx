@@ -11,6 +11,7 @@ import { MarketHeader } from '../components/market/MarketHeader'
 import { MoveBanner } from '../components/market/MoveBanner'
 import { MarketTabs } from '../components/market/MarketTabs'
 import { PriceChart } from '../components/market/PriceChart'
+import { ReplayBar } from '../components/market/ReplayBar'
 import { RecordCard } from '../components/record/RecordCard'
 import { RecordView } from '../components/record/RecordView'
 import { Tape } from '../components/tape/Tape'
@@ -72,6 +73,7 @@ export function App() {
           {market && id ? (
             <>
               <MarketHeader market={market} />
+              {market.replay && <ReplayBar key={id} market={market} replay={market.replay} />}
               <div className="relative min-h-64 flex-1 p-4 max-lg:h-80 max-lg:flex-none">
                 <PriceChart marketId={id} />
                 {!market.made_up && <MoveBanner marketId={id} />}
@@ -82,7 +84,7 @@ export function App() {
                   </div>
                 )}
               </div>
-              {!presentation && <MarketTabs marketId={id} madeUp={market.made_up} detail={detail} />}
+              {!presentation && <MarketTabs marketId={id} madeUp={market.made_up || Boolean(market.replay)} detail={detail} />}
               {market.made_up && <SpeakBar marketId={id} />}
             </>
           ) : (

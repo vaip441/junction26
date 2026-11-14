@@ -332,6 +332,33 @@ idea): the instant-fill coverage is given to Decision 1 together with the questi
 and its probability for "yes" is the starting price. The demo market has no news to
 read, so it starts at a fixed 20%.
 
+### Replays
+
+Georg's idea (14 Nov): show a run on a finished market, the model's calls against what
+the price then did. Three markets are hardcoded in `scripts/make_replay.py`, each
+finished between 25 Oct and 4 Nov 2026: later than the scoring model is assumed to have
+been trained on (not verified), so it cannot know the ending. For each, the script takes
+Polymarket's price history at one price a minute and the most-liked Bluesky posts of
+every half hour that match the market's search words, and scores every post through the
+one path a live tick takes, in time order, in a store that holds only the prices up to
+that post. How many likes a post ended up with is the one thing used that was not known
+at the time; the model does not see it.
+
+Approaches considered: score live during the replay (the same on screen, with rate
+limits and latency in front of judges), or a finished chart only (less to watch). Chosen:
+stored, and played back by the screen itself. The result is a file in `replays/`; the
+service loads each as a market with `replay` set, which no loop polls, no route changes,
+and the weekend record leaves out. The screen plays it by feeding its own prices and
+ticks to itself against a clock, so the tape's "not priced in / priced in / faded"
+badges, the chart's lead lines and the edge flash all work as they do live.
+
+Sources tried and dropped: Google News gives only the day for an old story, and a
+story's current headline, written after the result. GDELT stamps to the quarter hour but
+saw the Brazil result hours late and refuses most requests. Reddit search refuses clients
+that are not logged in. A market that moves on one piece of news moves before anyone posts
+it (the US-Iran ceasefire fell from 90% to 6% ten minutes before the first post about the
+strikes), so the three chosen are nights where the news arrives in pieces.
+
 ### Storage
 
 One SQLite file with five tables: markets (related contracts are rows pointing at
@@ -361,6 +388,9 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   "venues": [{ "id", "venue", "price", "url" }, ...] }`: the middle of the two prices,
   how far apart they are, and the two contracts, this market first. Each one's later
   prices arrive as `price` events under its `id`.
+  A market also has `replay`: null, or for a finished market that the screen can play
+  back `{ "start", "end", "outcome": "yes" | "no" }`. A replay's price, ticks and prices
+  are served whole, as of its last minute, and every write to it answers 409.
 - `POST /markets` `{ "query": "<link or plain words>", "poll_seconds": 900 }`: returns
   the lead market now being tracked (the same shape as `GET /markets/{id}`) plus
   `"matched"`: true when it is a Kalshi or Polymarket contract, false when no market

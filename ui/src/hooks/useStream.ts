@@ -44,6 +44,7 @@ export function useStream(): void {
 /** First paint for one market: detail, ticks, prices and moves. The stream keeps them current afterwards. */
 export async function loadMarket(id: string): Promise<void> {
   const store = useStore.getState()
+  if (store.replay?.id === id) return // being played back: the whole of it would end the show
   const [detail, ticks, prices, moves] = await Promise.allSettled([api.market(id), api.ticks(id), api.prices(id), api.moves(id)])
   if (detail.status === 'fulfilled') store.setDetail(detail.value)
   if (ticks.status === 'fulfilled') store.setTicks(id, ticks.value)

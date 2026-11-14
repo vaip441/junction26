@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, moves, pages, poller, scoring, truth, venues
+from terminal import contextdev, madeup, match, moves, pages, poller, replay, scoring, truth, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -24,6 +24,7 @@ from terminal.seed import DEMO
 
 STATIC = Path(__file__).parent / "static"
 UI = Path(__file__).parent.parent / "ui" / "dist"  # the real screen, once built (see README)
+REPLAYS = Path(__file__).parent.parent / "replays"  # finished markets to play back (see replay.py)
 DAY = 86400
 MAX_RELATED = 5  # an event can hold over a hundred contracts; each one costs a price call a minute
 MAX_SHOWN = 6  # markets found for a question that are named to the frontend
@@ -73,12 +74,13 @@ def consensus(db, m: dict, price: float | None, now: float) -> dict | None:
 
 
 def summary(db, m: dict, now: float) -> dict:
+    now = m["replay"]["end"] if m["replay"] else now  # a replay is shown as of its last minute
     price, old = store.price_at(db, m["id"], now), store.price_at(db, m["id"], now - DAY)
     return {"id": m["id"], "venue": m["venue"], "title": m["title"], "url": m["url"], "price": price,
             "consensus": consensus(db, m, price, now),
             "change_24h": None if price is None or old is None else price - old,
             "ticks_today": store.count_shown(db, m["id"], now - DAY), "made_up": m["venue"] == "made_up",
-            "poll_seconds": m["poll_seconds"]}
+            "poll_seconds": m["poll_seconds"], "replay": m["replay"]}
 
 
 def detail(db, m: dict, now: float) -> dict:
@@ -89,7 +91,7 @@ def detail(db, m: dict, now: float) -> dict:
 
 
 def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: str | None = None,
-               ui: Path | None = None) -> FastAPI:
+               ui: Path | None = None, replays: Path | None = None) -> FastAPI:
     # Every route is `async def`: the store is one sqlite connection, and a plain `def` route would use it
     # from a worker thread while the background loops use it from the event loop.
     key = key if key is not None else os.environ.get("TERMINAL_KEY", "")
@@ -110,6 +112,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                              rules=DEMO["rules"], url=None)
             store.add_price(db, DEMO["id"], time.time(), DEMO["start"])
         store.set_poll_seconds(db, DEMO["id"], 0)  # it moves only by what is said to it, never by articles
+        if replays is not None:
+            replay.load(db, replays)
         app.state.wake = asyncio.Event()
         app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
         busy = set()  # markets being searched right now, by the article loop or behind a price move
@@ -140,6 +144,12 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(404, "no such market")
         return m
 
+    def live_or_409(id: str) -> dict:
+        m = market_or_404(id)
+        if m["replay"]:
+            raise HTTPException(409, "a replay only plays back: it takes no changes")
+        return m
+
     @app.get("/markets")
     async def markets():
         now = time.time()
@@ -152,7 +162,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     @app.delete("/markets/{id}", dependencies=[Depends(write_access)])
     async def delete_market(id: str):
         """Stop tracking a market: it, its related contracts, and their ticks and prices are removed."""
-        m = market_or_404(id)
+        m = live_or_409(id)
         if id == DEMO["id"]:
             raise HTTPException(409, "the demo market cannot be deleted")
         if m["lead_id"] is not None:
@@ -193,7 +203,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     @app.post("/markets/{id}/why", dependencies=[Depends(write_access)])
     async def why(id: str):
         """Why did this market move over the last day? Answers with a move, in about a second."""
-        move = await moves.why(app.state.db, app.state.bus, market_or_404(id))
+        move = await moves.why(app.state.db, app.state.bus, live_or_409(id))
         if move is None:
             raise HTTPException(409, "the price has not moved a point in the last day")
         return move
@@ -201,7 +211,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     @app.post("/markets/{id}/pair", dependencies=[Depends(write_access)])
     async def pair(id: str):
         """Look for the same question on the other venue; when it is there, the two prices become one consensus."""
-        m = market_or_404(id)
+        m = live_or_409(id)
         if m["venue"] == "made_up":
             raise HTTPException(409, "a made-up market is on no venue")
         try:
@@ -214,7 +224,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
 
     @app.post("/markets/{id}/ticks", dependencies=[Depends(write_access)])
     async def add_tick(id: str, body: TickIn):
-        m = market_or_404(id)
+        m = live_or_409(id)
         if m["venue"] == "made_up" and store.latest_price(app.state.db, id) is None:
             raise HTTPException(409, "this market is still opening, try again in a moment")
         tick = await ingest(app.state.db, app.state.bus, app.state.scorer, m, kind=body.kind,
@@ -405,4 +415,4 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     return app
 
 
-app = create_app(ui=UI)
+app = create_app(ui=UI, replays=REPLAYS)

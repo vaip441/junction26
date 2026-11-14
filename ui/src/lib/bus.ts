@@ -17,6 +17,11 @@ export function announceTick(t: Tick): void {
   for (const fn of listeners) fn(t)
 }
 
+/** Let ticks be announced again: a replay shows the same ticks every time it is played. */
+export function forgetTicks(ids: number[]): void {
+  for (const id of ids) seen.delete(id)
+}
+
 export function onNewTick(fn: Listener): () => void {
   listeners.add(fn)
   return () => {

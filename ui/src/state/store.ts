@@ -74,6 +74,8 @@ interface State {
   /** Latest streamed price of contracts that are not in the market list (related contracts). */
   otherPrices: Record<string, number>
   recordOpen: boolean
+  /** A replay being played back on this screen: the simulated time, and how many prices the whole of it holds. */
+  replay: { id: string; clock: number; total: number } | null
 
   setMarkets: (list: MarketSummary[]) => void
   setDetail: (d: MarketDetail) => void
@@ -101,6 +103,11 @@ interface State {
   setNeedKey: (on: boolean) => void
   setRecord: (r: WeekendRecord) => void
   toggleRecord: (open?: boolean) => void
+  /** Empty the market's tape and chart down to its first price, and start the replay's clock. */
+  startReplay: (id: string, first: PricePoint, clock: number, total: number) => void
+  /** One step of a replay: the prices so far, the ticks that just appeared (newest first), and the price to show big. */
+  replayFrame: (clock: number, prices: PricePoint[], added: Tick[], price: number | null) => void
+  endReplay: () => void
 }
 
 export const useStore = create<State>((set) => ({
@@ -124,6 +131,7 @@ export const useStore = create<State>((set) => ({
   record: null,
   otherPrices: {},
   recordOpen: false,
+  replay: null,
 
   setMarkets: (list) =>
     set((s) => ({
@@ -132,7 +140,11 @@ export const useStore = create<State>((set) => ({
       selectedId: s.selectedId && list.some((m) => m.id === s.selectedId) ? s.selectedId : (list[0]?.id ?? null),
     })),
   setDetail: (d) =>
-    set((s) => ({ details: { ...s.details, [d.id]: d }, markets: { ...s.markets, [d.id]: { ...s.markets[d.id], ...d } } })),
+    set((s) => ({
+      details: { ...s.details, [d.id]: d },
+      // while a replay plays, its price and tick count are the replay's own, not the backend's final ones
+      markets: s.replay?.id === d.id ? s.markets : { ...s.markets, [d.id]: { ...s.markets[d.id], ...d } },
+    })),
   setTicks: (id, ticks) => set((s) => ({ ticks: { ...s.ticks, [id]: ticks.slice(0, MAX_TICKS) } })),
   setPrices: (id, prices) => set((s) => ({ prices: { ...s.prices, [id]: prices } })),
   setMoves: (id, moves) => set((s) => ({ moves: { ...s.moves, [id]: moves.slice(0, MAX_MOVES) } })),
@@ -184,6 +196,32 @@ export const useStore = create<State>((set) => ({
   setNeedKey: (needKey) => set({ needKey }),
   setRecord: (record) => set({ record }),
   toggleRecord: (open) => set((s) => ({ recordOpen: open ?? !s.recordOpen })),
+  startReplay: (id, first, clock, total) =>
+    set((s) => {
+      const m = s.markets[id]
+      return {
+        replay: { id, clock, total },
+        ticks: { ...s.ticks, [id]: [] },
+        moves: { ...s.moves, [id]: [] },
+        prices: { ...s.prices, [id]: [first] },
+        markets: m ? { ...s.markets, [id]: { ...m, price: first.price, ticks_today: 0, change_24h: null } } : s.markets,
+      }
+    }),
+  replayFrame: (clock, prices, added, price) =>
+    set((s) => {
+      const r = s.replay
+      if (!r) return {}
+      const m = s.markets[r.id]
+      return {
+        replay: { ...r, clock },
+        prices: { ...s.prices, [r.id]: prices },
+        ticks: added.length ? { ...s.ticks, [r.id]: [...added, ...(s.ticks[r.id] ?? [])] } : s.ticks,
+        markets: m
+          ? { ...s.markets, [r.id]: { ...m, price: price ?? m.price, ticks_today: m.ticks_today + added.length } }
+          : s.markets,
+      }
+    }),
+  endReplay: () => set({ replay: null }),
 
   apply: (e) =>
     set((s) => {
