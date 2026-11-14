@@ -10,7 +10,23 @@ cp .env.example .env.local   # point VITE_API_URL at the backend
 npm run dev                  # http://localhost:5173
 ```
 
+### Without the backend
+
+```bash
+npm run dev:mock             # mock backend on :8765 + the UI pointed at it
+```
+
+`mock/server.mjs` serves the whole frontend interface with made-up data (every title starts with
+`MOCK`) and keeps the stream busy: prices drift, new ticks arrive every 12–25 s, and strong calls are
+often followed by a move their way. Spoken/typed ticks are scored from keywords ("great", "win" → up;
+"bad", "broken" → down) and move the demo market like the real one. Magic inputs reach the error
+states: ask `fail …` (502), `hello` (422), anything with `made up` (no contract, made-up market);
+type `fail503 …` (scoring down). `MOCK_PORT` moves the mock off 8765; `MOCK_KEY=secret` makes writes need the key; `MOCK_QUIET=1` stops the
+scripted ticks. Details at the top of `mock/server.mjs`.
+
 `npm run build` typechecks and builds into `dist/`; `npm run lint` runs oxlint.
 
-Done so far: build step 1 (scaffold, typed API client, one app-wide event stream, three-column shell
-with live market list, header and tape). Next: step 2 onward in PLAN.md.
+Done so far: build steps 1-4 (scaffold and stream; the price chart with every call pinned on it; typing or speaking moves the demo market, with a
+voice call-out of each verdict; hotkeys and presentation mode) plus these differentiators from PLAN.md:
+the tick lifecycle ("not priced in"), the decision bar, the pending scoring row, the judge prompt and the
+big-move flash and sound, lead-time lines on the chart. Next: step 5 (AskBar) onward.

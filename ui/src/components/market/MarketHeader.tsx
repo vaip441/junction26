@@ -1,6 +1,7 @@
 import type { MarketSummary } from '../../lib/types'
 import { VenueBadge } from '../common/Badge'
-import { Points, Price } from '../common/Price'
+import { AnimatedPrice } from '../common/AnimatedPrice'
+import { Points } from '../common/Price'
 
 export function MarketHeader({ market }: { market: MarketSummary }) {
   return (
@@ -20,7 +21,7 @@ export function MarketHeader({ market }: { market: MarketSummary }) {
         {market.price == null ? (
           <p className="text-sm text-muted">setting starting odds from coverage…</p>
         ) : (
-          <Price value={market.price} className="block text-5xl font-bold leading-none" />
+          <AnimatedPrice key={market.id} value={market.price} className="text-6xl font-bold leading-none" />
         )}
         <p className="mt-1 text-xs text-muted">
           <Points value={market.change_24h} /> 24h · <span className="num">{market.ticks_today}</span> ticks today

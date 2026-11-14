@@ -4,6 +4,15 @@ import type { MarketDetail, MarketEvent, MarketSummary, PricePoint, StreamEvent,
 
 const MAX_TICKS = 500
 
+/** A spoken or typed sentence sent for scoring, shown on the tape until its scored tick arrives. */
+export interface PendingTick {
+  key: number
+  text: string
+  kind: 'mic' | 'typed'
+}
+
+let pendingKey = 0
+
 interface State {
   markets: Record<string, MarketSummary>
   order: string[]
@@ -14,6 +23,13 @@ interface State {
   stream: StreamStatus
   /** Live `market` status steps for a plain-words question being worked on. */
   ask: { query: string; steps: MarketEvent[] } | null
+  pending: Record<string, PendingTick[]>
+  /** Stage controls. */
+  muted: boolean
+  micOn: boolean
+  presentation: boolean
+  /** A write was refused for want of the key: the key prompt is open. */
+  needKey: boolean
 
   setMarkets: (list: MarketSummary[]) => void
   setDetail: (d: MarketDetail) => void
@@ -24,6 +40,12 @@ interface State {
   startAsk: (query: string) => void
   clearAsk: () => void
   apply: (e: StreamEvent) => void
+  addPending: (marketId: string, text: string, kind: 'mic' | 'typed') => number
+  removePending: (marketId: string, key: number) => void
+  toggleMute: () => void
+  setMic: (on: boolean) => void
+  togglePresentation: (on?: boolean) => void
+  setNeedKey: (on: boolean) => void
 }
 
 export const useStore = create<State>((set) => ({
@@ -35,6 +57,11 @@ export const useStore = create<State>((set) => ({
   selectedId: null,
   stream: 'connecting',
   ask: null,
+  pending: {},
+  muted: false,
+  micOn: false,
+  presentation: false,
+  needKey: false,
 
   setMarkets: (list) =>
     set((s) => ({
@@ -50,6 +77,17 @@ export const useStore = create<State>((set) => ({
   setStream: (stream) => set({ stream }),
   startAsk: (query) => set({ ask: { query, steps: [] } }),
   clearAsk: () => set({ ask: null }),
+  addPending: (marketId, text, kind) => {
+    const key = ++pendingKey
+    set((s) => ({ pending: { ...s.pending, [marketId]: [{ key, text, kind }, ...(s.pending[marketId] ?? [])] } }))
+    return key
+  },
+  removePending: (marketId, key) =>
+    set((s) => ({ pending: { ...s.pending, [marketId]: (s.pending[marketId] ?? []).filter((p) => p.key !== key) } })),
+  toggleMute: () => set((s) => ({ muted: !s.muted })),
+  setMic: (micOn) => set({ micOn }),
+  togglePresentation: (on) => set((s) => ({ presentation: on ?? !s.presentation })),
+  setNeedKey: (needKey) => set({ needKey }),
 
   apply: (e) =>
     set((s) => {
@@ -59,7 +97,11 @@ export const useStore = create<State>((set) => ({
           const list = s.ticks[t.market_id] ?? []
           if (list.some((x) => x.id === t.id)) return {}
           const m = s.markets[t.market_id]
+          // the scored version of a sentence we sent replaces its pending row (the POST may still be in flight)
+          const waiting = s.pending[t.market_id] ?? []
+          const match = t.test ? waiting.find((p) => p.text.trim() === t.headline.trim()) : undefined
           return {
+            pending: match ? { ...s.pending, [t.market_id]: waiting.filter((p) => p !== match) } : s.pending,
             ticks: { ...s.ticks, [t.market_id]: [t, ...list].slice(0, MAX_TICKS) },
             markets: m ? { ...s.markets, [m.id]: { ...m, ticks_today: m.ticks_today + 1 } } : s.markets,
           }

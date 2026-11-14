@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { api } from '../lib/api'
+import { announceTick } from '../lib/bus'
 import { openStream } from '../lib/stream'
 import { useStore } from '../state/store'
 
@@ -19,6 +20,7 @@ export function useStream(): void {
       onEvent: (e) => {
         const store = useStore.getState()
         store.apply(e)
+        if (e.type === 'tick') announceTick(e.data)
         // a market the list has not seen yet (new, or tracked from another screen): reload the list
         if (e.type === 'market' && e.data.market_id && !store.markets[e.data.market_id] && e.data.status !== 'deleted') {
           void refreshMarkets()
