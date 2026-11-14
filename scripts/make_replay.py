@@ -114,7 +114,7 @@ async def build(conf: dict) -> None:
         "id": conf["id"], "venue": "polymarket", "title": found["title"], "rules": found["rules"], "url": found["url"],
         "outcome": found["outcome"], "start": points[0][0], "end": points[-1][0], "prices": points, "ticks": ticks},
         ensure_ascii=False, separators=(",", ":")))
-    print(f"{conf['id']}: {len(ticks)} ticks shown, record {record(db, now=end + 3600)}", flush=True)
+    print(f"{conf['id']}: {len(ticks)} ticks shown, record {record(db, now=end + 3600, since=0)}", flush=True)
 
 
 async def main(ids: list[str]) -> None:

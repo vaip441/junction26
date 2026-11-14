@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
 from terminal import db as store
-from terminal.record import record
+from terminal.record import START, record
 
 
 def tick(market_id, ts, verdict, price_at, **kw):
@@ -33,12 +33,24 @@ def build(db):
 def test_record_counts_only_eligible_ticks_and_real_moves():
     db = store.connect(":memory:")
     build(db)
-    assert record(db, now=5100) == {"called": 3, "moved": 2, "same_way": 1, "window_seconds": 900, "since": 10}
+    assert record(db, now=5100, since=0) == {"called": 3, "moved": 2, "same_way": 1, "window_seconds": 900, "since": 10}
+
+
+def test_the_record_counts_from_its_start_and_names_its_first_tick():
+    db = store.connect(":memory:")
+    build(db)
+    assert record(db, now=5100, since=600) == {"called": 2, "moved": 1, "same_way": 0, "window_seconds": 900, "since": 700}
+
+
+def test_the_weekend_record_starts_when_the_model_was_first_told_an_items_age():
+    db = store.connect(":memory:")
+    build(db)
+    assert record(db, now=START + 5100)["called"] == 0  # everything in the store is older
 
 
 def test_record_is_empty_on_a_fresh_store():
     db = store.connect(":memory:")
-    assert record(db, now=100) == {"called": 0, "moved": 0, "same_way": 0, "window_seconds": 900, "since": None}
+    assert record(db, now=100, since=0) == {"called": 0, "moved": 0, "same_way": 0, "window_seconds": 900, "since": None}
 
 
 def test_record_route(tmp_path):

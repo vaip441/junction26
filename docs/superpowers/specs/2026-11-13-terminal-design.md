@@ -377,6 +377,9 @@ every tick, the backfill flag, and the minute-level prices. The starting rule
 - Compare the price at detection with the price 15 minutes later. If it moved less
   than 1 percentage point the tick is left out, and the record reports three numbers: ticks
   called, ticks where the price then moved, and ticks where it moved the same way.
+- The count starts on Saturday 14 Nov at 15:53 UTC, when the scorer was first told how old
+  each item is. Until then it had made 91 calls, half of them on news over 9 hours old; the
+  price moved after 8 and the same way after 3. Those calls are left out and stay in the store.
 
 ### Interface for the frontend
 
