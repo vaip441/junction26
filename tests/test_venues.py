@@ -238,7 +238,8 @@ def test_polymarket_comments_are_the_newest_under_an_event_and_its_number_is_ask
         return [{"id": "9", "body": "musk said he is signing\nthe petition", "createdAt": "2026-11-14T09:56:00.5Z",
                  "reactionCount": 3, "reportCount": 0, "profile": {"name": "steamalert"}},
                 {"id": "10", "body": "yes", "createdAt": "2026-11-14T12:16:00Z", "parentCommentID": "8",
-                 "reportCount": 2, "profile": {"pseudonym": "Quiet-Otter"}},
+                 "reportCount": 2, "profile": {"pseudonym": "Quiet-Otter",  # a wallet address is nobody's chosen name
+                                               "name": "0x054eb35bc3a9153E33ACbFF2F8087219EF7E9ba3-1770725526385"}},
                 {"id": "11", "body": None, "createdAt": None}, "odd"]
 
     monkeypatch.setattr(polymarket, "get", get)

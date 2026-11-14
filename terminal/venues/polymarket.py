@@ -53,6 +53,7 @@ def search(words: str, limit: int = 10) -> list[str]:
             if not e.get("closed") and SLUG.match(str(e.get("slug") or ""))]
 
 
+WALLET = re.compile(r"0x[0-9a-fA-F]{40}")
 _event_ids: dict[str, str] = {}  # event slug -> its number, which its comments are filed under
 
 
@@ -70,8 +71,11 @@ def comments(slug: str, limit: int = 40) -> list[dict]:
     for c in rows:
         try:
             profile = c.get("profile") or {}
+            name = str(profile.get("name") or "")
+            if not name or WALLET.match(name):  # an account that chose no name is shown by its wallet address
+                name = str(profile.get("pseudonym") or "trader")
             out.append({"id": str(c["id"]), "text": c["body"] + "", "is_reply": bool(c.get("parentCommentID")),
-                        "author": str(profile.get("name") or profile.get("pseudonym") or "trader"),
+                        "author": name,
                         "likes": int(c.get("reactionCount") or 0), "reports": int(c.get("reportCount") or 0),
                         "published": datetime.fromisoformat(c["createdAt"].replace("Z", "+00:00")).timestamp()})
         except (AttributeError, KeyError, TypeError, ValueError):
