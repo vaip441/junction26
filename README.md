@@ -21,6 +21,10 @@ Every item takes the same path: found, deduplicated, scored, stored, streamed to
 | Score | Gemini Decision 1 is told the market, its rules, the current price, the rival contracts and what was already reported, then asked how far the new item should move the price and whether it is news at all. For a tick that moves the price it also picks the sentence of the rules that makes the item matter. | `terminal/scoring.py`, `terminal/pipeline.py`, `terminal/rules.py` |
 | Store and stream | SQLite, and one server-sent-events stream for the frontend. | `terminal/db.py`, `terminal/api.py` |
 
+It also works backwards, from the price to the web: when a real market's price jumps 3 points within
+10 minutes, the terminal searches for that market at once and Decision 1 names the item most likely
+behind the jump, with the sentence of the rules it touches (`terminal/moves.py`).
+
 A question in plain words is matched to a real market by searching both venues and letting Decision 1 pick
 (`terminal/match.py`). When nothing matches, a text model writes a yes/no question with a deadline, Decision 1
 gives its starting odds from the coverage found, and each shown tick afterwards nudges the price
@@ -62,8 +66,9 @@ and of every stream event, is in
 | `POST /markets` | track a market from a link or from plain words |
 | `DELETE /markets/{id}` | stop tracking a market |
 | `GET /markets/{id}/ticks`, `GET /markets/{id}/prices` | history for the tape and the chart |
+| `GET /markets/{id}/moves` | "why did it move?": the market's price jumps, each with its likely cause |
 | `POST /markets/{id}/ticks` | a spoken or typed sentence, scored like any other tick |
-| `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `market` |
+| `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market` |
 | `GET /record` | of the ticks called up or down, how often the price then moved that way |
 | `GET /status` | Context.dev use and credits per key |
 

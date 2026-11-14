@@ -5,7 +5,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from terminal import contextdev, googlenews, madeup, posts, venues, watch
+from terminal import contextdev, googlenews, madeup, moves, posts, venues, watch
 from terminal import db as store
 from terminal.pipeline import STORY_SECONDS, dedupe_key, ingest, public, title_key
 from terminal.scoring import Score
@@ -39,8 +39,35 @@ async def forever(name: str, interval: float, step) -> None:
         await asyncio.sleep(interval)
 
 
-async def price_loop(db, bus, interval: float = 60) -> None:
-    await forever("price", interval, lambda: sample_prices(db, bus))
+def explain_moves(db, bus, scorer, busy: set, explaining: dict, now: float | None = None) -> None:
+    """Start an explanation, in the background, for every fresh price move that is not being explained yet."""
+    async def one(move: dict) -> None:
+        try:
+            await moves.explain(db, bus, move["market"], move, fetch=lambda m: fetch_now(db, bus, scorer, m, busy))
+        except Exception:
+            log.exception("could not explain the move of %s", move["market"]["id"])
+
+    for move in moves.find(db, time.time() if now is None else now):
+        id = move["market"]["id"]
+        if id not in explaining:  # it takes a search: the next samples see the same move
+            explaining[id] = asyncio.create_task(one(move))
+            explaining[id].add_done_callback(lambda _, id=id: explaining.pop(id, None))
+
+
+async def price_loop(db, bus, scorer, busy: set, interval: float = 60) -> None:
+    """Sample prices every minute; a price that jumped gets its cause looked for (see moves.py).
+    `busy` is the article loop's: the markets being searched right now."""
+    explaining: dict[str, asyncio.Task] = {}
+
+    async def step() -> None:
+        await sample_prices(db, bus)
+        explain_moves(db, bus, scorer, busy, explaining)
+
+    try:
+        await forever("price", interval, step)
+    finally:
+        for task in explaining.values():
+            task.cancel()
 
 
 # Reference pages and the venues' own pages are not news: an encyclopedia entry or a report of the
@@ -185,6 +212,23 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     return sum(await asyncio.gather(*(one(kind, r) for kind, r in fresh.values())))
 
 
+async def fetch_now(db, bus, scorer, market: dict, busy: set, fetch=None) -> None:
+    """Search for one market right away, outside its polling interval. If an article pass is on it
+    already, wait for that instead: searched twice at once, every new item would be scored twice."""
+    id = market["id"]
+    if id in busy:
+        for _ in range(120):  # a pass over one market takes well under two minutes
+            if id not in busy:
+                break
+            await asyncio.sleep(1)
+        return
+    busy.add(id)
+    try:
+        await (fetch or fetch_articles)(db, bus, scorer, market, backfill=False, num_results=10)
+    finally:
+        busy.discard(id)
+
+
 DATE_BATCH = 100
 
 
@@ -291,11 +335,13 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
     await asyncio.gather(*(one(m) for m in markets))
 
 
-async def article_loop(db, bus, scorer, wake: asyncio.Event) -> None:
-    """Run article passes forever. `wake` starts the next pass at once, for a newly added market."""
+async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = None) -> None:
+    """Run article passes forever. `wake` starts the next pass at once, for a newly added market.
+    `busy` holds the markets being searched; the price loop adds one while it looks behind a move."""
     last_fetch: dict[str, float] = {}
     running: set[asyncio.Task] = set()
-    limit, busy = asyncio.Semaphore(MARKETS_AT_ONCE), set()  # shared, so overlapping passes cannot exceed the cap
+    busy = set() if busy is None else busy
+    limit = asyncio.Semaphore(MARKETS_AT_ONCE)  # shared, so overlapping passes cannot exceed the cap
     fails: dict[str, int] = {}
 
     async def one_pass() -> None:

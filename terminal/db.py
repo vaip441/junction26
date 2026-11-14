@@ -1,4 +1,4 @@
-"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices.
+"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices, moves.
 
 Prices are percentages 0..100 and timestamps are unix seconds, everywhere.
 """
@@ -22,6 +22,10 @@ CREATE TABLE IF NOT EXISTS ticks (
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
+CREATE TABLE IF NOT EXISTS moves (
+    id INTEGER PRIMARY KEY, market_id TEXT NOT NULL, ts REAL NOT NULL, since_ts REAL NOT NULL,
+    from_price REAL NOT NULL, to_price REAL NOT NULL, tick_id INTEGER, confidence REAL, rule TEXT);
+CREATE INDEX IF NOT EXISTS moves_by_market ON moves (market_id, ts);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
@@ -92,9 +96,10 @@ def promote(db, id: str) -> None:
 
 
 def delete_market(db, id: str) -> None:
-    """Remove a market, its related contracts, and all their ticks and prices."""
+    """Remove a market, its related contracts, and all their ticks, prices and moves."""
     for (mid,) in db.execute("SELECT id FROM markets WHERE id = ? OR lead_id = ?", (id, id)).fetchall():
         db.execute("DELETE FROM ticks WHERE market_id = ?", (mid,))
+        db.execute("DELETE FROM moves WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM prices WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM markets WHERE id = ?", (mid,))
 
@@ -222,3 +227,37 @@ def headlines(db, market_id: str, limit: int = 20) -> list[str]:
 def count_shown(db, market_id: str, since: float) -> int:
     return db.execute("SELECT COUNT(*) FROM ticks WHERE market_id = ? AND hidden = 0 AND ts >= ?",
                       (market_id, since)).fetchone()[0]
+
+
+def around(db, market_id: str, since: float, until: float, limit: int) -> list[dict]:
+    """A market's shown, live ticks from the web published in a stretch of time (found, where the publish
+    time is unknown), newest first: what could explain a price move at its end."""
+    return [_tick(r) for r in db.execute(
+        "SELECT * FROM ticks WHERE market_id = ? AND hidden = 0 AND test = 0 AND backfill = 0"
+        " AND COALESCE(published_ts, ts) BETWEEN ? AND ? ORDER BY COALESCE(published_ts, ts) DESC, id DESC LIMIT ?",
+        (market_id, since, until, limit))]
+
+
+def add_move(db, market_id: str, ts: float, since: float, from_price: float, to_price: float,
+             tick_id: int | None, confidence: float | None, rule: str | None) -> dict:
+    """A price move and the tick named as its cause, if any."""
+    cur = db.execute("INSERT INTO moves (market_id, ts, since_ts, from_price, to_price, tick_id, confidence, rule)"
+                     " VALUES (?,?,?,?,?,?,?,?)", (market_id, ts, since, from_price, to_price, tick_id, confidence, rule))
+    return next(m for m in moves(db, market_id, limit=1000) if m["id"] == cur.lastrowid)
+
+
+def moves(db, market_id: str, limit: int = 20) -> list[dict]:
+    """A market's price moves, newest first, each with the tick named as its cause (or None)."""
+    out = []
+    for r in db.execute('SELECT id, market_id, ts, since_ts AS since, from_price AS "from", to_price AS "to", tick_id,'
+                        " confidence, rule FROM moves WHERE market_id = ? ORDER BY ts DESC, id DESC LIMIT ?",
+                        (market_id, limit)).fetchall():
+        cause = db.execute("SELECT * FROM ticks WHERE id = ?", (r["tick_id"],)).fetchone()
+        out.append({**{k: r[k] for k in r.keys() if k != "tick_id"}, "rule": r["rule"] and json.loads(r["rule"]),
+                    "cause": cause and _tick(cause)})
+    return out
+
+
+def last_move(db, market_id: str) -> float | None:
+    """When this market's newest move was recorded."""
+    return db.execute("SELECT MAX(ts) FROM moves WHERE market_id = ?", (market_id,)).fetchone()[0]

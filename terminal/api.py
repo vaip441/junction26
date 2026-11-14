@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, poller, scoring, truth, venues
+from terminal import contextdev, madeup, match, moves, poller, scoring, truth, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -82,8 +82,9 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         store.set_poll_seconds(db, DEMO["id"], 0)  # it moves only by what is said to it, never by articles
         app.state.wake = asyncio.Event()
         app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
-        tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus)),
-                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake)),
+        busy = set()  # markets being searched right now, by the article loop or behind a price move
+        tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus, app.state.scorer, busy)),
+                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake, busy)),
                  asyncio.create_task(poller.date_loop(db, app.state.bus))] if poll else []
         if poll and os.environ.get("TRUTH_FEED"):  # the feed file of trump-social-scraper, where one runs
             tasks.append(asyncio.create_task(truth.truth_loop(db, app.state.bus, app.state.scorer, os.environ["TRUTH_FEED"])))
@@ -133,6 +134,12 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     async def prices(id: str, since: float = 0):
         market_or_404(id)
         return store.prices(app.state.db, id, since)
+
+    @app.get("/markets/{id}/moves")
+    async def price_moves(id: str, limit: int = Query(20, ge=1, le=100)):
+        """The market's price jumps, newest first, each with the tick named as its cause (or null)."""
+        market_or_404(id)
+        return [moves.public_move(m) for m in store.moves(app.state.db, id, limit)]
 
     @app.post("/markets/{id}/ticks", dependencies=[Depends(write_access)])
     async def add_tick(id: str, body: TickIn):
