@@ -22,7 +22,8 @@ export function MoveBanner({ marketId }: { marketId: string }) {
 function Banner({ move }: { move: Move }) {
   const clear = useStore((s) => s.clearLiveMove)
   const setTab = useStore((s) => s.setTab)
-  const [answered, setAnswered] = useState(false)
+  // a move that agents have just worked out in the tab below needs no pause for effect: its answer is shown at once
+  const [answered, setAnswered] = useState(Boolean(move.investigation))
   const [leaving, setLeaving] = useState(false)
 
   useEffect(() => {

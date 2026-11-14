@@ -92,6 +92,24 @@ are in `docs/agents-first-run.md`. What the runs say about the set-up:
 - **Not tried yet:** the `backend`, `screen` and `market-scout` agents, and the `build-feature` skill end to
   end. The first two write code and the third spends Context.dev credits, so they wait for a real task.
 
+## Agents in the product, not only around it
+
+The same idea fits one place in the terminal itself: explaining a price jump. Today that is one search and
+one pick. An investigator would be a lead that splits the question between a few agents working at the same
+time (the news, posts, the venues, the watched page), each with Context.dev as its tools and a budget, and a
+lead that weighs what they bring back. It does not fit scoring: an ask scores over a hundred items in
+seconds, and one call per item is what makes the record trustworthy.
+
+The screen for it is built on this branch, ahead of the backend, against a written interface: the
+`investigation` stream event and the `investigation` field of a move, both in the spec's "Interface for the
+frontend" and marked as proposed. `ui/mock/server.mjs` plays a scripted investigator, so the view can be
+seen with `npm run dev:mock` (press "Explain today's move", or wait for a jump). Nothing in `terminal/`
+sends these events yet, and the screen behaves as before when none arrive.
+
+Still to decide before the backend is built: which model leads it (DeepSeek's Flash model through its API
+was discussed; whether its tool calls are dependable enough is untested), a hard budget of Context.dev
+requests per jump, and where it runs. It holds no state, so it could run apart from the terminal.
+
 ## Open questions
 
 - **A mock that draws the same chart twice.** The mock invents a new price history on every run, so two

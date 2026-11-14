@@ -476,6 +476,35 @@ changed 1.5 points or more over the same stretch, biggest change first. `asked` 
 for a move explained on request (the last day), false for a jump the terminal saw itself.
 Made-up markets have no jumps of their own, but can be asked about.
 
+An investigation (proposed 14 Nov: the screen and the mock are built for it, the backend does
+not send it yet, and the screen works without it):
+
+    { "id": "inv-12", "market_id", "ts", "since", "from": 40.0, "to": 44.0, "asked": false,
+      "status": "running" | "done" | "failed", "model": "deepseek-flash",
+      "steps": [ { "id": 3, "agent": "News", "text": "Searching the news for “nvidia ceo”",
+                   "url": "https://..." | null, "status": "running" | "done" | "failed",
+                   "found": "12 articles, the newest 4 min old" | null,
+                   "started": 1763132400.2, "ended": 1763132402.9 | null } ],
+      "requests": 6, "credits": 14 | null, "ended": 1763132409.5 | null,
+      "move_id": 31 | null, "error": "..." | null }
+
+When a price move is looked into by several agents instead of one search, the stream carries an
+`investigation` event each time something about it changes: when it starts, when a step starts or
+ends, and when it ends. Every event holds the whole investigation so far, so the newest one with
+the same `id` replaces the last and a missed event loses nothing. `since`, `from`, `to` and `asked`
+describe the move being explained, as on a move; `ts` is when the investigation started and
+`ended` when it stopped. `model` names the model that leads it. A step is one thing one agent
+did: `agent` is the agent's name as it should be shown ("Lead", "News", "Posts", "Venues", "Page"
+or any other; the screen groups steps by it in the order the names first appear), `text` says
+what it is doing in plain words, `url` is the page it reads when there is one, and `found` says
+what came back, null while it runs. Steps of different agents overlap in time. `requests` and
+`credits` are what the investigation has spent on Context.dev so far (`credits` null when
+unknown). It ends `done`, and then `move_id` names the move that holds its answer and that move
+is sent as a `move` event straight after; or `failed`, with `error` saying why in a sentence, and
+the move then comes from the single search as before. A move worked out this way carries the
+finished investigation in `investigation` (null or absent otherwise), so the steps can be shown
+again later from `GET /markets/{id}/moves`.
+
 The frontend owns speech-to-text (microphone to sentences), the spoken call-out of
 each verdict, and all layout. The concept mockup is at
 https://claude.ai/artifact/Rx3hfxQFtQ1tNFfjSwvvKm (sample data, concept only).

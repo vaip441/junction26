@@ -107,6 +107,91 @@ function addMove(id, f) {
   return move
 }
 
+let nextInvestigationId = 1
+
+/**
+ * The investigator, scripted: a price move looked into by a lead and four agents working at the same time
+ * (news, posts, the venues, the watched page). Each `investigation` event carries the whole investigation so
+ * far, as the spec says. `found` is called when the agent that would find the cause finds it, so the cause
+ * lands on the tape in the middle of the search, not before it. Returns the investigation, still running:
+ * `finish` ends it with the move that holds its answer.
+ */
+async function investigate(m, { since, from, to, asked = false, cause = null, found = () => {}, pace = 1 }) {
+  const inv = { id: `inv-${nextInvestigationId++}`, market_id: m.id, ts: now(), since, from: round(from), to: round(to), asked,
+    status: 'running', model: 'deepseek-flash', steps: [], requests: 0, credits: 0, ended: null, move_id: null, error: null }
+  const publish = () => send('investigation', inv)
+  const start = (agent, text, url = null) => {
+    const step = { id: inv.steps.length + 1, agent, text, url, status: 'running', found: null, started: now(), ended: null }
+    inv.steps.push(step)
+    publish()
+    return step
+  }
+  const end = (step, what, credits = 0) => {
+    Object.assign(step, { status: 'done', found: what, ended: now() })
+    if (credits) {
+      inv.requests += 1
+      inv.credits += credits
+    }
+    publish()
+  }
+  const wait = (a, b) => sleep(rand(a, b) * pace)
+  const query = m.queries[0] ?? m.title.replace(/^MOCK · /, '')
+  const isPost = cause?.kind === 'post'
+  publish()
+
+  const plan = start('Lead', 'Splitting the question between four agents')
+  await wait(500, 900)
+  end(plan, 'news, posts, the venues, the watched page')
+
+  const news = (async () => {
+    const search = start('News', `Searching the news for “${query}”`)
+    await wait(1400, 2600)
+    end(search, `${Math.round(rand(6, 18))} articles, the newest ${Math.round(rand(2, 9))} min old`, 3)
+    if (cause && !isPost) {
+      const read = start('News', `Reading ${cause.source}`, cause.url)
+      await wait(1200, 2200)
+      found()
+      end(read, `“${cause.headline}”`, 1)
+    }
+  })()
+  const posts = (async () => {
+    await wait(100, 400)
+    const search = start('Posts', `Searching X and Reddit for “${query}”`)
+    await wait(1800, 3200)
+    if (cause && isPost) found()
+    end(search, cause && isPost ? `“${cause.headline}”` : `${Math.round(rand(2, 7))} posts, none from before the jump`, 2)
+  })()
+  const venues = (async () => {
+    await wait(200, 500)
+    const compare = start('Venues', 'Comparing the related contracts and the other venue')
+    await wait(900, 1600)
+    const beside = [...markets.values()].filter((r) => r.lead_id === m.id).length
+    end(compare, cause ? 'none of them moved first' : beside ? 'one related contract moved at the same time' : 'no related contract to compare')
+  })()
+  const page = (async () => {
+    if (!m.page) return
+    await wait(300, 700)
+    const read = start('Page', 'Reading the watched page', m.page.url)
+    await wait(1500, 2800)
+    end(read, 'no change since the last check', 1)
+  })()
+  await Promise.all([news, posts, venues, page])
+
+  const weigh = start('Lead', 'Weighing what was found against the market’s rules')
+  await wait(900, 1500)
+  end(weigh, cause ? `${cause.source} is the item that fits` : 'nothing found explains it')
+  return inv
+}
+
+/** End an investigation with its answer: the move carries the finished investigation, and both are sent. */
+function finish(inv, move) {
+  Object.assign(inv, { status: 'done', ended: now(), move_id: move.id })
+  move.investigation = inv
+  send('investigation', inv)
+  send('move', move)
+  return move
+}
+
 function addPrice(id, ts, price) {
   const list = prices.get(id)
   list.push({ ts, price: round(price) })
@@ -368,7 +453,7 @@ async function liveMoves() {
       await sleep(1500)
       emitPrice(m.id, clamp(from + (dir * size * i) / 3))
     }
-    await sleep(rand(3, 6) * 1000) // the web is searched first
+    await sleep(1000)
     if (!markets.has(m.id)) continue
     // like the real markets, most jumps are trades, not news: one in three is explained, one more has only "closest news"
     let cause = null
@@ -379,9 +464,11 @@ async function liveMoves() {
       cause = makeTick(m.id, { verdict, strength: rand(0.5, 0.95), confidence: rand(0.6, 0.95), kind,
         source: kind === 'post' ? pick(['x.com/marketsdesk', TRUTH]) : pick(SOURCES.slice(0, 5)), headline: pick(LIVE_HEADLINES[verdict]),
         published_ts: since - rand(60, 600), price_at: from })
-      emitTick(cause)
     }
-    send('move', addMove(m.id, { since, ts: now(), from, to: latest(m.id), tick: cause, explained }))
+    // the web is searched after the jump, by the investigator: the cause reaches the tape when an agent finds it
+    const inv = await investigate(m, { since, from, to: latest(m.id), cause, found: () => cause && emitTick(cause) })
+    if (!markets.has(m.id)) continue
+    finish(inv, addMove(m.id, { since, ts: now(), from, to: latest(m.id), tick: cause, explained }))
   }
 }
 void liveMoves()
@@ -585,17 +672,17 @@ async function route(req, url) {
       return [200, detail(m)]
     }
     if (parts[2] === 'why' && req.method === 'POST') {
-      // why did it move over the last day? no search: answered in about a second from the day's strongest items
-      // (never one scored as pushing the other way), also sent as a move event
+      // why did it move over the last day? answered from the day's strongest item (never one scored as
+      // pushing the other way), also sent as a move event
       const from = priceAt(m.id, now() - 86400) ?? prices.get(m.id)[0]?.price
       const to = latest(m.id)
       if (from == null || to == null || Math.abs(to - from) < 1) return [409, { detail: 'the price has not moved a point in the last day' }]
-      await sleep(rand(700, 1300))
       const strongest = [...ticks.get(m.id)].filter((t) => t.verdict === (to > from ? 'up' : 'down')).sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))[0]
+      // the investigator looks into it (the item is on the tape already, so nothing new lands there)
+      const inv = await investigate(m, { since: now() - 86400, from, to, asked: true, cause: strongest })
       const move = addMove(m.id, { since: now() - 86400, ts: now(), from, to, tick: strongest, asked: true,
         explained: Boolean(strongest), confidence: rand(0.25, 0.7) })
-      send('move', move)
-      return [200, move]
+      return [200, finish(inv, move)]
     }
     if (parts[2] === 'moves' && req.method === 'GET') {
       const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 20)))

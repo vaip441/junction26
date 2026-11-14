@@ -118,6 +118,52 @@ export interface Move {
   confidence: number | null
   rule: RuleRef | null
   related: MovedWith[]
+  /** The investigation that worked this move out, when several agents did; absent from a backend without one. */
+  investigation?: Investigation | null
+}
+
+/** One thing one agent did while a price move was looked into. Steps of different agents overlap in time. */
+export interface InvestigationStep {
+  id: number
+  /** The agent's name as shown: "Lead", "News", "Posts", "Venues", "Page", or any other. */
+  agent: string
+  /** What it is doing, in plain words. */
+  text: string
+  /** The page it reads, when there is one. */
+  url: string | null
+  status: 'running' | 'done' | 'failed'
+  /** What came back, in plain words; null while it runs. */
+  found: string | null
+  started: number
+  ended: number | null
+}
+
+/**
+ * A price move being looked into by several agents. Every `investigation` event holds the whole of it so
+ * far; the newest with the same id replaces the last.
+ */
+export interface Investigation {
+  id: string
+  market_id: string
+  /** When it started. */
+  ts: number
+  /** The move being explained: the price went from `from` at `since` to `to`. */
+  since: number
+  from: number
+  to: number
+  asked: boolean
+  status: 'running' | 'done' | 'failed'
+  /** The model that leads it. */
+  model: string
+  steps: InvestigationStep[]
+  /** Spent on Context.dev so far. */
+  requests: number
+  credits: number | null
+  ended: number | null
+  /** Once done: the move that holds the answer. */
+  move_id: number | null
+  /** When failed: why, in a sentence. */
+  error: string | null
 }
 
 export interface PricePoint {
@@ -175,5 +221,6 @@ export type StreamEvent =
   | { type: 'tick_update'; data: Tick }
   | { type: 'price'; data: PriceEvent }
   | { type: 'move'; data: Move }
+  | { type: 'investigation'; data: Investigation }
   | { type: 'market'; data: MarketEvent }
   | { type: 'page_check'; data: { market_id: string; url: string; ts: number; changed: boolean } }

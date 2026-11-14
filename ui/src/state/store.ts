@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { StreamStatus } from '../lib/stream'
-import type { MarketDetail, MarketEvent, MarketSummary, Move, PricePoint, RuleRef, StreamEvent, Tick, WeekendRecord } from '../lib/types'
+import type { Investigation, MarketDetail, MarketEvent, MarketSummary, Move, PricePoint, RuleRef, StreamEvent, Tick, WeekendRecord } from '../lib/types'
 
 const MAX_TICKS = 500
 const MAX_MOVES = 100
@@ -56,6 +56,8 @@ interface State {
   moves: Record<string, Move[]>
   /** A move that arrived on the stream just now, for the banner over the chart. */
   liveMove: Move | null
+  /** By market: the investigation into a price move that is running, or the last one that ran. */
+  investigations: Record<string, Investigation>
   tab: Tab
   /** A rules sentence to scroll to and flash in the Rules tab; `n` makes a repeat click count. */
   focusRule: { start: number; end: number; n: number } | null
@@ -80,6 +82,7 @@ interface State {
   setPrices: (id: string, prices: PricePoint[]) => void
   setMoves: (id: string, moves: Move[]) => void
   clearLiveMove: () => void
+  dismissInvestigation: (marketId: string) => void
   setTab: (tab: Tab) => void
   showRule: (rule: RuleRef) => void
   select: (id: string | null) => void
@@ -109,6 +112,7 @@ export const useStore = create<State>((set) => ({
   prices: {},
   moves: {},
   liveMove: null,
+  investigations: {},
   tab: 'moves',
   focusRule: null,
   selectedId: null,
@@ -134,6 +138,11 @@ export const useStore = create<State>((set) => ({
   setPrices: (id, prices) => set((s) => ({ prices: { ...s.prices, [id]: prices } })),
   setMoves: (id, moves) => set((s) => ({ moves: { ...s.moves, [id]: moves.slice(0, MAX_MOVES) } })),
   clearLiveMove: () => set({ liveMove: null }),
+  dismissInvestigation: (marketId) =>
+    set((s) => {
+      const { [marketId]: _gone, ...investigations } = s.investigations
+      return { investigations }
+    }),
   setTab: (tab) => set({ tab }),
   showRule: (rule) => set((s) => ({ tab: 'rules', focusRule: { start: rule.start, end: rule.end, n: (s.focusRule?.n ?? 0) + 1 } })),
   select: (id) => set({ selectedId: id }),
@@ -225,6 +234,16 @@ export const useStore = create<State>((set) => ({
             moves: { ...s.moves, [mv.market_id]: [mv, ...list].slice(0, MAX_MOVES) },
             liveMove: mv,
             ticks: tape && cause ? { ...s.ticks, [mv.market_id]: tape.map((x) => (x.id === cause.id ? cause : x)) } : s.ticks,
+          }
+        }
+        case 'investigation': {
+          // the whole investigation so far: the newest replaces the last. One that has just started on the
+          // market on screen opens the tab where it is shown.
+          const inv = e.data
+          const started = inv.status === 'running' && s.investigations[inv.market_id]?.id !== inv.id
+          return {
+            investigations: { ...s.investigations, [inv.market_id]: inv },
+            ...(started && s.selectedId === inv.market_id ? { tab: 'moves' as const } : {}),
           }
         }
         case 'page_check': {

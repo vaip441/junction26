@@ -7,9 +7,10 @@ import { shortSource } from '../../lib/sources'
 import type { Move } from '../../lib/types'
 import { useStore } from '../../state/store'
 import { SourceIcon } from '../common/SourceIcon'
+import { InvestigationLine, InvestigationLog, LiveInvestigation } from './Investigation'
 
 /** "24% → 20%" in the move's colour: a move is an up or a down, so it takes the verdict colours. */
-export function MoveSpan({ move, className = '' }: { move: Move; className?: string }) {
+export function MoveSpan({ move, className = '' }: { move: Pick<Move, 'from' | 'to'>; className?: string }) {
   return (
     <span className={`num whitespace-nowrap font-bold ${move.to >= move.from ? 'text-up' : 'text-down'} ${className}`}>
       {pct(move.from)} → {pct(move.to)}
@@ -105,12 +106,33 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
 }
 
 /**
+ * How a move was worked out, when several agents did it: one line, and the steps behind a button. A move
+ * that has only just been answered opens with its steps showing, so the investigation that was on screen a
+ * moment ago does not vanish.
+ */
+function Worked({ move }: { move: Move }) {
+  const inv = move.investigation!
+  const [open, setOpen] = useState(() => Date.now() / 1000 - (inv.ended ?? move.ts) < 20)
+  return (
+    <div className="text-[11px] text-faint">
+      <button onClick={() => setOpen(!open)} aria-expanded={open} className="text-left hover:text-text">
+        <InvestigationLine inv={inv} />. <span className="underline decoration-faint underline-offset-2">{open ? 'Hide the steps' : `Show the ${inv.steps.length} steps`}</span>
+      </button>
+      {open && <InvestigationLog inv={inv} />}
+    </div>
+  )
+}
+
+/**
  * "Why did it move?": the market's price moves, newest first, each in one sentence. Most jumps are trades
  * on a thin market, not news, and the list says so. The button asks the same of the market's last day, at
- * any time: the backend answers in about a second from the day's strongest items.
+ * any time. A move that several agents are looking into is shown at the top while they work.
  */
 export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[] | undefined }) {
   const showRule = useStore((s) => s.showRule)
+  const investigation = useStore((s) => s.investigations[marketId])
+  // running, or stopped without an answer: once it is done, its answer is the move at the top of the list
+  const live = investigation && investigation.status !== 'done' ? investigation : null
   const [state, setState] = useState<{ busy: boolean; note: string | null }>({ busy: false, note: null })
 
   const ask = async () => {
@@ -129,13 +151,14 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
           {state.busy ? 'Working out why it moved…' : 'Explain today’s move'}
         </button>
         <span className={`min-w-0 truncate text-[11px] ${state.note ? 'text-down' : 'text-faint'}`}>
-          {state.note ?? 'Why did this market move over the last day? Asked now, answered in about a second.'}
+          {state.note ?? 'Why did this market move over the last day? Ask, and the terminal works it out now.'}
         </span>
       </div>
+      {live && <LiveInvestigation inv={live} />}
       {moves === undefined ? (
         <p className="p-3 text-xs text-faint">Loading…</p>
       ) : moves.length === 0 ? (
-        <p className="p-3 text-xs leading-relaxed text-muted">
+        live ? null : <p className="p-3 text-xs leading-relaxed text-muted">
           No moves yet. When the price jumps 3 points within 10 minutes, the terminal searches the web at once and says here what, if anything,
           explains it.
         </p>
@@ -149,7 +172,10 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
                   {m.asked ? 'over the last day' : `in ${minutes(m.ts - m.since)}`}, {timeAgo(m.ts)}
                 </span>
               </div>
-              <MoveStory move={m} onRule={() => m.rule && showRule(m.rule)} />
+              <div className="flex min-w-0 flex-col gap-1">
+                <MoveStory move={m} onRule={() => m.rule && showRule(m.rule)} />
+                {m.investigation && <Worked move={m} />}
+              </div>
             </li>
           ))}
         </ul>

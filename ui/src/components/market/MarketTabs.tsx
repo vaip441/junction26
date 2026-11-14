@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useNow } from '../../hooks/useNow'
 import type { MarketDetail } from '../../lib/types'
 import { useStore, type Tab } from '../../state/store'
 import { MovesPanel } from './MovesPanel'
@@ -15,6 +16,11 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
   const wanted = useStore((s) => s.tab)
   const setTab = useStore((s) => s.setTab)
   const moves = useStore((s) => s.moves[marketId])
+  // an investigation needs room for its agents: the panel is taller while one runs and for a little after,
+  // so the steps it ends on can be read before the panel goes back
+  const investigation = useStore((s) => s.investigations[marketId])
+  const now = useNow(1000)
+  const busy = investigation != null && (investigation.status === 'running' || now - (investigation.ended ?? investigation.ts) < 20)
   // the made-up market's first tab is its sources unless "why did it move?" was asked for there
   const [picked, setPicked] = useState(false)
   const tab: Tab = madeUp && wanted === 'moves' && !picked ? 'sources' : wanted
@@ -25,7 +31,7 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
     { id: 'rules', label: 'Rules' },
   ]
   return (
-    <div className="flex h-44 shrink-0 flex-col border-t border-line">
+    <div className={`flex shrink-0 flex-col border-t border-line transition-[height] duration-300 ${busy && tab === 'moves' ? 'h-72' : 'h-44'}`}>
       <div role="tablist" className="flex shrink-0 gap-5 border-b border-line px-3">
         {tabs.map((t) => (
           <button

@@ -24,7 +24,7 @@ Then open the PNG with the Read tool and say what you see.
 | A failed search / not a question | `--ask "fail now"` / `--ask "hello"` |
 | The weekend record | `--keys r` |
 | The last hour of the chart, or another tab | `--click 1H`, `--click Sources` (a button, tab or link by its text; repeatable) |
-| "Why did it move?" asked now | `--click "Explain today’s move" --wait 4` |
+| A price move being investigated | `--quiet --click "Explain today’s move" --wait 3` (the agents at work), `--wait 12` (the answer, with its steps) |
 | The price under the pointer | `--hover 640,480` |
 | A phone | `--width 420 --height 860` |
 | A still tape | `--quiet` |

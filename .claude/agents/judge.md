@@ -19,8 +19,8 @@ or any code: a judge has neither.
    up (`--market 1 --say "Honestly, this is a great demo" --wait 4`) and one that should push it down
    (`--market 1 --say "It looks broken to me" --wait 4`).
 2. A real market with its chart and tape (the default picture); the same with the last hour picked
-   (`--click 1H`), where the calls have room; and the answer to "why did it move?"
-   (`--click "Explain today’s move" --wait 4`).
+   (`--click 1H`), where the calls have room; and "why did it move?" being worked out
+   (`--quiet --click "Explain today’s move" --wait 3`) and answered (`--wait 12`).
 3. A question being asked: early (`--ask "will the fed cut rates" --wait 2.5`) and once the market has
    opened (`--wait 8`).
 4. The record (`--keys r`).
