@@ -20,7 +20,7 @@ export function MicBar({ marketId }: { marketId: string }) {
     setError(err)
     if (err) setTimeout(() => setError(null), 6000)
   }
-  const { state, hearing, writing, start, stop } = useSpeechInput(
+  const { state, hearing, writing, interim, start, stop } = useSpeechInput(
     (text) => void sendTick(marketId, text, 'mic').then(show),
     show,
   )
@@ -51,7 +51,9 @@ export function MicBar({ marketId }: { marketId: string }) {
           {micOn ? 'Mic on' : 'Mic off'}
         </button>
         <span className="truncate text-xs text-muted">
-          {live && hearing ? (
+          {interim ? (
+            <span className="italic text-text">“{interim}”</span>
+          ) : live && hearing ? (
             <span className="italic text-text">Hearing you…</span>
           ) : writing ? (
             <span className="italic text-text">Writing down what was said…</span>

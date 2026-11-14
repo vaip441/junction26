@@ -26,14 +26,17 @@ export async function sendTick(marketId: string, text: string, kind: 'mic' | 'ty
   }
 }
 
-/** Turn one recorded sentence into words. Returns the words (empty when nobody spoke), or the error text to show. */
-export async function transcribe(audio: Blob): Promise<{ text: string } | { error: string }> {
+/**
+ * Turn one recorded sentence into words. Returns the words (empty when nobody spoke), or the error text to
+ * show. `quiet` is for the live words of a sentence still being said: a failure there asks for nothing.
+ */
+export async function transcribe(audio: Blob, quiet = false): Promise<{ text: string } | { error: string }> {
   try {
     return { text: (await api.transcribe(audio)).text.trim() }
   } catch (e) {
     const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
     if (err.status === 401) {
-      useStore.getState().setNeedKey(true)
+      if (!quiet) useStore.getState().setNeedKey(true)
       return { error: 'needs the terminal key: enter it, then say it again' }
     }
     return { error: err.detail }

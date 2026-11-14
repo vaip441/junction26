@@ -19,6 +19,7 @@ const LEAD_CHUNKS = 3 // pieces kept from just before it began, so the first wor
 const TAIL_CHUNKS = 3 // of the closing silence, this much is sent
 const MIN_VOICED = 3 // fewer loud pieces than this is a cough or a clink, not a sentence
 const MAX_CHUNKS = 150 // a sentence is cut at 15 s and the rest starts a new one
+const LIVE_CHUNKS = 10 // while a sentence is being said, what there is of it so far is handed over this often: 1 s
 
 // Runs on the audio thread: hands the microphone's samples over in CHUNK_MS pieces.
 const TAP = `
@@ -80,10 +81,15 @@ function wav(chunks: Float32Array[], rate: number): Blob {
 
 /**
  * Open the microphone and cut what it hears into sentences by the pauses between them. Each sentence is
- * handed over as a WAV recording. Returns the function that closes the microphone (a sentence being said
- * at that moment is still handed over).
+ * handed over as a WAV recording, and while it is still being said, so is what there is of it so far
+ * (`onSoFar`, for showing the words live). Returns the function that closes the microphone (a sentence
+ * being said at that moment is still handed over).
  */
-async function listen(onRecording: (audio: Blob) => void, onHearing: (hearing: boolean) => void): Promise<() => void> {
+async function listen(
+  onRecording: (audio: Blob) => void,
+  onHearing: (hearing: boolean) => void,
+  onSoFar: (audio: () => Blob) => void,
+): Promise<() => void> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   })
@@ -152,6 +158,10 @@ async function listen(onRecording: (audio: Blob) => void, onHearing: (hearing: b
       quiet++
     }
     if (quiet >= END_CHUNKS || sentence.length >= MAX_CHUNKS) finish()
+    else if (quiet === 0 && voiced >= MIN_VOICED && sentence.length % LIVE_CHUNKS === 0) {
+      const sofar = sentence.slice()
+      onSoFar(() => wav(sofar, ctx.sampleRate)) // encoded only if it is going to be sent
+    }
   }
 
   return () => {
@@ -166,13 +176,18 @@ async function listen(onRecording: (audio: Blob) => void, onHearing: (hearing: b
 /**
  * Continuous speech to sentences. The browser only records: each sentence, cut at a pause, goes to the
  * backend, where Gemini writes down what was said (POST /transcribe), and the words go to `onSentence` in
- * the order they were spoken. `hearing` is true while someone is speaking, `writing` while a sentence is
- * with the model. A failure goes to `onError`, in words to show.
+ * the order they were spoken. While a sentence is still being said, what there is of it so far is written
+ * down the same way about once a second: `interim` is those words, for showing live. `hearing` is true
+ * while someone is speaking, `writing` while a sentence is with the model. A failure goes to `onError`, in
+ * words to show.
  */
 export function useSpeechInput(onSentence: (text: string) => void, onError?: (text: string) => void) {
   const [state, setState] = useState<MicState>(speechInputAvailable ? 'off' : 'unsupported')
   const [hearing, setHearing] = useState(false)
   const [writing, setWriting] = useState(0)
+  const [interim, setInterim] = useState('')
+  const saying = useRef(0) // which sentence is being said, or was last: live words for an earlier one are dropped
+  const peeking = useRef(false) // one live request at a time; a slow answer skips a turn, it does not queue
   const wanted = useRef(false)
   const opening = useRef(false)
   const close = useRef<(() => void) | null>(null)
@@ -184,12 +199,36 @@ export function useSpeechInput(onSentence: (text: string) => void, onError?: (te
     failed.current = onError
   })
 
+  const heardSome = useCallback((hearing: boolean) => {
+    setHearing(hearing)
+    if (hearing) {
+      saying.current++
+      setInterim('')
+    }
+  }, [])
+
+  const soFar = useCallback((audio: () => Blob) => {
+    if (peeking.current) return
+    peeking.current = true
+    const id = saying.current
+    void transcribe(audio(), true).then((heard) => {
+      peeking.current = false
+      if ('text' in heard && heard.text && id === saying.current) setInterim(heard.text)
+    })
+  }, [])
+
   const recorded = useCallback((audio: Blob) => {
+    const id = saying.current
     setWriting((n) => n + 1)
     const answer = transcribe(audio) // sent at once; handed on in the order spoken
     order.current = order.current.then(async () => {
       const heard = await answer
       setWriting((n) => n - 1)
+      if (saying.current === id) {
+        // nobody has started another sentence: its live words go, and any still on their way are stale
+        saying.current++
+        setInterim('')
+      }
       if ('error' in heard) failed.current?.(heard.error)
       else if (heard.text.length >= 4) sentence.current(heard.text)
     })
@@ -200,7 +239,7 @@ export function useSpeechInput(onSentence: (text: string) => void, onError?: (te
     if (!speechInputAvailable || close.current || opening.current) return
     opening.current = true
     setState('starting')
-    listen(recorded, setHearing)
+    listen(recorded, heardSome, soFar)
       .then((stop) => {
         if (!wanted.current) return stop() // switched off while the browser was asking for permission
         close.current = stop
@@ -214,17 +253,18 @@ export function useSpeechInput(onSentence: (text: string) => void, onError?: (te
       .finally(() => {
         opening.current = false
       })
-  }, [recorded])
+  }, [recorded, heardSome, soFar])
 
   const stop = useCallback(() => {
     wanted.current = false
     close.current?.()
     close.current = null
     setHearing(false)
+    setInterim('')
     setState((s) => (s === 'unsupported' || s === 'denied' ? s : 'off'))
   }, [])
 
   useEffect(() => () => stop(), [stop])
 
-  return { state, hearing, writing: writing > 0, start, stop }
+  return { state, hearing, writing: writing > 0, interim, start, stop }
 }
