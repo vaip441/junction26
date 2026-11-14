@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, poller, scoring, venues
+from terminal import contextdev, madeup, match, poller, scoring, truth, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -85,6 +85,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus)),
                  asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake)),
                  asyncio.create_task(poller.date_loop(db, app.state.bus))] if poll else []
+        if poll and os.environ.get("TRUTH_FEED"):  # the feed file of trump-social-scraper, where one runs
+            tasks.append(asyncio.create_task(truth.truth_loop(db, app.state.bus, app.state.scorer, os.environ["TRUTH_FEED"])))
         app.state.tasks = tasks
         yield
         for t in tasks:

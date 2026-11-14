@@ -360,8 +360,10 @@ A tick:
 
 `ts` is when we detected the tick and `price_at` is the price at that moment,
 as a percentage from 0 to 100, like every other price in the interface.
-A `post` is from X or Reddit; its `source` names who posted, as `x.com/<handle>` or
-`reddit.com/r/<subreddit>`, and its `headline` is the post's text.
+A `post` is from X, Reddit or Truth Social; its `source` names who posted, as `x.com/<handle>`,
+`reddit.com/r/<subreddit>` or `truthsocial.com/@realDonaldTrump`, and its `headline` is the post's text.
+Trump's posts come from the team's own scraper (`trump-social-scraper/`) within about 20 seconds of
+being made, and are scored for every market whose search queries share a word with the post.
 `likes` and `replies` are the post's counts on X when it was found, and null for everything else
 (Reddit gives no vote counts without a login). Replies, posts that are only a link, posts on X past
 their first hour with under 20 likes, and Reddit's recurring threads and removed posts are never shown.
