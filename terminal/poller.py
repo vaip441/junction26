@@ -97,7 +97,8 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
     lookup, feed = lookup or posts.x_post, feed or posts.subreddit_new
     queries, reserve = market["queries"], 0 if backfill else BACKGROUND_RESERVE
-    searches = [("article", q, {"exclude_domains": NOT_NEWS}) for q in queries]
+    # X and Reddit are left to the posts search: found here too, one post would be two ticks, one unfiltered
+    searches = [("article", q, {"exclude_domains": NOT_NEWS + POST_SITES}) for q in queries]
     searches.append(("post", queries[0], {"include_domains": POST_SITES}))  # posts: the first query only
     found = await asyncio.gather(*(search(q, num_results=num_results, reserve=reserve, **kw) for _, q, kw in searches),
                                  return_exceptions=True)
@@ -146,11 +147,14 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                     read = (published,) if text or published else None  # else left for the batch fill
                 except Exception as e:
                     log.warning("scrape failed for %s: %s", r["url"], e)
+            # search is asked for the last day but also returns older pages: those are history, not live ticks
+            old = published is not None and published < time.time() - FEED_WINDOW
             try:
                 tick = await ingest(db, bus, unscored if trash else scorer, market, kind=kind, source=source,
                                     headline=r["title"], url=r["url"],
                                     body=(text or r.get("text") or r["description"])[:2000], published_ts=published,
-                                    backfill=backfill, likes=known and known["likes"], replies=known and known["replies"])
+                                    backfill=backfill or old, likes=known and known["likes"],
+                                    replies=known and known["replies"])
             except Exception:  # one odd page must not cost the market the rest of the batch
                 log.exception("could not ingest %s", r["url"])
                 return False
@@ -184,6 +188,12 @@ async def date_loop(db, bus, interval: float = 60) -> None:
 RETRY_SECONDS = 60
 
 
+def retry_delay(fails: int) -> float:
+    """A market that failed is tried again in a minute, then 2, 4, ... up to an hour: one whose queries
+    the model will not write, or whose searches all fail, must not cost a call a minute forever."""
+    return min(RETRY_SECONDS * 2 ** min(fails - 1, 10), 3600)
+
+
 def due(db, last_fetch: dict, now: float) -> list[dict]:
     """Lead markets whose polling interval has passed: not-yet-filled ones first, then the fastest.
     A poll interval of 0 means never (the demo market moves only by what is said to it)."""
@@ -197,7 +207,7 @@ MARKETS_AT_ONCE = 4
 
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *, queries_for=None,
                        fetch=None, starting_price=None, limit: asyncio.Semaphore | None = None,
-                       busy: set | None = None) -> None:
+                       busy: set | None = None, fails: dict | None = None) -> None:
     """One round over the due markets. This is the only place articles are fetched, so a market's first
     completed pass is its backfill and every later pass is live; the two never race.
 
@@ -208,6 +218,7 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
     starting_price = starting_price or madeup.starting_price
     limit = limit or asyncio.Semaphore(MARKETS_AT_ONCE)
     busy = set() if busy is None else busy
+    fails = {} if fails is None else fails  # market id -> failed passes in a row
     started = time.time() if now is None else now
     markets = [m for m in due(db, last_fetch, started) if m["id"] not in busy]
     last_fetch.update({m["id"]: started for m in markets})
@@ -232,9 +243,12 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
             if first:
                 store.set_filled(db, m["id"])
                 bus.publish("market", {"market_id": m["id"], "status": "ready", "ticks": n})
+            fails.pop(id, None)
         except Exception as e:
-            log.warning("article pass failed for %s, retrying in %ss: %s", id, RETRY_SECONDS, e)
-            last_fetch[id] = started - poll + RETRY_SECONDS
+            fails[id] = fails.get(id, 0) + 1
+            delay = retry_delay(fails[id])
+            log.warning("article pass failed for %s, retrying in %ss: %s: %s", id, delay, type(e).__name__, e)
+            last_fetch[id] = started - poll + delay
 
     async def one(m: dict) -> None:
         try:
@@ -254,10 +268,11 @@ async def article_loop(db, bus, scorer, wake: asyncio.Event) -> None:
     last_fetch: dict[str, float] = {}
     running: set[asyncio.Task] = set()
     limit, busy = asyncio.Semaphore(MARKETS_AT_ONCE), set()  # shared, so overlapping passes cannot exceed the cap
+    fails: dict[str, int] = {}
 
     async def one_pass() -> None:
         try:
-            await article_pass(db, bus, scorer, last_fetch, limit=limit, busy=busy)
+            await article_pass(db, bus, scorer, last_fetch, limit=limit, busy=busy, fails=fails)
         except Exception:
             log.exception("article pass failed")
 

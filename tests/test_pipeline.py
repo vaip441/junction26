@@ -204,3 +204,36 @@ def test_an_item_the_model_refuses_outright_is_stored_hidden_not_retried_every_p
     assert store.latest_price(db, "m")[1] == 20.0
     # a spoken or typed sentence is never stored as a silent no-effect: the person is told
     assert run(db, bus, refuses, m, kind="typed", headline="refused sentence") is None
+
+
+def test_a_hidden_tick_does_not_move_a_made_up_price():
+    # what moved the price must be on the tape: 259 hidden ticks once drifted a market from 58% to 62%
+    db, bus, q, m = setup()
+
+    async def faint(*_):
+        return Score(0.02, 0.9, 0.08, -0.05)
+
+    assert run(db, bus, faint, m, url="https://a.example/1")["hidden"] is True
+    assert store.prices(db, "m") == [{"ts": 0, "price": 20.0}] and drain(q) == []
+
+
+def test_one_post_on_x_is_one_tick_whatever_its_address_looks_like():
+    from terminal.pipeline import dedupe_key
+
+    keys = {dedupe_key("post", url, "h", 0) for url in (
+        "https://x.com/SomeAnalyst/status/2120971125412827486", "https://twitter.com/SomeAnalyst/status/2120971125412827486?s=20",
+        "https://x.com/i/status/2120971125412827486", "https://mobile.twitter.com/i/web/status/2120971125412827486",
+        "https://x.com/SomeAnalyst/status/2120971125412827486/photo/1")}
+    assert keys == {"x.com/status/2120971125412827486"}
+    assert dedupe_key("post", "https://x.com/SomeAnalyst", "h", 0) == "x.com/SomeAnalyst"  # a profile is not a post
+
+
+def test_a_tick_for_a_market_deleted_while_it_was_being_scored_is_not_stored():
+    db, bus, q, m = setup()
+
+    async def slow(*_):
+        store.delete_market(db, "m")  # the market goes away mid-scoring
+        return UP
+
+    assert run(db, bus, slow, m, url="https://a.example/1") is None
+    assert db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0] == 0 and drain(q) == []

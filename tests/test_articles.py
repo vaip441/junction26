@@ -274,7 +274,9 @@ def test_posts_are_searched_once_per_market_and_stored_as_posts():
     by_source = {t["source"]: t for t in store.ticks(db, "m")}
     assert n == 3 and set(by_source) == {"news.example.com", "x.com/SomeAnalyst", "reddit.com/r/hardware"}
     post = by_source["x.com/SomeAnalyst"]
-    assert post["kind"] == "post" and post["backfill"] is False and post["test"] is False
+    assert post["kind"] == "post" and post["test"] is False
+    assert post["backfill"] is True  # its id says it was posted on 12 Nov: days old, so history
+    assert by_source["reddit.com/r/hardware"]["backfill"] is False
     assert scraped == ["https://www.news.example.com/x"]  # a post is its own text: never read
 
 
@@ -630,3 +632,62 @@ def test_a_link_on_x_that_is_not_a_post_is_not_judged_by_reddits_rules():
     fetch_posts(db, bus, m, [{"url": "https://x.com/SomeAnalyst", "title": "Some Analyst (@SomeAnalyst)", "description": "bio"}],
                 unknown)
     assert [t["source"] for t in store.ticks(db, "m")] == ["x.com/SomeAnalyst"]  # scored and shown, as before
+
+
+def test_news_searches_leave_x_and_reddit_to_the_posts_search():
+    db, bus, m = setup(queries=("a",))
+    searched = []
+
+    async def search(query, **kw):
+        searched.append(kw)
+        return []
+
+    async def scrape(url):
+        return "", None
+
+    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    news = next(kw for kw in searched if not kw.get("include_domains"))
+    assert set(news["exclude_domains"]) >= set(poller.POST_SITES)  # else one post is two ticks, one of them unfiltered
+
+
+def test_an_article_found_live_but_published_days_ago_is_history_not_a_live_tick():
+    db, bus, m = setup(queries=("a",))
+
+    async def search(query, **kw):
+        return RESULTS
+
+    async def scrape(url):
+        return "text", time.time() - (3 * 86400 if url.endswith("/x") else 3600)
+
+    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    assert {t["headline"]: t["backfill"] for t in store.ticks(db, "m")} == {"Story X": True, "Story Y": False}
+
+
+def test_a_market_that_keeps_failing_is_retried_less_and_less_often():
+    db, bus, m = setup()
+    calls, last, fails = [], {}, {}
+
+    async def queries_for(title, rules):
+        raise AssertionError("queries already exist")
+
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        calls.append(len(calls))
+        if len(calls) <= 3:
+            raise poller.FetchFailed("every search failed")
+        return 0
+
+    go = lambda now: asyncio.run(poller.article_pass(db, bus, up, last, now=now, queries_for=queries_for, fetch=fetch,
+                                                     fails=fails))
+    go(1000)                    # fails: again in 1 minute
+    go(1061)                    # fails: again in 2 minutes
+    go(1125)                    # too soon
+    assert len(calls) == 2
+    go(1182)                    # fails: again in 4 minutes
+    go(1300)                    # too soon
+    assert len(calls) == 3
+    go(1423)                    # works
+    assert len(calls) == 4 and fails == {} and store.get_market(db, "m")["filled"] is True
+    for n in range(1, 30):      # however long it has failed, it is tried again within the hour
+        fails["m"] = n
+        assert poller.retry_delay(n) <= 3600
+    assert poller.retry_delay(1) == 60 and poller.retry_delay(3) == 240

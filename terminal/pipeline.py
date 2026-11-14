@@ -22,6 +22,8 @@ def dedupe_key(kind: str, url: str | None, headline: str, ts: float) -> str:
         # add to TRACKING when a site's own noise parameter shows up as duplicates
         query = urlencode(sorted((k, v) for k, v in parse_qsl(u.query) if not TRACKING.match(k.lower())))
         host = u.netloc.lower().removeprefix("www.")
+        if host in ("x.com", "twitter.com", "mobile.twitter.com") and (post := re.search(r"/status/(\d+)", u.path)):
+            return f"x.com/status/{post[1]}"  # one post has many addresses: either site, any handle, /i/, /photo/1
         return host + u.path.rstrip("/") + (f"?{query}" if query else "")
     return re.sub(r"[^a-z0-9]+", " ", headline.lower()).strip()
 
@@ -79,6 +81,8 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         # History is fetched once, and an item the model refuses will be refused again. Left unstored,
         # every later pass would search it up and score it anew, so it is kept as a hidden no-effect tick.
         s = Score(0.0, 1.0, 0.0, 0.0)
+    if store.get_market(db, market["id"]) is None:
+        return None  # deleted while this item was being scored
     v, confidence = verdict(s)
     made_up, latest = market["venue"] == "made_up", store.latest_price(db, market["id"])
     # A made-up price is ours alone, so it always moves from the newest value: two sentences scored
@@ -91,7 +95,9 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
-    if made_up and latest is not None and not backfill:  # history is already in the starting price
+    # history is already in the starting price; and what moves the price must be on the tape, so a
+    # hidden tick moves nothing (259 of them once drifted a market from 58% to 62% with 3 ticks shown)
+    if made_up and latest is not None and not backfill and not tick["hidden"]:
         new, at = nudge(price, s.strength), max(now, latest[0] + 0.001)
         store.add_price(db, market["id"], at, new)
         bus.publish("price", {"market_id": market["id"], "ts": at, "price": new})
