@@ -262,3 +262,19 @@ def test_deleting_a_market_takes_its_moves_with_it():
         store.add_move(db, id, NOW, NOW - 60, 40.0, 45.0, None, None, None, False, [])
     store.delete_market(db, "m")
     assert store.moves(db, "m") == [] and len(store.moves(db, "n")) == 1
+
+
+def test_an_item_scored_as_pushing_the_other_way_is_never_offered_as_the_cause():
+    db, seen = store.connect(":memory:"), []
+    m = market(db)
+    prices(db, "m", (300, 40.0), (0, 46.0))  # up
+    tick(db, "bearish", ago=100, verdict="down")
+    tick(db, "bullish", ago=120, verdict="up")
+    tick(db, "unclear", ago=140, verdict="none")
+    out = asyncio.run(moves.explain(db, Bus(), m, moves.find(db, NOW)[0], fetch=no_fetch, ruler=no_rule, now=NOW,
+                                    decide=decide_with({"t0": 0.6, "t1": 0.2, "none": 0.2}, seen)))
+    input, questions = seen[0]
+    criteria = questions["cause"]["criteria"]
+    assert list(criteria) == ["t0", "t1", "none"] and "headline bullish" in criteria["t0"] and "headline unclear" in criteria["t1"]
+    assert "go up" in questions["cause"]["instructions"] and "other way" in questions["cause"]["instructions"]
+    assert out["cause"]["headline"] == "headline bullish"
