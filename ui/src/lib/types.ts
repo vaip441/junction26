@@ -23,8 +23,18 @@ export interface Source {
   moved: number
 }
 
+/** A sentence of a market's rules: `start` and `end` are character positions in its `rules` text. */
+export interface RuleRef {
+  start: number
+  end: number
+  text: string
+  confidence: number
+}
+
 export interface MarketDetail extends MarketSummary {
   rules: string
+  /** Companies the market is about, for the news index. */
+  companies?: string[]
   queries: string[] | null
   related: MarketSummary[]
   pages: unknown[]
@@ -51,6 +61,22 @@ export interface Tick {
   backfill: boolean
   likes: number | null
   replies: number | null
+  /** The rules sentence that makes this tick matter: on spoken and typed ticks and on ticks that call a move. */
+  rule?: RuleRef | null
+}
+
+/** "Why did it move?": the price went from `from` at `since` to `to` at `ts`. Real markets only. */
+export interface Move {
+  id: number
+  market_id: string
+  ts: number
+  since: number
+  from: number
+  to: number
+  /** The tick named as the most likely reason; null when nothing published around the move explains it. */
+  cause: Tick | null
+  confidence: number | null
+  rule: RuleRef | null
 }
 
 export interface PricePoint {
@@ -87,5 +113,6 @@ export type StreamEvent =
   | { type: 'tick'; data: Tick }
   | { type: 'tick_update'; data: Tick }
   | { type: 'price'; data: PriceEvent }
+  | { type: 'move'; data: Move }
   | { type: 'market'; data: MarketEvent }
   | { type: 'page_check'; data: { market_id: string } & Record<string, unknown> }

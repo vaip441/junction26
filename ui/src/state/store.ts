@@ -1,8 +1,12 @@
 import { create } from 'zustand'
 import type { StreamStatus } from '../lib/stream'
-import type { MarketDetail, MarketEvent, MarketSummary, PricePoint, StreamEvent, Tick, WeekendRecord } from '../lib/types'
+import type { MarketDetail, MarketEvent, MarketSummary, Move, PricePoint, RuleRef, StreamEvent, Tick, WeekendRecord } from '../lib/types'
 
 const MAX_TICKS = 500
+const MAX_MOVES = 100
+
+/** The tabs under the chart. */
+export type Tab = 'moves' | 'sources' | 'related' | 'rules'
 
 /** A spoken or typed sentence sent for scoring, shown on the tape until its scored tick arrives. */
 export interface PendingTick {
@@ -34,13 +38,19 @@ interface State {
   details: Record<string, MarketDetail>
   ticks: Record<string, Tick[]>
   prices: Record<string, PricePoint[]>
+  /** "Why did it move?": price jumps with their likely cause, newest first. Real markets only. */
+  moves: Record<string, Move[]>
+  /** A move that arrived on the stream just now, for the banner over the chart. */
+  liveMove: Move | null
+  tab: Tab
+  /** A rules sentence to scroll to and flash in the Rules tab; `n` makes a repeat click count. */
+  focusRule: { start: number; end: number; n: number } | null
   selectedId: string | null
   stream: StreamStatus
   /** Live `market` status steps for a plain-words question being worked on. */
   ask: Ask | null
   pending: Record<string, PendingTick[]>
   /** Stage controls. */
-  muted: boolean
   micOn: boolean
   presentation: boolean
   /** A write was refused for want of the key: the key prompt is open. */
@@ -54,6 +64,10 @@ interface State {
   setDetail: (d: MarketDetail) => void
   setTicks: (id: string, ticks: Tick[]) => void
   setPrices: (id: string, prices: PricePoint[]) => void
+  setMoves: (id: string, moves: Move[]) => void
+  clearLiveMove: () => void
+  setTab: (tab: Tab) => void
+  showRule: (rule: RuleRef) => void
   select: (id: string | null) => void
   setStream: (s: StreamStatus) => void
   startAsk: (query: string) => void
@@ -63,7 +77,6 @@ interface State {
   apply: (e: StreamEvent) => void
   addPending: (marketId: string, text: string, kind: 'mic' | 'typed') => number
   removePending: (marketId: string, key: number) => void
-  toggleMute: () => void
   setMic: (on: boolean) => void
   togglePresentation: (on?: boolean) => void
   setNeedKey: (on: boolean) => void
@@ -77,11 +90,14 @@ export const useStore = create<State>((set) => ({
   details: {},
   ticks: {},
   prices: {},
+  moves: {},
+  liveMove: null,
+  tab: 'moves',
+  focusRule: null,
   selectedId: null,
   stream: 'connecting',
   ask: null,
   pending: {},
-  muted: false,
   micOn: false,
   presentation: false,
   needKey: false,
@@ -99,6 +115,10 @@ export const useStore = create<State>((set) => ({
     set((s) => ({ details: { ...s.details, [d.id]: d }, markets: { ...s.markets, [d.id]: { ...s.markets[d.id], ...d } } })),
   setTicks: (id, ticks) => set((s) => ({ ticks: { ...s.ticks, [id]: ticks.slice(0, MAX_TICKS) } })),
   setPrices: (id, prices) => set((s) => ({ prices: { ...s.prices, [id]: prices } })),
+  setMoves: (id, moves) => set((s) => ({ moves: { ...s.moves, [id]: moves.slice(0, MAX_MOVES) } })),
+  clearLiveMove: () => set({ liveMove: null }),
+  setTab: (tab) => set({ tab }),
+  showRule: (rule) => set((s) => ({ tab: 'rules', focusRule: { start: rule.start, end: rule.end, n: (s.focusRule?.n ?? 0) + 1 } })),
   select: (id) => set({ selectedId: id }),
   setStream: (stream) => set({ stream }),
   startAsk: (query) =>
@@ -121,7 +141,6 @@ export const useStore = create<State>((set) => ({
   },
   removePending: (marketId, key) =>
     set((s) => ({ pending: { ...s.pending, [marketId]: (s.pending[marketId] ?? []).filter((p) => p.key !== key) } })),
-  toggleMute: () => set((s) => ({ muted: !s.muted })),
   setMic: (micOn) => set({ micOn }),
   togglePresentation: (on) => set((s) => ({ presentation: on ?? !s.presentation })),
   setNeedKey: (needKey) => set({ needKey }),
@@ -159,6 +178,19 @@ export const useStore = create<State>((set) => ({
           return {
             markets: m ? { ...s.markets, [market_id]: { ...m, price } } : s.markets,
             prices: points ? { ...s.prices, [market_id]: [...points, { ts, price }] } : s.prices,
+          }
+        }
+        case 'move': {
+          const mv = e.data
+          const list = s.moves[mv.market_id] ?? []
+          if (list.some((x) => x.id === mv.id)) return {}
+          // its cause is a whole tick again: it may carry a rule the copy on the tape lacks
+          const tape = s.ticks[mv.market_id]
+          const cause = mv.cause
+          return {
+            moves: { ...s.moves, [mv.market_id]: [mv, ...list].slice(0, MAX_MOVES) },
+            liveMove: mv,
+            ticks: tape && cause ? { ...s.ticks, [mv.market_id]: tape.map((x) => (x.id === cause.id ? cause : x)) } : s.ticks,
           }
         }
         case 'market': {

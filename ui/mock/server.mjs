@@ -1,8 +1,9 @@
 // Mock of the terminal backend, for building and testing the UI without the real one.
 //
 // Serves the whole "Interface for the frontend" contract (docs/superpowers/specs/2026-11-13-terminal-design.md)
-// with made-up data, and keeps the stream busy: prices drift, new ticks arrive, and a strong call is often
-// followed by a move its way, so the tape's lifecycle badges change while you watch. Every market title starts
+// with made-up data, and keeps the stream busy: prices drift, new ticks arrive, a strong call is often
+// followed by a move its way, so the tape's lifecycle badges change while you watch, and now and then a
+// price jumps and a `move` event names its cause ("why did it move?"). Every market title starts
 // with "MOCK" so mock data is never mistaken for real data on a screenshot.
 //
 //   node mock/server.mjs              port 8765, writes open
@@ -45,13 +46,46 @@ const markets = new Map()
 const prices = new Map()
 /** id -> [tick] newest first */
 const ticks = new Map()
+/** id -> [move] newest first: "why did it move?" */
+const moves = new Map()
+let nextMoveId = 1
 let nextTickId = 1
 const startedAt = now()
 
 function addMarket(m) {
-  markets.set(m.id, { url: null, rules: 'Mock market: made-up rules.', queries: [], lead_id: null, poll_seconds: 900, created: now(), ...m })
+  markets.set(m.id, { url: null, rules: MOCK_RULES, queries: [], lead_id: null, poll_seconds: 900, created: now(), ...m })
   prices.set(m.id, prices.get(m.id) ?? [])
   ticks.set(m.id, ticks.get(m.id) ?? [])
+  moves.set(m.id, moves.get(m.id) ?? [])
+}
+
+const MOCK_RULES =
+  'Mock market: made-up rules. This market resolves to Yes if the event named in the title happens before the deadline. ' +
+  'An official announcement by the company or a filing with a regulator counts as the event happening. ' +
+  'Reports citing unnamed sources do not count on their own. ' +
+  'If it becomes impossible for the event to happen before the deadline, this market resolves to No.'
+
+/** A sentence of the market's rules, as the backend's Decision 1 would pick: positions in the rules text. */
+function ruleOf(m, confidence = rand(0.45, 0.95)) {
+  const spans = []
+  const re = /[^.!?]+[.!?]+/g
+  for (let x; (x = re.exec(m.rules)); ) {
+    const lead = x[0].length - x[0].trimStart().length
+    if (x[0].trim().length >= 20) spans.push([x.index + lead, x.index + x[0].length])
+  }
+  if (spans.length < 2) return null
+  const [start, end] = pick(spans)
+  return { start, end, text: m.rules.slice(start, end), confidence: round(confidence * 1000) / 1000 }
+}
+
+/** Store a move and return it as the frontend sees it. `cause` is a tick or null. */
+function addMove(id, f) {
+  const cause = f.cause ?? null
+  if (cause && !cause.rule) cause.rule = ruleOf(markets.get(id))
+  const move = { id: nextMoveId++, market_id: id, ts: f.ts, since: f.since, from: round(f.from), to: round(f.to),
+    cause, confidence: cause ? round((f.confidence ?? rand(0.45, 0.9)) * 1000) / 1000 : null, rule: cause?.rule ?? null }
+  moves.get(id).unshift(move)
+  return move
 }
 
 function addPrice(id, ts, price) {
@@ -98,6 +132,8 @@ function makeTick(marketId, f) {
     test: f.kind === 'mic' || f.kind === 'typed', backfill: f.backfill ?? false,
     likes: f.kind === 'post' && f.source?.startsWith('x.com') ? Math.round(rand(20, 4000)) : null,
     replies: f.kind === 'post' && f.source?.startsWith('x.com') ? Math.round(rand(2, 300)) : null,
+    // the rules sentence that makes it matter: on spoken and typed ticks, and later on ticks that call a move
+    rule: f.kind === 'mic' || f.kind === 'typed' ? ruleOf(markets.get(marketId)) : null,
   }
 }
 
@@ -128,7 +164,7 @@ function detail(m) {
     counts.set(t.source, c)
   }
   return {
-    ...summary(m), rules: m.rules, queries: m.queries,
+    ...summary(m), rules: m.rules, queries: m.queries, companies: [],
     related: [...markets.values()].filter((r) => r.lead_id === m.id).map(summary), pages: [],
     sources: [...counts.values()].sort((a, b) => b.ticks - a.ticks),
   }
@@ -142,13 +178,17 @@ const LIVE_HEADLINES = {
     'Spokesperson: "nothing to announce"', 'Earnings call says leadership is staying put'],
   none: ['Shares flat in early trading', 'Conference schedule published', 'Analyst note repeats earlier view', 'Weekly roundup of chip news'],
 }
+const TRUTH = 'truthsocial.com/@realDonaldTrump'
 const SOURCES = ['reuters.com', 'bloomberg.com', 'ft.com', 'cnbc.com', 'theinformation.com', 'x.com/marketsdesk', 'reddit.com/r/stocks', 'sec.gov']
 
 // ---- seed data -----------------------------------------------------------------------------------------
 
 const DEMO = 'mu-demo'
 addMarket({ id: DEMO, venue: 'made_up', title: 'MOCK · Will this team win the Context.dev challenge?', poll_seconds: 0,
-  rules: 'Resolves yes if this team is announced as the winner of the Context.dev challenge at Junction 2026.' })
+  rules: 'Resolves yes if this team is announced as the winner of the Context.dev challenge at Junction 2026. ' +
+    'The announcement must be made on stage or in writing by the organisers or by Context.dev. ' +
+    'What judges say during the demo does not settle the market, but it moves the odds. ' +
+    'If no winner of the challenge is announced by the end of the event, this market resolves to No.' })
 addPrice(DEMO, now() - 3600, 20)
 
 // The Nvidia market carries one tick in every lifecycle state, on a price path built to produce them.
@@ -175,6 +215,11 @@ addMarket({ id: NV, venue: 'polymarket', title: 'MOCK · Will Ian Buck be the ne
     [1, { verdict: 'none', confidence: 0.8, headline: 'Nvidia stock closes flat ahead of earnings', source: 'marketwatch.com' }],
   ]
   for (const [mins, f] of seed) addTick(makeTick(NV, { ...f, ts: m(mins) }))
+  // Past moves: one with a cause from each direction of the search, and one nothing explains.
+  const seeded = (headline) => ticks.get(NV).find((t) => t.headline.startsWith(headline))
+  addMove(NV, { since: m(120), ts: m(115), from: 40, to: 44, cause: seeded('Jensen Huang said'), confidence: 0.72 })
+  addMove(NV, { since: m(100), ts: m(80), from: 45, to: 48, cause: null })
+  addMove(NV, { since: m(9), ts: m(6), from: 51, to: 53, cause: seeded('Analysts list Buck'), confidence: 0.58 })
   for (const [id, title, venue, p, url] of [
     ['mock-nvidia-ceo-2027', 'MOCK · Nvidia CEO change announced by March 2027?', 'polymarket', 18, 'https://polymarket.com/event/next-ceo-of-nvidia/nvidia-ceo-change-by-march-2027'],
     ['mock-kx-nvidia-ceo', 'MOCK · Will Ian Buck be named Nvidia CEO? (Kalshi)', 'kalshi', 51, 'https://kalshi.com/markets/kxnvdaceo/nvidia-ceo/kxnvdaceo-buck'],
@@ -192,6 +237,8 @@ for (let i = 0; i < 14; i++) {
   addTick(makeTick(AI, { ts: now() - rand(600, 86000), verdict: v, strength: rand(0.1, 0.9), confidence: rand(0.5, 0.95),
     backfill: i < 5, headline: pick(LIVE_HEADLINES[v]), source: pick(SOURCES) }))
 }
+addTick(makeTick(AI, { ts: now() - 1500, verdict: 'down', strength: 0.5, confidence: 0.7, kind: 'post', source: TRUTH,
+  headline: 'The so-called AI companies should NOT be allowed to go public until they pay for the power they use. Sad!' }))
 ticks.get(AI).sort((a, b) => b.ts - a.ts)
 
 // ---- stream --------------------------------------------------------------------------------------------
@@ -244,7 +291,7 @@ async function liveTicks() {
     const verdict = pick(['up', 'down', 'none', 'up', 'down'])
     const strength = rand(0.15, 0.95)
     const kind = pick(['article', 'article', 'post', 'filing', 'page'])
-    const source = kind === 'post' ? pick(['x.com/marketsdesk', 'x.com/chipwatcher', 'reddit.com/r/stocks']) : kind === 'filing' ? 'sec.gov' : pick(SOURCES.slice(0, 5))
+    const source = kind === 'post' ? pick(['x.com/marketsdesk', 'x.com/chipwatcher', 'reddit.com/r/stocks', TRUTH]) : kind === 'filing' ? 'sec.gov' : pick(SOURCES.slice(0, 5))
     const t = makeTick(m.id, { verdict, strength, confidence: rand(0.5, 0.95), kind, source, headline: pick(LIVE_HEADLINES[verdict]),
       published_ts: kind === 'article' && Math.random() < 0.5 ? null : now() - rand(5, 300) })
     emitTick(t)
@@ -262,6 +309,43 @@ async function liveTicks() {
   }
 }
 void liveTicks()
+
+/**
+ * "Why did it move?": every 40-80 s a lead venue market jumps 3-5 points within a few seconds. Like the real
+ * backend, the search comes after the jump: some seconds later the cause arrives as a tick, then the move
+ * that names it. One jump in four has no cause.
+ */
+async function liveMoves() {
+  for (;;) {
+    await sleep(rand(40, 80) * 1000)
+    const leads = venueMarkets().filter((m) => m.lead_id == null)
+    if (QUIET || leads.length === 0) continue
+    const m = pick(leads)
+    const from = latest(m.id)
+    if (from == null) continue
+    const dir = from > 85 ? -1 : from < 15 ? 1 : pick([1, -1])
+    const size = rand(3, 5)
+    const since = now()
+    for (let i = 1; i <= 3; i++) {
+      await sleep(1500)
+      emitPrice(m.id, clamp(from + (dir * size * i) / 3))
+    }
+    await sleep(rand(3, 6) * 1000) // the web is searched first
+    if (!markets.has(m.id)) continue
+    let cause = null
+    if (Math.random() < 0.75) {
+      const verdict = dir > 0 ? 'up' : 'down'
+      const kind = pick(['article', 'article', 'post'])
+      cause = makeTick(m.id, { verdict, strength: rand(0.5, 0.95), confidence: rand(0.6, 0.95), kind,
+        source: kind === 'post' ? pick(['x.com/marketsdesk', TRUTH]) : pick(SOURCES.slice(0, 5)), headline: pick(LIVE_HEADLINES[verdict]),
+        published_ts: since - rand(60, 600), price_at: from })
+      cause.rule = ruleOf(m)
+      emitTick(cause)
+    }
+    send('move', addMove(m.id, { since, ts: now(), from, to: latest(m.id), cause }))
+  }
+}
+void liveMoves()
 
 /** A deciding page checked now and then. */
 setInterval(() => {
@@ -412,6 +496,10 @@ async function route(req, url) {
       return [200, ticks.get(m.id).slice(0, limit)]
     }
     if (parts[2] === 'ticks' && req.method === 'POST') return postTick(m, await readBody(req))
+    if (parts[2] === 'moves' && req.method === 'GET') {
+      const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') ?? 20)))
+      return [200, moves.get(m.id).slice(0, limit)]
+    }
     if (parts[2] === 'prices' && req.method === 'GET') {
       const since = Number(url.searchParams.get('since') ?? 0)
       return [200, prices.get(m.id).filter((p) => p.ts >= since)]

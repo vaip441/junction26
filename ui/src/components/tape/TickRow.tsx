@@ -1,9 +1,11 @@
 import { absoluteTime, tickTime, timeAgo } from '../../lib/format'
 import type { Lifecycle } from '../../lib/lifecycle'
-import type { Tick, TickKind } from '../../lib/types'
+import type { Move, Tick, TickKind } from '../../lib/types'
+import { useStore } from '../../state/store'
 import { shortSource } from '../../lib/sources'
 import { Badge } from '../common/Badge'
 import { SourceIcon } from '../common/SourceIcon'
+import { MoveSpan } from '../market/MovesPanel'
 import { DecisionBar } from './DecisionBar'
 import { LifecycleBadge } from './LifecycleBadge'
 import { VerdictBadge } from './VerdictBadge'
@@ -18,7 +20,9 @@ const KIND_LABEL: Record<TickKind, string> = {
 }
 
 
-export function TickRow({ tick, life, now }: { tick: Tick; life: Lifecycle | null; now: number }) {
+export function TickRow({ tick, life, move, now }: { tick: Tick; life: Lifecycle | null; move?: Move; now: number }) {
+  const showRule = useStore((s) => s.showRule)
+  const setTab = useStore((s) => s.setTab)
   const at = tickTime(tick)
   const quiet = tick.verdict === 'none'
   // arrived in the last few seconds: animate the decision (first paint of history stays still)
@@ -50,9 +54,27 @@ export function TickRow({ tick, life, now }: { tick: Tick; life: Lifecycle | nul
         )}
       </p>
       <DecisionBar up={tick.up} none={tick.none} down={tick.down} fresh={fresh} />
-      {life && (
-        <div>
-          <LifecycleBadge life={life} verdict={tick.verdict} />
+      {tick.rule && (
+        <button
+          onClick={() => showRule(tick.rule!)}
+          title={`The sentence of the rules that makes this matter (${Math.round(tick.rule.confidence * 100)}%): ${tick.rule.text}`}
+          className="line-clamp-1 text-left text-[11px] italic text-muted hover:text-text"
+        >
+          § “{tick.rule.text}”
+        </button>
+      )}
+      {(life || move) && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {move && (
+            <button
+              onClick={() => setTab('moves')}
+              title="The terminal names this as the likely cause of a price jump"
+              className="inline-flex items-center gap-1 rounded border border-line px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider text-text hover:border-accent"
+            >
+              Moved the price <MoveSpan move={move} />
+            </button>
+          )}
+          {life && <LifecycleBadge life={life} verdict={tick.verdict} />}
         </div>
       )}
       <p className="flex items-center gap-3 text-[11px] text-faint">

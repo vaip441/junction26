@@ -15,11 +15,14 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNow } from '../../hooks/useNow'
 import { pct, tickTime, timeAgo } from '../../lib/format'
+import { focusTick } from '../../lib/focus'
 import { tickLifecycle } from '../../lib/lifecycle'
-import type { PricePoint, Tick } from '../../lib/types'
+import { shortSource } from '../../lib/sources'
+import type { Move, PricePoint, Tick } from '../../lib/types'
 import { useStore } from '../../state/store'
 import { EmptyState } from '../common/EmptyState'
-import { TickMarkers, type TickMark } from './tickMarkers'
+import { MoveSpan } from './MovesPanel'
+import { TickMarkers, type MoveBand, type TickMark } from './tickMarkers'
 
 const MAX_MARKERS = 300
 /** Lead-time lines drawn at once: the newest ones, so the chart stays readable. */
@@ -70,18 +73,10 @@ function minutes(seconds: number): string {
   return `${Math.max(1, Math.round(seconds / 60))} min`
 }
 
-/** Scroll the tape to a tick and flash it. */
-function focusTick(id: number) {
-  const row = document.getElementById(`tick-${id}`)
-  if (!row) return
-  row.scrollIntoView({ behavior: 'smooth', block: 'center' })
-  row.classList.remove('tape-focus')
-  void row.offsetWidth // restart the animation
-  row.classList.add('tape-focus')
-}
-
 interface Hover {
-  tick: Tick
+  /** A dot (a call) or a band (a price jump) under the pointer. */
+  tick?: Tick
+  move?: Move
   x: number
   y: number
   /** Chart width when hovered, to keep the tooltip inside it. */
@@ -101,11 +96,13 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const carets = useRef<TickMarkers | null>(null)
   const leads = useRef(new Map<number, ISeriesApi<'Line'>>())
   const byMarker = useRef(new Map<string, Tick>())
+  const byBand = useRef(new Map<string, Move>())
   const fitted = useRef<string | null>(null)
   const [hover, setHover] = useState<Hover | null>(null)
 
   const prices = useStore((s) => s.prices[marketId])
   const ticks = useStore((s) => s.ticks[marketId])
+  const moves = useStore((s) => s.moves[marketId])
   const market = useStore((s) => s.markets[marketId])
   const presentation = useStore((s) => s.presentation)
   const now = useNow(5000)
@@ -141,17 +138,24 @@ export function PriceChart({ marketId }: { marketId: string }) {
     s.attachPrimitive(tm)
     carets.current = tm
 
-    const markerTick = (p: MouseEventParams<Time>) => {
+    const under = (p: MouseEventParams<Time>) => {
       const id = p.hoveredInfo?.objectId ?? p.hoveredObjectId
-      return typeof id === 'string' ? byMarker.current.get(id) : undefined
+      if (typeof id !== 'string') return {}
+      return { tick: byMarker.current.get(id), move: byBand.current.get(id) }
     }
     c.subscribeCrosshairMove((p) => {
-      const t = markerTick(p)
-      setHover(t && p.point ? { tick: t, x: p.point.x, y: p.point.y, width: box.current?.clientWidth ?? 0 } : null)
+      const { tick, move } = under(p)
+      setHover((tick || move) && p.point ? { tick, move, x: p.point.x, y: p.point.y, width: box.current?.clientWidth ?? 0 } : null)
     })
     c.subscribeClick((p) => {
-      const t = markerTick(p)
-      if (t) focusTick(t.id)
+      const { tick, move } = under(p)
+      if (tick) focusTick(tick.id)
+      else if (move) {
+        // the answer is in the tab under the chart, and its cause is on the tape
+        useStore.getState().setTab('moves')
+        requestAnimationFrame(() => document.getElementById(`move-${move.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+        if (move.cause) focusTick(move.cause.id)
+      }
     })
 
     // The chart has no width until its box is laid out, and a fit made then squeezes a short history into a
@@ -253,7 +257,21 @@ export function PriceChart({ marketId }: { marketId: string }) {
     out.sort((a, b) => (a.time as number) - (b.time as number))
     markers.current.setMarkers(out)
     marks.reverse() // oldest first, so the newest call sits on the line and draws on top
-    carets.current?.set(marks, presentation ? 1.4 : 1, cssVar('--color-panel') || '#0d1117')
+
+    // price jumps: a band over the stretch where each happened, grey when nothing explains it
+    const none = cssVar('--color-none') || '#6b7280'
+    const bands: MoveBand[] = []
+    const bandIndex = new Map<string, Move>()
+    for (const m of moves ?? []) {
+      const from = snap(times, m.since)
+      const to = snap(times, m.ts)
+      if (from == null || to == null) continue // before the price history starts
+      const bid = `m${m.id}`
+      bands.push({ id: bid, from, to, color: !m.cause ? none : m.to >= m.from ? up : down })
+      bandIndex.set(bid, m)
+    }
+    byBand.current = bandIndex
+    carets.current?.set(marks, bands, presentation ? 1.4 : 1, cssVar('--color-panel') || '#0d1117')
     byMarker.current = index
 
     // keep one dashed line series per lead; drop the ones no longer wanted
@@ -282,8 +300,9 @@ export function PriceChart({ marketId }: { marketId: string }) {
         { time: l.to, value: l.end },
       ])
     }
-  }, [ticks, data, prices, market?.made_up, now, presentation])
+  }, [ticks, moves, data, prices, market?.made_up, now, presentation])
 
+  const tick = hover?.tick
   const empty =
     prices === undefined
       ? 'Loading prices…'
@@ -301,7 +320,29 @@ export function PriceChart({ marketId }: { marketId: string }) {
           <EmptyState title={empty} />
         </div>
       )}
-      {hover && hover.tick.market_id === marketId && (
+      {hover?.move && !hover.tick && hover.move.market_id === marketId && (
+        <div
+          className="pointer-events-none absolute z-10 max-w-72 rounded border border-line bg-panel-2/95 p-2 shadow-lg"
+          style={{ left: Math.max(4, Math.min(hover.x + 12, hover.width - 290)), top: Math.max(4, hover.y - 70) }}
+        >
+          <p className="text-[11px]">
+            <span className="mr-2 font-semibold uppercase tracking-wider text-muted">Why did it move?</span>
+            <MoveSpan move={hover.move} />
+          </p>
+          {hover.move.cause ? (
+            <p className="line-clamp-3 text-xs leading-snug text-text">
+              <span className="text-muted">
+                likely cause{hover.move.confidence != null && ` (${Math.round(hover.move.confidence * 100)}%)`}: {shortSource(hover.move.cause.source)}:{' '}
+              </span>
+              {hover.move.cause.headline}
+            </p>
+          ) : (
+            <p className="text-xs text-muted">No cause found on the web</p>
+          )}
+          <p className="mt-0.5 text-[10px] text-faint">click for the answer under the chart</p>
+        </div>
+      )}
+      {hover && tick && tick.market_id === marketId && (
         <div
           className="pointer-events-none absolute z-10 max-w-72 rounded border border-line bg-panel-2/95 p-2 shadow-lg"
           style={{
@@ -309,11 +350,11 @@ export function PriceChart({ marketId }: { marketId: string }) {
             top: Math.max(4, hover.y - 70),
           }}
         >
-          <p className={`num text-[11px] font-bold ${hover.tick.verdict === 'up' ? 'text-up' : 'text-down'}`}>
-            {hover.tick.verdict === 'up' ? '▲ UP' : '▼ DOWN'} {Math.round(hover.tick.confidence * 100)}%
-            <span className="ml-2 font-normal text-faint">{timeAgo(tickTime(hover.tick))}</span>
+          <p className={`num text-[11px] font-bold ${tick.verdict === 'up' ? 'text-up' : 'text-down'}`}>
+            {tick.verdict === 'up' ? '▲ UP' : '▼ DOWN'} {Math.round(tick.confidence * 100)}%
+            <span className="ml-2 font-normal text-faint">{timeAgo(tickTime(tick))}</span>
           </p>
-          <p className="line-clamp-3 text-xs leading-snug text-text">{hover.tick.headline}</p>
+          <p className="line-clamp-3 text-xs leading-snug text-text">{tick.headline}</p>
           <p className="mt-0.5 text-[10px] text-faint">click to find it on the tape</p>
         </div>
       )}

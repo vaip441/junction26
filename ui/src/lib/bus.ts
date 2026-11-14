@@ -6,8 +6,8 @@ const listeners = new Set<Listener>()
 const seen = new Set<number>()
 
 /**
- * Every tick that is new *now* (from the stream or from our own POST), announced exactly once, so voice
- * and sound react to it once even when the stream and the POST response both deliver it. First-paint
+ * Every tick that is new *now* (from the stream or from our own POST), announced exactly once, so the edge
+ * flash reacts to it once even when the stream and the POST response both deliver it. First-paint
  * history never goes through here.
  */
 export function announceTick(t: Tick): void {

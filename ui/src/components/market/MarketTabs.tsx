@@ -1,15 +1,21 @@
-import { useState } from 'react'
 import type { MarketDetail } from '../../lib/types'
+import { useStore, type Tab } from '../../state/store'
+import { MovesPanel } from './MovesPanel'
 import { RelatedContracts } from './RelatedContracts'
 import { RulesPanel } from './RulesPanel'
 import { SourcesPanel } from './SourcesPanel'
 
-type Tab = 'sources' | 'related' | 'rules'
-
-/** Under the chart: where the ticks came from, the related contracts, and the rules. */
-export function MarketTabs({ detail }: { detail: MarketDetail | undefined }) {
-  const [tab, setTab] = useState<Tab>('sources')
+/**
+ * Under the chart: why the price moved, where the ticks came from, the related contracts, and the rules.
+ * A made-up market has no moves (its price moves only by its own ticks), so it has no such tab.
+ */
+export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; madeUp: boolean; detail: MarketDetail | undefined }) {
+  const wanted = useStore((s) => s.tab)
+  const setTab = useStore((s) => s.setTab)
+  const moves = useStore((s) => s.moves[marketId])
+  const tab: Tab = madeUp && wanted === 'moves' ? 'sources' : wanted
   const tabs: { id: Tab; label: string; count?: number }[] = [
+    ...(madeUp ? [] : [{ id: 'moves' as const, label: 'Why did it move?', count: moves?.length }]),
     { id: 'sources', label: 'Sources', count: detail?.sources.length },
     { id: 'related', label: 'Related', count: detail?.related.length },
     { id: 'rules', label: 'Rules' },
@@ -33,14 +39,16 @@ export function MarketTabs({ detail }: { detail: MarketDetail | undefined }) {
         ))}
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {!detail ? (
+        {tab === 'moves' ? (
+          <MovesPanel moves={moves} />
+        ) : !detail ? (
           <p className="p-3 text-xs text-faint">Loading…</p>
         ) : tab === 'sources' ? (
           <SourcesPanel sources={detail.sources} />
         ) : tab === 'related' ? (
           <RelatedContracts related={detail.related} />
         ) : (
-          <RulesPanel rules={detail.rules} queries={detail.queries} />
+          <RulesPanel marketId={marketId} rules={detail.rules} queries={detail.queries} />
         )}
       </div>
     </div>

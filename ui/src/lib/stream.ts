@@ -1,7 +1,7 @@
 import { API_URL } from './api'
 import type { StreamEvent } from './types'
 
-const EVENT_TYPES = ['tick', 'tick_update', 'price', 'market', 'page_check'] as const
+const EVENT_TYPES = ['tick', 'tick_update', 'price', 'move', 'market', 'page_check'] as const
 
 export type StreamStatus = 'connecting' | 'live' | 'reconnecting'
 

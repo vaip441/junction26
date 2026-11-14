@@ -7,7 +7,6 @@ const LABEL: Record<MicState, string> = {
   off: 'mic off · press Space',
   starting: 'starting the mic…',
   listening: 'listening',
-  paused: 'paused while the terminal speaks',
   unsupported: 'no speech input in this browser: type below',
   denied: 'mic blocked: allow it in the address bar, or type below',
 }

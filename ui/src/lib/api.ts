@@ -1,4 +1,4 @@
-import type { MarketDetail, MarketSummary, PricePoint, Tick, WeekendRecord } from './types'
+import type { MarketDetail, MarketSummary, Move, PricePoint, Tick, WeekendRecord } from './types'
 
 export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
 
@@ -64,6 +64,7 @@ export const api = {
   market: (id: string) => request<MarketDetail>(`/markets/${encodeURIComponent(id)}`),
   ticks: (id: string, limit = 200) => request<Tick[]>(`/markets/${encodeURIComponent(id)}/ticks?limit=${limit}`),
   prices: (id: string, since = 0) => request<PricePoint[]>(`/markets/${encodeURIComponent(id)}/prices?since=${since}`),
+  moves: (id: string, limit = 20) => request<Move[]>(`/markets/${encodeURIComponent(id)}/moves?limit=${limit}`),
   record: () => request<WeekendRecord>('/record'),
 
   addMarket: (query: string, pollSeconds = 900) =>

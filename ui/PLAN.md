@@ -13,13 +13,18 @@ unless a step below names one.
 The hackathon is won on the demo, and the demo is about two minutes:
 
 1. **The market on us.** "Will this team win the Context.dev challenge?" starts at 20%. A judge
-   talks; every sentence becomes a tick, is scored, moves the price, and the screen *says* the
-   verdict out loud. The judge discovers they are moving the chart by talking.
+   talks; every sentence becomes a tick, is scored, moves the price, and the verdict lands on the
+   tape and the chart. The judge discovers they are moving the chart by talking.
 2. **The live web.** Swap to the Nvidia CEO market: real price chart with our scored ticks pinned
    on it.
 3. **Ask anything.** The judge types a question in plain words. The screen narrates the search
    ("searching venues", "found 3 contracts", "tracking"), then the tape fills within seconds.
 4. **The weekend record.** How many up/down calls we made and how often the price followed.
+
+Beat 2 has a stronger form since the backend learned to work backwards (14 Nov, `terminal/moves.py`):
+**"why did it move?"** Point at a jump on the Nvidia chart and the screen names the article or post
+behind it, how sure it is, and the sentence of the market's rules that makes it matter. See
+"From the backend, 14 Nov" below.
 
 Every design choice below serves one of those four beats. If a feature doesn't, it waits.
 
@@ -70,7 +75,7 @@ Below ~1000 px the three columns stack: header, chart, tape; the market list bec
 ```
 ui/
   PLAN.md                this file
-  public/                static assets (favicon, sounds)
+  public/                static assets (favicon)
   src/
     app/                 App.tsx, routes/views, keyboard shortcuts, presentation mode
     components/
@@ -80,7 +85,7 @@ ui/
       input/             AskBar, AskProgress, MicBar, TypeTickBox, KeyPrompt
       record/            RecordCard, RecordView
       common/            Price, Points, TimeAgo, Badge, Spinner-with-words, EmptyState
-    hooks/               useStream, useMarket, useSpeechInput, useVoiceCallout, useHotkeys
+    hooks/               useStream, useMarket, useSpeechInput, useHotkeys
     lib/                 api.ts (typed fetch), stream.ts (EventSource), format.ts, types.ts
     state/               store.ts (zustand): markets, ticks by market, prices, ask progress
     styles/              tailwind entry, theme tokens (verdict colours, type scale)
@@ -91,7 +96,10 @@ ui/
 ### `lib/types.ts`
 Mirror the spec exactly: `MarketSummary`, `MarketDetail` (+ `related`, `sources`, `rules`,
 `queries`), `Tick`, `PricePoint`, `Record`, `StreamEvent` (union of `tick`, `tick_update`,
-`price`, `market`, `page_check`).
+`price`, `move`, `market`, `page_check`). `Tick` gains `rule: RuleRef | null`
+(`{ start, end, text, confidence }`, character positions in the market's `rules`). `Move` is
+`{ id, market_id, ts, since, from, to, cause: Tick | null, confidence: number | null, rule: RuleRef | null }`.
+`MarketDetail` gains `companies: string[]`.
 
 ### `lib/api.ts`
 - Base URL from `VITE_API_URL` (default `http://localhost:8000`).
@@ -105,36 +113,83 @@ Mirror the spec exactly: `MarketSummary`, `MarketDetail` (+ `related`, `sources`
 - Reconnect with backoff; on reconnect, refetch `/markets` and the open market's ticks/prices so
   nothing is missed.
 - `tick` → prepend to that market's tape. `tick_update` → replace the tick with the same `id`.
-  `price` → append point and update header. `market` → update ask progress / list (`deleted`
+  `price` → append point and update header. `move` → prepend to that market's moves (its cause
+  tick is already on the tape, or arrives as a `tick` just before). `market` → update ask progress / list (`deleted`
   removes it, `tracking`/`made up` selects it, `ready` ends the "finding sources" state).
 - `ConnectionDot` is green while the stream (incl. keepalives every 15 s) is alive, amber while
   reconnecting.
 
 ### `state/store.ts`
 Plain normalized store: `markets: Record<id, MarketSummary>`, `detail`, `ticks: Record<id, Tick[]>`
-(capped at 500, newest first), `prices: Record<id, PricePoint[]>`, `selectedId`, `ask` (query,
-steps[], error). First paint for a market = `GET /markets/{id}` + `/ticks` + `/prices`, then the
-stream keeps it current.
+(capped at 500, newest first), `prices: Record<id, PricePoint[]>`, `moves: Record<id, Move[]>`
+(newest first), `selectedId`, `ask` (query, steps[], error). First paint for a market =
+`GET /markets/{id}` + `/ticks` + `/prices` + `/moves`, then the stream keeps it current. Made-up
+markets have no moves: skip the request for them.
 
 ## Components (what each one must get right)
 
 | Component | Notes |
 |---|---|
 | **MarketHeader** | Title, venue badge (Kalshi / Polymarket / MADE UP), big animated `Price`, `Points` change (24 h), ticks today, link out to the venue. Made-up market with `price: null` shows "setting starting odds from coverage…". |
-| **PriceChart** | `lightweight-charts` line series from `/prices`. Each up/down tick is a marker at `published_ts ?? ts` (▲ green above, ▼ red below, size by `strength`). Hover a marker → its headline; click → scroll the tape to it. Backfill markers hollow. |
-| **Tape / TickRow** | Verdict badge + confidence %, `KindLabel` (ARTICLE/POST/SPOKEN/TYPED/FILING/PAGE), source (`x.com/handle`, `r/sub`, domain), headline (links out), time, likes/replies for X. `none` verdicts shown grey and collapsed to one line. |
+| **PriceChart** | `lightweight-charts` line series from `/prices`. Each up/down tick is a dot on the line at `published_ts ?? ts` (green up, red down, size by `strength`, a soft ring on strong calls, dimmed for backfill). Hover a dot → its headline; click → scroll the tape to it. Each `move` is a shaded band from `since` to `ts` in the move's colour (see "Why did it move?"). |
+| **Tape / TickRow** | Verdict badge + confidence %, `KindLabel` (ARTICLE/POST/SPOKEN/TYPED/FILING/PAGE), source (`x.com/handle`, `r/sub`, domain), headline (links out), time, likes/replies for X. `none` verdicts shown grey and collapsed to one line. A tick with a `rule` shows that sentence as a one-line quote under the headline; a tick that is the `cause` of a move carries a `MOVED THE PRICE 24% → 20%` badge. Truth Social posts are `post` ticks with source `truthsocial.com/@realDonaldTrump`: shown as `@realDonaldTrump` with the Truth Social logo. |
 | **AskBar** | One input for a link or plain words. On submit shows `AskProgress`: the live `market` status steps as a checklist, then jumps to the new market. Errors inline with the backend's text. |
 | **MicBar** | Only on made-up markets. Web Speech API `SpeechRecognition` (Chrome), continuous, final results only → `POST /ticks {kind: "mic"}`. Shows the live transcript. If recognition is unavailable or the hall is loud, `TypeTickBox` is the fallback (same endpoint, `kind: "typed"`). |
-| **Voice callout** (`useVoiceCallout`) | `speechSynthesis` reads each new tick on the *selected* market: "Up, eighty-two percent. Price twenty-six." Mute toggle (`M`). Pause recognition while speaking so the terminal doesn't score itself. |
 | **RelatedContracts** | Other deadlines / the other venue, with prices; "track" button promotes one to its own market via its link. |
+| **MovesPanel** (new tab, first in the row, real markets only) | "Why did it move?": one row per move, newest first: `24% → 20%` in the move's colour, the time span, then `likely cause (65%)` with the cause's source logo and headline, and the rule sentence quoted beneath. A move with no cause says "no cause found on the web" in grey; never hide it. Click a row's cause → the tape scrolls to it; click its rule → the Rules tab opens on that sentence. |
+| **RulesPanel** | The rules text with every sentence that some tick's `rule` points at highlighted in place (`start`/`end`), tinted by how many ticks cite it. Clicking a tick's rule quote on the tape opens this tab scrolled to that sentence. |
 | **SourcesPanel** | `sources` from detail: where ticks came from, ticks and moved counts. Shows the judges the terminal found these by itself. |
 | **RecordCard / RecordView** | The three numbers from `/record` as large figures plus a hit-rate bar. Full-screen view for beat 4. |
 | **KeyPrompt** | Modal asking for the write key on first write or 401; stored locally. |
 
+## From the backend, 14 Nov
+
+Main gained three things the screen does not show yet. All are in the spec's "Interface for the
+frontend"; the mock backend (`mock/server.mjs`) needs the same additions first so they can be built
+without the real one.
+
+### Why did it move? (`move` event, `GET /markets/{id}/moves`)
+
+The terminal used to go only from the web to the price. Now, when a real market's price jumps 3 points
+within 10 minutes, the backend searches at once and names the likeliest cause, or says there is none.
+This is the strongest answer to the challenge ("reacts to the live web") and to the trader's first
+question on seeing any chart, so it gets three places on screen:
+
+- **On the chart:** a shaded vertical band over `since`…`ts`, green or red by direction, with a small
+  `?` handle at its top. Hover → "24% → 20% · likely cause (65%): reuters.com: headline". Click →
+  opens the Moves tab on that row. A move with no cause gets a grey band.
+- **In the Moves tab:** the list described under Components.
+- **Live moment:** when a `move` event arrives for the market on screen, a banner slides over the
+  top of the chart for ~8 s: **"Why did it move?  24% → 20%"**, then a second line that types in a
+  few seconds later with the cause. The backend sends the event only after it has searched, so the
+  banner arrives complete; the two-step reveal is ours, to make the answer land.
+
+Rules: the band uses the verdict colours because a move is an up or a down, which keeps "colour means
+direction" intact. Show `confidence` as a percentage next to the cause, and say "likely cause", never
+"cause": it is the model's pick among what was found.
+
+### The rules sentence behind a tick (`tick.rule`, `move.rule`)
+
+Decision 1 now picks the exact sentence of the market's rules that makes an item matter. It is set on
+spoken and typed ticks and on ticks that call a move.
+
+- **Tape:** a one-line quote under the headline, faint, with a `§` mark: `§ "If it becomes impossible
+  for…"`. Full sentence on hover.
+- **Rules tab:** highlighted in place, as under Components.
+- **Demo market:** this matters most in beat 1. When a judge says something, the screen shows not
+  only UP or DOWN but which line of the rules their sentence touched. It answers "why did it score
+  that?" without anyone asking.
+
+### Truth Social (`post` ticks from `truthsocial.com/@realDonaldTrump`)
+
+Trump's posts arrive within about 20 seconds through the team's own scraper. Nothing new to build
+beyond the source label and logo in `lib/sources.ts`; they are ordinary `post` ticks. Worth a line in
+the pitch, and worth tracking one market where his posts move the price so the tape shows them.
+
 ## Keyboard (stage control)
 
-`P` presentation mode · `/` focus AskBar · `M` mute voice · `Space` mic on/off ·
-`1`–`9` jump to market in list · `R` record view · `Esc` back.
+`P` presentation mode · `/` focus AskBar · `Space` mic on/off ·
+`1`–`9` jump to market in list · `R` record view · `W` why-did-it-move tab · `Esc` back.
 
 ## Differentiators
 
@@ -148,7 +203,7 @@ impact for the effort. Tier 1 uses data the backend already sends, so none of it
 | **"Not priced in yet"**: each tick has a lifecycle | Each up/down tick carries a live state: `WATCHING` → `PRICED IN ✓ +6 pts in 12m` (price moved the way we said) or `FADED ✗`. A strong tick where the price hasn't moved yet glows as **NOT PRICED IN**. This is the trader's edge Georg asked for ("see the news before the price has finished moving"), and the tape *proves the terminal works* in real time instead of only claiming it. | `price_at` vs the latest price, `strength`, `confidence`; client-side only |
 | **Lead-time lines on the chart** | From each tick marker a thin dashed line runs to the point where the price reached the move, labelled "7 min early". Turns the chart from a picture into evidence. | `price_at`, `/prices` |
 | **The decision, shown** | Each new tick animates a three-part bar (up / no effect / down) filling to its probabilities before the verdict badge settles. It looks like watching the model think, and it explains the confidence number without a word. | `up`, `none`, `down` on the tick |
-| **Big-move moment** | When `|strength| > 0.6`, the screen briefly pulses the verdict colour at the edges, the price does a larger count-up, and a short sound plays (rising for up, falling for down, pitch set by strength). Small moves stay quiet so the big ones land. Settles the "sound effects?" open question: yes, but only for big moves. | `strength`, Web Audio (no files, no dependency) |
+| **Big-move moment** | When `|strength| > 0.6`, the screen briefly pulses the verdict colour at the edges, and the price does a larger count-up. Small moves stay still so the big ones land. The screen makes no sound: no effects and no spoken call-outs. | `strength` |
 | **Live Context.dev meter** | A small strip in the TopBar: requests per minute, credits used this weekend, a spark of activity. The judges are Context.dev, so this shows them their product doing the work live. | `GET /status`, polled every 10 s |
 | **Source logos on the tape** | Each row has the favicon of its site (Reuters, x.com, reddit), which makes it readable at a glance from the back of the room and looks finished. | `https://www.google.com/s2/favicons?domain=…&sz=32`, domain from `source`/`url` |
 | **Prompt the judge** | On the demo market, before the first sentence: a large ghost line *"Say something about this team. The market is listening."* that cycles through example sentences. It fixes the cold start where the judge doesn't know they are supposed to talk. | static text, hidden after the first `mic` tick |
@@ -159,7 +214,7 @@ impact for the effort. Tier 1 uses data the backend already sends, so none of it
 | Idea | Why it's worth it |
 |---|---|
 | **Audience mode (QR code)** | A QR code in the corner of the demo market opens the UI on a phone in a "talk to the market" view (one text box, one big price). The whole room moves the price, not only one judge. Put the write key in the URL *fragment* (`#k=…`), not the query, so it never reaches a server log. Needs `qrcode` (tiny) and the deployed URL. The most memorable beat there could be. |
-| **Weekend replay (time-lapse)** | A scrubber on any market replays the weekend at 60–600×: ticks land, the price moves, the voice stays muted. Purely client-side from `/ticks` + `/prices`. It doubles as the **fallback for beat 2** if no news breaks, and as a strong opener for beat 4 ("here's Friday to Sunday in 20 seconds"). |
+| **Weekend replay (time-lapse)** | A scrubber on any market replays the weekend at 60–600×: ticks land, the price moves. Purely client-side from `/ticks` + `/prices`. It doubles as the **fallback for beat 2** if no news breaks, and as a strong opener for beat 4 ("here's Friday to Sunday in 20 seconds"). |
 | **Live-web radar** | A slow radar sweep in the Sources panel; each watched page and source is a blip that flashes on `page_check` and on each new tick. The challenge is "reacts to the live web", and this shows the terminal watching it. |
 | **Ask flow, shown working** | During `AskProgress`, show the actual search phrases (`queries`) typing out, then the found contracts dropping in as cards with venue and price before the jump. The wait looks like the terminal working, not loading. |
 
@@ -177,7 +232,7 @@ impact for the effort. Tier 1 uses data the backend already sends, so none of it
 - `PRICED IN` / `FADED` must use a fixed, stated window (the same as `/record`'s `window_seconds`)
   so the tape and the record never disagree.
 - Every animation respects `prefers-reduced-motion` and is skipped when the tab is hidden, so a long
-  stream backlog after a reconnect doesn't fire a burst of sounds and splashes.
+  stream backlog after a reconnect doesn't fire a burst of splashes.
 
 ## Build order
 
@@ -187,22 +242,25 @@ Each step ends with something demoable; stop where time runs out.
    theme tokens, `types.ts`, `api.ts`. Shell with the three columns and empty states.
 2. **Live demo market.** `useStream`, store, MarketHeader, Tape, TypeTickBox. Typing a sentence
    moves the demo market's price on screen. *Beat 1 works by typing.*
-3. **Voice.** MicBar + voice callout + mute. *Beat 1 complete.*
+3. **Voice.** MicBar. *Beat 1 complete.*
 4. **Chart.** PriceChart with tick markers, MarketList with switching. *Beat 2 works.*
 5. **Ask.** AskBar + AskProgress + error states + KeyPrompt. *Beat 3 works.*
 6. **Record.** RecordCard and full-screen RecordView. *Beat 4 works.*
 7. **Polish for the stage.** Presentation mode, hotkeys, price flash/count animation, tick slide-in,
    related/sources/rules tabs, responsive stacking.
-8. **Rehearse against the deployed backend** on the demo laptop and projector; check Chrome mic
-   permission, voice volume, and readability from the back of the room.
+8. **Why did it move?** `Move` and `rule` types, mock support, `/moves` + `move` event in the store,
+   MovesPanel, rule quote on the tape, rules highlighting. Then the chart bands and the live banner.
+   *Beat 2 answers its own question.*
+9. **Rehearse against the deployed backend** on the demo laptop and projector; check Chrome mic
+   permission and readability from the back of the room.
 
 ## Risks and fallbacks
 
 | Risk | Fallback |
 |---|---|
 | Speech recognition fails or the hall is too loud | TypeTickBox is always visible next to the mic |
-| The terminal hears its own voice callout | Recognition paused while `speechSynthesis` is speaking |
 | No news breaks during the demo | Backend instant fill; the tape is already full when a market opens |
+| No price jumps during the demo | Past moves are stored: the Moves tab and the chart bands are already there when the market opens |
 | Stream drops on venue wifi | Auto-reconnect + refetch; ConnectionDot shows it honestly |
 | Plain-words search is slow | AskProgress narrates each step so the wait reads as work, not a hang |
 | Scoring down (503) | Inline "scoring unavailable, try again", the typed sentence stays in the box |
@@ -211,6 +269,5 @@ Each step ends with something demoable; stop where time runs out.
 
 - Hosting for the UI: same Railway service (serve the built files from FastAPI) or a separate
   static host? Same service is fewer moving parts and avoids CORS surprises.
-- Does the teammate want sound effects on big moves (a short tick/chime), or voice only?
 - Concept mockup referenced in the spec (claude.ai artifact) — align colours/layout with it if the
   team likes it.

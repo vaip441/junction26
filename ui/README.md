@@ -28,7 +28,6 @@ scripted ticks. Details at the top of `mock/server.mjs`.
 
 Done so far: build steps 1-7 (scaffold and stream; the weekend record as a card and full screen on R;
 sources / related / rules tabs under the chart, with a Track button on related contracts; stacking on small screens; the price chart with every call pinned on it; the
-AskBar, which turns a link or a plain question into a tracked market and narrates each step; typing or speaking moves the demo market, with a
-voice call-out of each verdict; hotkeys and presentation mode) plus these differentiators from PLAN.md:
+AskBar, which turns a link or a plain question into a tracked market and narrates each step; typing or speaking moves the demo market; hotkeys and presentation mode) plus these differentiators from PLAN.md:
 the tick lifecycle ("not priced in"), the decision bar, the pending scoring row, the judge prompt and the
-big-move flash and sound, lead-time lines on the chart, site logos on the tape. Next: step 8, rehearsing against the deployed backend on the demo laptop and projector.
+big-move flash, lead-time lines on the chart, site logos on the tape. Step 8 is built too: "why did it move?" (price jumps as bands on the chart, a tab listing each with its likely cause, a live banner when one arrives), the rules sentence behind a tick quoted on the tape and highlighted in the Rules tab, and Truth Social posts. Next: step 9, rehearsing against the deployed backend on the demo laptop and projector.

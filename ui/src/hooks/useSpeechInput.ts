@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { isSpeaking, onSpeakingChange } from '../lib/voice'
 
 // The Web Speech API is Chrome-only and missing from TypeScript's DOM types: the part we use.
 interface RecognitionResult {
@@ -32,12 +31,11 @@ const Ctor: RecognitionCtor | undefined =
 
 export const speechInputAvailable = Boolean(Ctor)
 
-export type MicState = 'off' | 'starting' | 'listening' | 'paused' | 'unsupported' | 'denied'
+export type MicState = 'off' | 'starting' | 'listening' | 'unsupported' | 'denied'
 
 /**
  * Continuous speech to sentences. Each final result goes to `onSentence`; `interim` is the words heard so
- * far, for showing live. Recognition pauses while the terminal itself is speaking and resumes after,
- * and restarts on its own when Chrome ends a session after silence.
+ * far, for showing live. Recognition restarts on its own when Chrome ends a session after silence.
  */
 export function useSpeechInput(onSentence: (text: string) => void) {
   const [state, setState] = useState<MicState>(Ctor ? 'off' : 'unsupported')
@@ -52,7 +50,7 @@ export function useSpeechInput(onSentence: (text: string) => void) {
   const restart = useRef<() => void>(() => {})
 
   const begin = useCallback(() => {
-    if (!Ctor || !wanted.current || isSpeaking()) return
+    if (!Ctor || !wanted.current) return
     if (!rec.current) {
       const r = new Ctor()
       r.continuous = true
@@ -81,8 +79,7 @@ export function useSpeechInput(onSentence: (text: string) => void) {
       }
       r.onend = () => {
         setInterim('')
-        if (wanted.current && !isSpeaking()) setTimeout(() => restart.current(), 250)
-        else if (wanted.current) setState('paused')
+        if (wanted.current) setTimeout(() => restart.current(), 250)
         else setState((s) => (s === 'denied' ? s : 'off'))
       }
       rec.current = r
@@ -110,21 +107,6 @@ export function useSpeechInput(onSentence: (text: string) => void) {
     setInterim('')
     setState((s) => (s === 'unsupported' || s === 'denied' ? s : 'off'))
   }, [])
-
-  // Never listen to our own voice: stop while a call-out plays, pick up again when it ends.
-  useEffect(
-    () =>
-      onSpeakingChange((speaking) => {
-        if (!wanted.current) return
-        if (speaking) {
-          setState('paused')
-          rec.current?.abort()
-        } else {
-          begin()
-        }
-      }),
-    [begin],
-  )
 
   useEffect(() => () => stop(), [stop])
 

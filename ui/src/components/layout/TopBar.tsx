@@ -16,9 +16,7 @@ function Key({ k, label, on, onClick }: { k: string; label: string; on?: boolean
 }
 
 export function TopBar() {
-  const muted = useStore((s) => s.muted)
   const presentation = useStore((s) => s.presentation)
-  const toggleMute = useStore((s) => s.toggleMute)
   const togglePresentation = useStore((s) => s.togglePresentation)
   return (
     <header className="flex h-12 shrink-0 items-center gap-4 border-b border-line bg-panel px-4">
@@ -29,7 +27,6 @@ export function TopBar() {
       <div className={`flex shrink-0 items-center gap-4 ${presentation ? 'ml-auto' : ''}`}>
         {/* keyboard hints: no use on a phone, and the ask box needs the width */}
         <span className="hidden items-center gap-4 md:flex">
-          <Key k="M" label={muted ? 'muted' : 'voice on'} on={!muted} onClick={toggleMute} />
           <Key k="P" label="present" on={presentation} onClick={() => togglePresentation()} />
         </span>
         <ConnectionDot />

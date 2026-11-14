@@ -7,6 +7,7 @@ import { EdgeFlash } from '../components/layout/EdgeFlash'
 import { MarketList } from '../components/layout/MarketList'
 import { TopBar } from '../components/layout/TopBar'
 import { MarketHeader } from '../components/market/MarketHeader'
+import { MoveBanner } from '../components/market/MoveBanner'
 import { MarketTabs } from '../components/market/MarketTabs'
 import { PriceChart } from '../components/market/PriceChart'
 import { RecordCard } from '../components/record/RecordCard'
@@ -16,7 +17,6 @@ import { useSelectedMarket } from '../hooks/useMarket'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useRecord } from '../hooks/useRecord'
 import { useStream } from '../hooks/useStream'
-import { useVoiceCallout } from '../hooks/useVoiceCallout'
 import { useStore } from '../state/store'
 
 function Panel({ title, children, className = '' }: { title: string; children: ReactNode; className?: string }) {
@@ -34,7 +34,6 @@ export function App() {
   useStream()
   useHotkeys()
   useRecord()
-  useVoiceCallout()
   const { id, market, detail, ticks, prices } = useSelectedMarket()
   const pending = useStore((s) => (id ? s.pending[id] : undefined))
   const presentation = useStore((s) => s.presentation)
@@ -69,13 +68,14 @@ export function App() {
               <MarketHeader market={market} />
               <div className="relative min-h-64 flex-1 p-4 max-lg:h-80 max-lg:flex-none">
                 <PriceChart marketId={id} />
+                {!market.made_up && <MoveBanner marketId={id} />}
                 {silent && (
                   <div className="absolute inset-0 flex items-center justify-center bg-panel/95 p-6">
                     <JudgePrompt />
                   </div>
                 )}
               </div>
-              {!presentation && <MarketTabs key={id} detail={detail} />}
+              {!presentation && <MarketTabs marketId={id} madeUp={market.made_up} detail={detail} />}
               {market.made_up && <SpeakBar marketId={id} />}
             </>
           ) : (
