@@ -78,6 +78,8 @@ interface State {
   /** A write was refused for want of the key: the key prompt is open. */
   needKey: boolean
   record: WeekendRecord | null
+  /** Items that landed on a market's tape while another market was open: how many, until it is opened. */
+  unseen: Record<string, number>
   /** Latest streamed price of contracts that are not in the market list (related contracts). */
   otherPrices: Record<string, number>
   recordOpen: boolean
@@ -122,6 +124,12 @@ interface State {
   endReplay: (finished?: boolean) => void
 }
 
+function without(counts: Record<string, number>, id: string): Record<string, number> {
+  if (!(id in counts)) return counts
+  const { [id]: _seen, ...rest } = counts
+  return rest
+}
+
 /**
  * A question that failed stays over the market so its error can be read, but going anywhere else means it
  * has been read: it must not sit over the chart of the market that was just picked.
@@ -149,6 +157,7 @@ export const useStore = create<State>((set) => ({
   micOn: false,
   needKey: false,
   record: null,
+  unseen: {},
   otherPrices: {},
   recordOpen: false,
   replay: null,
@@ -158,7 +167,12 @@ export const useStore = create<State>((set) => ({
     set((s) => ({
       markets: Object.fromEntries(list.map((m) => [m.id, m])),
       order: list.map((m) => m.id),
-      selectedId: s.selectedId && list.some((m) => m.id === s.selectedId) ? s.selectedId : (list[0]?.id ?? null),
+      // Opened first: a real market, where something is already moving, not the demo market, which is an
+      // empty chart until someone talks to it (it is first in the list: the 1 key opens it).
+      selectedId:
+        s.selectedId && list.some((m) => m.id === s.selectedId)
+          ? s.selectedId
+          : ((list.find((m) => !m.made_up && !m.replay) ?? list[0])?.id ?? null),
     })),
   setDetail: (d) =>
     set((s) => ({
@@ -174,7 +188,8 @@ export const useStore = create<State>((set) => ({
   openTab: (tab) => set({ tab, view: 'details' }),
   setView: (view) => set((s) => ({ view, ...dismissed(s) })),
   showRule: (rule) => set((s) => ({ tab: 'rules', view: 'details', focusRule: { start: rule.start, end: rule.end, n: (s.focusRule?.n ?? 0) + 1 } })),
-  select: (id) => set((s) => ({ selectedId: id, view: 'live', ...dismissed(s) })), // a picked market is opened
+  // a picked market is opened: what landed on it meanwhile has now been seen
+  select: (id) => set((s) => ({ selectedId: id, view: 'live', unseen: id ? without(s.unseen, id) : s.unseen, ...dismissed(s) })),
   setStream: (stream) => set({ stream }),
   startAsk: (query) =>
     set({
@@ -201,6 +216,7 @@ export const useStore = create<State>((set) => ({
       order: s.order.includes(d.id) ? s.order : [...s.order, d.id],
       selectedId: d.id,
       view: 'live',
+      unseen: without(s.unseen, d.id),
       }
     }),
   askFailed: (error) => set((s) => ({ ask: s.ask ? { ...s.ask, error } : s.ask })),
@@ -263,6 +279,9 @@ export const useStore = create<State>((set) => ({
             pending: match ? { ...s.pending, [t.market_id]: waiting.filter((p) => p !== match) } : s.pending,
             ticks: { ...s.ticks, [t.market_id]: [t, ...list].slice(0, MAX_TICKS) },
             markets: m ? { ...s.markets, [m.id]: { ...m, ticks_today: m.ticks_today + 1 } } : s.markets,
+            // live news on a market that is not the one open: its row in the list says so (earlier coverage
+            // found during a first fill is not news)
+            unseen: m && t.market_id !== s.selectedId && !t.backfill ? { ...s.unseen, [m.id]: (s.unseen[m.id] ?? 0) + 1 } : s.unseen,
           }
         }
         case 'tick_update': {
@@ -309,6 +328,7 @@ export const useStore = create<State>((set) => ({
             return {
               markets,
               order: s.order.filter((id) => id !== ev.market_id),
+              unseen: without(s.unseen, ev.market_id),
               selectedId: s.selectedId === ev.market_id ? (s.order.find((id) => id !== ev.market_id) ?? null) : s.selectedId,
             }
           }

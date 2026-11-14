@@ -40,6 +40,11 @@ scripted ticks. Details at the top of `mock/server.mjs`.
 
 `npm run build` typechecks and builds into `dist/`; `npm run lint` runs oxlint.
 
+### What opens first
+
+The screen opens on the first real market in the list, where something is already moving. The demo market
+is first in the list but is an empty chart until someone talks to it: the `1` key (or its row) opens it.
+
 ### Narrow screens
 
 Under 1024px wide (a phone, a tablet upright) the three columns do not fit side by side, and stacked they

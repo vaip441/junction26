@@ -8,6 +8,7 @@ export function MarketList() {
   const markets = useStore(useShallow(selectMarketList))
   const selectedId = useStore((s) => s.selectedId)
   const select = useStore((s) => s.select)
+  const unseen = useStore((s) => s.unseen)
 
   if (markets.length === 0) {
     return <EmptyState title="No markets yet">Waiting for the backend to list what it tracks.</EmptyState>
@@ -29,6 +30,13 @@ export function MarketList() {
             <span className="flex items-center gap-2">
               <VenueBadges market={m} />
               {m.replay && <Badge>Replay</Badge>}
+              {/* news that landed here while another market was open; gone once this one is opened */}
+              {unseen[m.id] > 0 && (
+                <span className="num flex items-center gap-1 text-xs font-semibold text-text" title="Landed on its tape since you last opened it">
+                  <i className="h-1.5 w-1.5 rounded-full bg-text" />
+                  {unseen[m.id]} new
+                </span>
+              )}
             </span>
             {m.change_24h != null ? <Points value={m.change_24h} className="text-right text-xs" /> : <span />}
           </button>
