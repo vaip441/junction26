@@ -185,3 +185,20 @@ def test_polymarket_search_returns_open_event_slugs_in_rank_order(monkeypatch):
     assert polymarket.search("will estonia win at home") == ["unl-est-bul-2026-11-16", "estonia-kml-2027-champion"]
     assert asked[0][0].endswith("/public-search") and asked[0][1]["q"] == "will estonia win at home"
     assert asked[0][1]["events_status"] == "active"
+
+
+def test_polymarket_history_is_percent_oldest_first_without_odd_points():
+    data = {"history": [{"t": 200, "p": 0.61}, {"t": 100, "p": 0.28}, {"t": 300}, {"t": "x", "p": 0.5}, {"t": 400, "p": 7}]}
+    assert polymarket.parse_history(data) == [(100.0, 28.0), (200.0, 61.0)]
+    assert polymarket.parse_history(None) == [] and polymarket.parse_history({}) == []
+
+
+def test_kalshi_history_reads_each_hour_like_a_live_price():
+    quote = {"end_period_ts": 100, "yes_bid": {"close_dollars": "0.4000"}, "yes_ask": {"close_dollars": "0.4400"},
+             "price": {"close_dollars": "0.3000"}}
+    one_sided = {"end_period_ts": 200, "yes_bid": {"close_dollars": "0.9900"}, "yes_ask": {"close_dollars": "1.0000"},
+                 "price": {"close_dollars": "0.9900"}}
+    nothing = {"end_period_ts": 300, "yes_bid": {}, "yes_ask": {}, "price": {}}
+    # a real two-sided quote gives its midpoint; without one, the last trade; with neither, the hour is left out
+    assert kalshi.parse_history({"candlesticks": [one_sided, nothing, quote, {"price": {}}]}) == [(100.0, 42.0), (200.0, 99.0)]
+    assert kalshi.parse_history(None) == []

@@ -1,11 +1,13 @@
 import pytest
 
 from terminal import googlenews, posts, watch
+from terminal.venues import kalshi, polymarket
 
 
 @pytest.fixture(autouse=True)
 def no_post_lookups_over_the_network(monkeypatch):
-    """A test that reaches X, Reddit, Google News or the writing model fails loudly: it must pass its own stand-ins."""
+    """A test that reaches X, Reddit, Google News or the writing model fails loudly: it must pass its own stand-ins.
+    A venue's price history is asked for whenever a market is tracked, so it answers "none" unless a test says otherwise."""
     async def x_post(url):
         raise AssertionError(f"test looked up {url} on X")
 
@@ -18,6 +20,8 @@ def no_post_lookups_over_the_network(monkeypatch):
     async def google(params):
         raise AssertionError("test read Google News")
 
+    monkeypatch.setattr(polymarket, "history", lambda token: [])
+    monkeypatch.setattr(kalshi, "history", lambda ticker: [])
     monkeypatch.setattr(googlenews, "_get", google)
     monkeypatch.setattr(watch, "ask_json", ask_json)
     monkeypatch.setattr(posts, "x_post", x_post)

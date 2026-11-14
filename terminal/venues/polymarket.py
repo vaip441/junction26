@@ -83,3 +83,21 @@ def lookup(event_slug: str, market_slug: str | None) -> list[dict]:
 
 def current_price(token: str) -> float | None:
     return round(float(get(CLOB + "/midpoint", token_id=token)["mid"]) * 100, 4)
+
+
+def parse_history(data: dict | None) -> list[tuple[float, float]]:
+    """(unix seconds, percent) from a prices-history answer, oldest first; odd points are left out."""
+    out = []
+    for point in (data or {}).get("history") or []:
+        try:
+            ts, price = float(point["t"]), round(float(point["p"]) * 100, 4)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if 0 <= price <= 100:
+            out.append((ts, price))
+    return sorted(out)
+
+
+def history(token: str) -> list[tuple[float, float]]:
+    """The last week of prices, about one an hour, so a market tracked just now has a chart at once."""
+    return parse_history(get(CLOB + "/prices-history", market=token, interval="1w", fidelity=60))

@@ -24,6 +24,8 @@ from terminal.seed import DEMO
 STATIC = Path(__file__).parent / "static"
 DAY = 86400
 MAX_RELATED = 5  # an event can hold over a hundred contracts; each one costs a price call a minute
+MAX_SHOWN = 6  # markets found for a question that are named to the frontend
+HISTORY_WAIT = 8  # seconds a new market's answer may wait for the venue's price history; past that it goes without
 OTHER_VENUE_ABOVE = 0.2  # how likely the other venue's market must be the same question to be shown beside the match
 
 
@@ -152,13 +154,27 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(503, "scoring unavailable, try again")
         return public(tick)
 
-    def track(contracts: list[dict], extra: list[dict], poll_seconds: int) -> str:
-        """Store a lead contract with its related ones, unless it is already tracked. Returns the lead's id."""
-        db, lead, now = app.state.db, contracts[0], time.time()
+    async def with_history(ids: list[str]) -> None:
+        """Fill in the last week of prices for markets tracked just now, so the chart is not empty and the
+        news found for them has a price to stand on. Venue trouble or a slow answer leaves them as they are."""
+        db = app.state.db
+        markets = [m for m in (store.get_market(db, id) for id in ids) if m is not None]
+        try:
+            found = await asyncio.wait_for(asyncio.gather(*(venues.history(m) for m in markets)), HISTORY_WAIT)
+        except TimeoutError:
+            return
+        for m, points in zip(markets, found):
+            if store.get_market(db, m["id"]) is not None:  # deleted meanwhile
+                store.add_history(db, m["id"], points)
+
+    def track(contracts: list[dict], extra: list[dict], poll_seconds: int) -> tuple[str, list[str]]:
+        """Store a lead contract with its related ones, unless it is already tracked. Returns the lead's id
+        and the ids of the markets stored just now, which have no price history yet."""
+        db, lead, now, fresh = app.state.db, contracts[0], time.time(), []
         lead_id = venues.market_id(lead)
         existing = store.get_market(db, lead_id)
         if existing is not None and existing["lead_id"] is None:
-            return lead_id
+            return lead_id, fresh
         if existing is not None:
             store.promote(db, lead_id)  # a related contract asked for by itself becomes a market
         else:
@@ -169,15 +185,16 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                                  poll_seconds=poll_seconds)
                 if c["price"] is not None:
                     store.add_price(db, id, now, c["price"])
+                fresh.append(id)
         app.state.bus.publish("market", {"market_id": lead_id, "status": "tracking"})
-        return lead_id
+        return lead_id, fresh
 
-    async def from_words(words: str, poll_seconds: int) -> tuple[str, bool]:
-        """Plain words -> (id of the market now tracked, whether a venue contract matched)."""
+    async def from_words(words: str, poll_seconds: int) -> tuple[str, bool, list[str]]:
+        """Plain words -> (id of the market now tracked, whether a venue contract matched, markets stored just now)."""
         db, bus = app.state.db, app.state.bus
         made_id = madeup.market_id(words)
         if store.get_market(db, app.state.asked.get(made_id, "")) is not None:
-            return app.state.asked[made_id], True
+            return app.state.asked[made_id], True, []
 
         def status(text: str, **more) -> None:
             bus.publish("market", {"market_id": None, "query": words, "status": text, **more})
@@ -189,7 +206,10 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         status("searching venues")
         try:
             groups = await match.candidates(words)
-            status("found contracts", count=len(groups))
+            # one card per market found, for the frontend to show while the model picks
+            status("found contracts", count=len(groups),
+                   contracts=[{"venue": g[0]["venue"], "title": g[0]["event"], "price": g[0]["price"], "contracts": len(g)}
+                              for g in groups[:MAX_SHOWN]])
             winner, probs, leads = await match.pick(words, groups)
             # words asked before that found no market keep their made-up one, unless a real one now exists
             made = store.get_market(db, made_id)
@@ -207,25 +227,27 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                 store.add_market(db, id=made_id, venue="made_up", venue_ref=None, title=question["title"],
                                  rules=question["rules"], url=None, poll_seconds=poll_seconds)
             bus.publish("market", {"market_id": made_id, "query": words, "status": "made up"})
-            return made_id, False
+            return made_id, False, []
         contracts = groups[winner]
         contracts.insert(0, contracts.pop(leads[winner]))  # the contract the question names leads
+        status("picked", winner=winner, venue=contracts[0]["venue"], title=contracts[0]["title"], price=contracts[0]["price"])
         other = [g[leads[i]] for i, g in enumerate(groups)
                  if i != winner and probs[i] >= OTHER_VENUE_ABOVE and g[0]["venue"] != contracts[0]["venue"]]
-        app.state.asked[made_id] = track(contracts, other, poll_seconds)
-        return app.state.asked[made_id], True
+        app.state.asked[made_id], fresh = track(contracts, other, poll_seconds)
+        return app.state.asked[made_id], True, fresh
 
     @app.post("/markets", dependencies=[Depends(write_access)])
     async def add_market(body: MarketIn):
         """Track a market from a Kalshi or Polymarket link, or from a question in plain words."""
         try:
-            lead_id, matched = track(await venues.resolve(body.query), [], body.poll_seconds), True
+            (lead_id, fresh), matched = track(await venues.resolve(body.query), [], body.poll_seconds), True
         except venues.NotAVenueLink:
-            lead_id, matched = await from_words(body.query, body.poll_seconds)
+            lead_id, matched, fresh = await from_words(body.query, body.poll_seconds)
         except venues.MarketNotFound as e:
             raise HTTPException(404, str(e))
         except venues.VenueError as e:
             raise HTTPException(502, f"the venue did not answer properly, try again ({e})")
+        await with_history(fresh)  # before the answer, so the first chart the frontend draws has it
         app.state.wake.set()  # the article loop writes the queries and does the instant fill
         db = app.state.db
         return {**detail(db, store.get_market(db, lead_id), time.time()), "matched": matched}

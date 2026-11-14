@@ -109,3 +109,29 @@ def lookup(ticker: str, url: str | None = None) -> list[dict]:
 
 def current_price(ticker: str) -> float | None:
     return price(get(f"/markets/{ticker}")["market"])
+
+
+def parse_history(data: dict | None) -> list[tuple[float, float]]:
+    """(unix seconds, percent) from a candlesticks answer, oldest first: each hour's closing price, read
+    like price() (the midpoint of a real two-sided quote, else the last trade); hours with neither are left out."""
+    out = []
+    for candle in (data or {}).get("candlesticks") or []:
+        try:
+            ts = float(candle["end_period_ts"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        p = price({"yes_bid_dollars": (candle.get("yes_bid") or {}).get("close_dollars"),
+                   "yes_ask_dollars": (candle.get("yes_ask") or {}).get("close_dollars"),
+                   "last_price_dollars": (candle.get("price") or {}).get("close_dollars")})
+        if p is not None:
+            out.append((ts, p))
+    return sorted(out)
+
+
+def history(ticker: str, days: int = 7) -> list[tuple[float, float]]:
+    """The last week of prices, one an hour, so a market tracked just now has a chart at once."""
+    event = get(f"/markets/{ticker}")["market"]["event_ticker"]
+    series = get(f"/events/{event}")["event"]["series_ticker"]
+    now = int(time.time())
+    return parse_history(get(f"/series/{series}/markets/{ticker}/candlesticks",
+                             start_ts=now - days * 86400, end_ts=now, period_interval=60))

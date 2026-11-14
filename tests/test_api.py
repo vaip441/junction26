@@ -112,6 +112,50 @@ def test_post_market_tracks_lead_and_related(path, monkeypatch):
         assert again["id"] == "pm-m0" and len(c.get("/markets").json()) == 2
 
 
+def test_a_new_market_answers_with_a_week_of_price_history(path, monkeypatch):
+    from terminal import venues
+    from terminal.venues import polymarket
+
+    async def resolve(link):
+        return CONTRACTS
+
+    asked = []
+
+    def history(token):
+        asked.append(token)
+        return [(1000.0, 30.0), (2000.0, 35.0)] if token == CONTRACTS[0]["venue_ref"] else []
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    monkeypatch.setattr(polymarket, "history", history)
+    with client(path) as c:
+        m = c.post("/markets", json={"query": "https://polymarket.com/event/e"}).json()
+        assert sorted(asked) == sorted(x["venue_ref"] for x in CONTRACTS)  # the lead and its related contracts
+        points = c.get("/markets/pm-m0/prices").json()
+        # the venue's history first, then the price read when it was tracked, which stays the current one
+        assert [(p["ts"], p["price"]) for p in points[:2]] == [(1000.0, 30.0), (2000.0, 35.0)]
+        assert len(points) == 3 and points[2]["price"] == 40.0 and m["price"] == 40.0
+        c.post("/markets", json={"query": "https://polymarket.com/event/e"})
+        assert len(asked) == len(CONTRACTS)  # tracked already: not asked for again
+
+
+def test_a_venue_that_fails_on_history_still_tracks_the_market(path, monkeypatch):
+    from terminal import venues
+    from terminal.venues import polymarket
+
+    async def resolve(link):
+        return CONTRACTS
+
+    def down(token):
+        raise RuntimeError("giving up")
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    monkeypatch.setattr(polymarket, "history", down)
+    with client(path) as c:
+        r = c.post("/markets", json={"query": "https://polymarket.com/event/e"})
+        assert r.status_code == 200 and r.json()["id"] == "pm-m0"
+        assert len(c.get("/markets/pm-m0/prices").json()) == 1
+
+
 def test_post_market_unknown_market_is_404(path, monkeypatch):
     from terminal import venues
 
@@ -326,8 +370,13 @@ def test_status_events_carry_the_query(path, monkeypatch):
         c.post("/markets", json={"query": "will contract 0 happen"})
         events = [q.get_nowait()[1] for _ in range(q.qsize())]
     assert [(e["market_id"], e["status"]) for e in events] == [
-        (None, "searching venues"), (None, "found contracts"), ("pm-m0", "tracking")]
+        (None, "searching venues"), (None, "found contracts"), (None, "picked"), ("pm-m0", "tracking")]
     assert events[0]["query"] == "will contract 0 happen" and events[1]["count"] == 2
+    # the markets found are named, one card each, and then the one picked: the frontend shows the choice being made
+    assert events[1]["contracts"] == [{"venue": "polymarket", "title": "E?", "price": 40.0, "contracts": 3},
+                                      {"venue": "kalshi", "title": "E?", "price": 45.0, "contracts": 2}]
+    assert events[2] == {"market_id": None, "query": "will contract 0 happen", "status": "picked", "winner": 0,
+                         "venue": "polymarket", "title": "Contract 0?", "price": 40.0}
 
 
 def test_a_link_is_a_match(path, monkeypatch):

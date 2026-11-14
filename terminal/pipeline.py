@@ -44,6 +44,7 @@ def title_key(headline: str) -> str | None:
     return " ".join(kept[:40]) if len(kept) >= 4 else None  # the whole headline: ones that only start alike differ
 
 
+RULE_FOR_HISTORY = 0.5  # how strong a call on earlier coverage must be to have its rules sentence looked up
 STORY_SECONDS = 3 * 86400  # a headline counts as the same story this long; a recurring one is new after that
 
 
@@ -123,7 +124,8 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     if store.get_market(db, market["id"]) is None:
         return None  # deleted while this item was being scored
     v, confidence = verdict(s)
-    if ruler and not spoken and v != "none":
+    # one more model call: on history only for a strong call, on a live tick for any call
+    if ruler and not spoken and v != "none" and (not backfill or abs(s.strength) >= RULE_FOR_HISTORY):
         rule = await rule_for()
         if store.get_market(db, market["id"]) is None:
             return None

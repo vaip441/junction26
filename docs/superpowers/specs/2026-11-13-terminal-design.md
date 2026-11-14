@@ -357,8 +357,14 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   the same `id`. One connection carries all markets; each event has a `market_id`.
   A `market` event is `{ "market_id", "status" }`. While plain words are being worked
   on it also carries `"query"` and `market_id` is null: `searching venues`, then
-  `found contracts` (with `count`), then `tracking` or `made up` with the id, or
-  `failed`. Afterwards the market reports `finding sources` and `ready`.
+  `found contracts` (with `count` and `contracts`: up to six markets found, each
+  `{ "venue", "title", "price", "contracts" }`), then, when one matches, `picked` (with
+  `winner`, its place in `contracts`, and the leading contract's `venue`, `title` and
+  `price`), then `tracking` or `made up` with the id, or `failed`. Afterwards the market
+  reports `finding sources` (with `queries`, the phrases the web is searched with),
+  `scoring` (with `found`, how many items the searches returned, and `scored`, how many
+  of them are scored: see `FILL_SCORED`), a `tick` for each scored item worth showing as
+  it is scored, and `ready` (with `ticks`, how many items were stored).
 
 A tick:
 

@@ -1,4 +1,5 @@
-from terminal.db import (add_market, add_price, add_tick, connect, list_markets, price_at, related, ticks)
+from terminal.db import (add_history, add_market, add_price, add_tick, connect, list_markets, price_at, prices, related,
+                         ticks)
 
 
 def market(db, id="m", **kw):
@@ -146,3 +147,14 @@ def test_a_tick_whose_page_turns_out_to_be_days_old_becomes_history():
     assert set_published(db, "https://a.example/fresh", found - 3600)[0]["backfill"] is False
     set_published(db, "https://a.example/unknown", None)
     assert {t["dedupe_key"]: t["backfill"] for t in ticks(db, "m")} == {"a": True, "b": False, "c": False}
+
+
+def test_history_fills_in_only_what_is_older_than_our_own_samples():
+    db = connect(":memory:")
+    market(db)
+    add_price(db, "m", 1000.0, 40.0)
+    # the venue's 1000 and 1500 would rewrite or follow what we sampled ourselves: left out
+    assert add_history(db, "m", [(400.0, 30.0), (700.0, 35.0), (1000.0, 99.0), (1500.0, 99.0)]) == 2
+    assert [(p["ts"], p["price"]) for p in prices(db, "m")] == [(400.0, 30.0), (700.0, 35.0), (1000.0, 40.0)]
+    assert add_history(db, "m", [(400.0, 31.0), (700.0, 36.0)]) == 0  # asked twice: nothing changes
+    assert price_at(db, "m", 800.0) == 35.0

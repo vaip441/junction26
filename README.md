@@ -25,10 +25,19 @@ It also works backwards, from the price to the web: when a real market's price j
 10 minutes, the terminal searches for that market at once and Decision 1 names the item most likely
 behind the jump, with the sentence of the rules it touches (`terminal/moves.py`).
 
+A first fill finds 100 to 200 items, and scoring one is a Decision 1 call. Measured over five fills,
+85% came back "no effect" and were never shown, so a fill scores only the `FILL_SCORED` (default 50) items
+that share the most words with the market's title and queries and keeps the rest hidden without a call.
+Earlier coverage has its rules sentence looked up only for a strong call. Live passes score everything new.
+
 A question in plain words is matched to a real market by searching both venues and letting Decision 1 pick
 (`terminal/match.py`). When nothing matches, a text model writes a yes/no question with a deadline, Decision 1
 gives its starting odds from the coverage found, and each shown tick afterwards nudges the price
 (`terminal/madeup.py`, `terminal/pricing.py`).
+
+A market tracked just now starts with the venue's last week of prices, about one an hour
+(`terminal/venues/`), so its chart is not empty and the news found for it has a price to stand on.
+From then on the terminal samples the price itself.
 
 Prices are percentages from 0 to 100 and times are unix seconds, everywhere.
 
@@ -52,6 +61,7 @@ watch it become a tick. The real screen is a separate frontend that talks to the
 | `TERMINAL_KEY` | shared secret that every write must send in an `X-Terminal-Key` header |
 | `DB_PATH` | the SQLite file |
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |
+| `FILL_SCORED` | optional: how many items a new market's first fill scores, each one a Decision 1 call (default 50) |
 | `TRUTH_FEED` | optional: the file `trump-social-scraper` appends new posts to |
 
 ## Interface

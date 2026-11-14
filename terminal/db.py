@@ -124,6 +124,16 @@ def add_price(db, market_id: str, ts: float, price: float) -> None:
     db.execute("INSERT OR REPLACE INTO prices (market_id, ts, price) VALUES (?,?,?)", (market_id, ts, price))
 
 
+def add_history(db, market_id: str, points: list[tuple[float, float]]) -> int:
+    """Prices from before the market was tracked, as the venue reports them. Only points older than the
+    oldest sample we took ourselves are kept, so our own samples are never overwritten. Returns how many."""
+    row = db.execute("SELECT MIN(ts) AS first FROM prices WHERE market_id = ?", (market_id,)).fetchone()
+    first = row["first"]
+    older = [(market_id, ts, price) for ts, price in points if first is None or ts < first]
+    db.executemany("INSERT OR IGNORE INTO prices (market_id, ts, price) VALUES (?,?,?)", older)
+    return len(older)
+
+
 def price_at(db, market_id: str, ts: float) -> float | None:
     row = db.execute("SELECT price FROM prices WHERE market_id = ? AND ts <= ? ORDER BY ts DESC LIMIT 1",
                      (market_id, ts)).fetchone()
