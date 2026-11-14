@@ -72,7 +72,10 @@ async def price_loop(db, bus, scorer, busy: set, interval: float = 60) -> None:
 
 # Reference pages and the venues' own pages are not news: an encyclopedia entry or a report of the
 # market's odds says nothing the price does not already hold.
-NOT_NEWS = ["wikipedia.org", "polymarket.com", "kalshi.com"]
+# Nor are social media pages: in one day 98 of them were shown as articles (Facebook 57, YouTube 21,
+# Instagram 16), each a post or a video with no article behind it.
+NOT_NEWS = ["wikipedia.org", "polymarket.com", "kalshi.com",
+            "facebook.com", "instagram.com", "threads.com", "threads.net", "tiktok.com", "youtube.com", "youtu.be"]
 
 
 class FetchFailed(Exception):

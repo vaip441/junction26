@@ -357,6 +357,9 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   check and the first change), and `sources`: where the market's ticks came
   from, most ticks first, as `[{ "source", "ticks", "moved" }]` (`moved` counts the
   ticks called up or down).
+- `POST /markets/mu-demo/reset` (needs the key): puts the demo market back to its
+  starting price with an empty tape, for use after a rehearsal. Sends a `market` event
+  with status `reset` and a `price` event. 409 for any other market.
 - `DELETE /markets/{id}`: stop tracking a market; it, its related contracts, their
   ticks and prices are removed. 409 for the demo market. Sends a `market` event with
   status `deleted`.

@@ -431,3 +431,21 @@ def test_moves_are_listed_newest_first_with_their_cause_as_a_tick(path):
     assert first == {"id": 2, "market_id": "mu-demo", "ts": 200.0, "since": 140.0, "from": 24.0, "to": 30.0,
                      "confidence": 0.8, "rule": {"start": 0, "end": 4, "text": "Rule", "confidence": 0.9}, "cause": tick}
     assert second["cause"] is None and second["rule"] is None and second["to"] == 24.0
+
+
+def test_the_demo_market_can_be_reset_before_a_presentation_and_no_other_market_can(path):
+    from terminal import db as store
+
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="k")) as c:
+        h = {"X-Terminal-Key": "k"}
+        c.post("/markets/mu-demo/ticks", json={"text": "that is clever", "kind": "typed"}, headers=h)
+        db = c.app.state.db
+        store.add_move(db, "mu-demo", 100.0, 40.0, 20.0, 24.0, None, None, None)
+        assert c.get("/markets/mu-demo").json()["price"] > 20.0
+        assert c.post("/markets/mu-demo/reset").status_code == 401
+        store.add_market(db, id="k-x", venue="kalshi", venue_ref="X", title="t", rules="r", url=None)
+        assert c.post("/markets/k-x/reset", headers=h).status_code == 409
+        r = c.post("/markets/mu-demo/reset", headers=h)
+        assert r.status_code == 200 and r.json()["price"] == 20.0 and r.json()["ticks_today"] == 0
+        assert c.get("/markets/mu-demo/ticks").json() == [] and c.get("/markets/mu-demo/moves").json() == []
+        assert [p["price"] for p in c.get("/markets/mu-demo/prices").json()] == [20.0]

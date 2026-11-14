@@ -887,3 +887,27 @@ def test_a_market_that_had_no_page_worth_watching_is_looked_at_again_after_some_
     assert seen == []  # the search and the model give other answers on another day, not a minute later
     asyncio.run(poller.article_pass(db, bus, up, {}, now=1000 + poller.PAGE_RETRY + 60, fetch=fetch, watch_page=watch_page))
     assert seen == [m["id"]]
+
+
+def test_social_media_pages_are_not_news_whichever_source_brings_them():
+    db, bus, m = setup()
+
+    async def search(query, **kw):
+        if "exclude_domains" in kw:  # the article searches; the posts search names its own sites
+            assert {"facebook.com", "youtube.com", "instagram.com", "threads.com", "tiktok.com"} <= set(kw["exclude_domains"])
+        return []
+
+    async def gnews(query):
+        return [{"url": "https://news.google.com/rss/articles/A", "title": "Leader speaks on the ceasefire talks today",
+                 "description": "", "text": "", "source": "m.facebook.com", "published": time.time() - 60},
+                {"url": "https://news.google.com/rss/articles/B", "title": "Watch the full statement on the ceasefire",
+                 "description": "", "text": "", "source": "youtube.com", "published": time.time() - 60},
+                {"url": "https://news.google.com/rss/articles/C", "title": "Ceasefire talks resume in Doha on Monday",
+                 "description": "", "text": "", "source": "reuters.com", "published": time.time() - 60}]
+
+    async def none(*a, **kw):
+        return []
+
+    n = asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, gnews=gnews,
+                                          feed=none, news=none))
+    assert n == 1 and [t["source"] for t in store.ticks(db, m["id"], include_hidden=True)] == ["reuters.com"]

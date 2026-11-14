@@ -131,6 +131,18 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         app.state.bus.publish("market", {"market_id": id, "status": "deleted"})
         return {"deleted": id}
 
+    @app.post("/markets/{id}/reset", dependencies=[Depends(write_access)])
+    async def reset(id: str):
+        """Put the demo market back to its starting price with an empty tape, after a rehearsal."""
+        m = market_or_404(id)
+        if id != DEMO["id"]:
+            raise HTTPException(409, "only the demo market can be reset")
+        now = time.time()
+        store.reset_market(app.state.db, id, now, DEMO["start"])
+        app.state.bus.publish("market", {"market_id": id, "status": "reset"})
+        app.state.bus.publish("price", {"market_id": id, "ts": now, "price": DEMO["start"]})
+        return detail(app.state.db, m, now)
+
     @app.get("/markets/{id}/ticks")
     async def ticks(id: str, limit: int = Query(100, ge=1, le=500)):
         market_or_404(id)

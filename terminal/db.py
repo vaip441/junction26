@@ -110,6 +110,13 @@ def delete_market(db, id: str) -> None:
         db.execute("DELETE FROM markets WHERE id = ?", (mid,))
 
 
+def reset_market(db, id: str, ts: float, price: float) -> None:
+    """Forget everything that happened on a market and start it again at a price."""
+    for table in ("ticks", "prices", "moves"):
+        db.execute(f"DELETE FROM {table} WHERE market_id = ?", (id,))
+    add_price(db, id, ts, price)
+
+
 def get_market(db, id: str) -> dict | None:
     return _market(db.execute("SELECT * FROM markets WHERE id = ?", (id,)).fetchone())
 
