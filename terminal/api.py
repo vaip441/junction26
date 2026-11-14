@@ -114,6 +114,9 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         store.set_poll_seconds(db, DEMO["id"], 0)  # it moves only by what is said to it, never by articles
         if replays is not None:
             replay.load(db, replays)
+        for m in store.list_markets(db):  # made-up markets asked before their charts were drawn from coverage
+            if m["venue"] == "made_up" and m["filled"]:
+                poller.draw_history(db, m["id"])
         app.state.wake = asyncio.Event()
         app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
         busy = set()  # markets being searched right now, by the article loop or behind a price move

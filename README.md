@@ -37,7 +37,9 @@ A question in plain words is matched to a real market by searching both venues a
 threshold and deadline, as Decision 1 judges it), the two are paired and the market carries a `consensus`:
 both venues' prices, their middle and how far apart they are. When nothing matches, a text model writes a yes/no question with a deadline, Decision 1
 gives its starting odds from the coverage found, and each shown tick afterwards nudges the price
-(`terminal/madeup.py`, `terminal/pricing.py`).
+(`terminal/madeup.py`, `terminal/pricing.py`). Its chart opens with the path the
+coverage took it there: each dated item found in the last week is undone in turn, back from the starting odds
+(`pricing.history`).
 
 A market tracked just now starts with the venue's last week of prices, about one an hour
 (`terminal/venues/`), so its chart is not empty and the news found for it has a price to stand on.

@@ -187,6 +187,19 @@ def latest_price(db, market_id: str) -> tuple[float, float] | None:
     return row and (row["ts"], row["price"])
 
 
+def first_price(db, market_id: str) -> tuple[float, float] | None:
+    """(ts, price) of the oldest sample."""
+    row = db.execute("SELECT ts, price FROM prices WHERE market_id = ? ORDER BY ts LIMIT 1", (market_id,)).fetchone()
+    return row and (row["ts"], row["price"])
+
+
+def dated_calls(db, market_id: str, since: float, before: float) -> list[tuple[float, float]]:
+    """(when published, strength) of a market's shown up or down ticks from the web published in a stretch of time."""
+    return [(r["published_ts"], r["strength"]) for r in db.execute(
+        "SELECT published_ts, strength FROM ticks WHERE market_id = ? AND hidden = 0 AND test = 0 "
+        "AND verdict IN ('up', 'down') AND published_ts >= ? AND published_ts < ?", (market_id, since, before))]
+
+
 def prices(db, market_id: str, since: float = 0) -> list[dict]:
     return [dict(r) for r in db.execute("SELECT ts, price FROM prices WHERE market_id = ? AND ts >= ? ORDER BY ts",
                                         (market_id, since))]

@@ -8,6 +8,7 @@ from urllib.parse import urlsplit
 from terminal import contextdev, googlenews, madeup, moves, pages, posts, venues, watch
 from terminal import db as store
 from terminal.pipeline import STORY_SECONDS, dedupe_key, ingest, public, title_key
+from terminal.pricing import history
 from terminal.scoring import Score
 from terminal.venues import polymarket
 
@@ -315,6 +316,23 @@ async def fetch_now(db, bus, scorer, market: dict, busy: set, fetch=None) -> Non
         busy.discard(id)
 
 
+HISTORY_WINDOW = 7 * 86400  # like a real market, whose chart opens with the venue's last week
+
+
+def draw_history(db, market_id: str) -> list[tuple[float, float]]:
+    """Give a made-up market a chart from the coverage found for it. Its price began at the model's odds
+    with nothing before them, so the chart was one point until someone typed. The items found before that
+    first price, each with its publish time and strength, are walked back from it (pricing.history) and
+    stored as the prices before it. Returns the points added, oldest first; none when there is no first
+    price or no dated up or down item before it. Safe to call again: only older points are ever added."""
+    first = store.first_price(db, market_id)
+    if first is None:
+        return []
+    points = history(first[1], store.dated_calls(db, market_id, first[0] - HISTORY_WINDOW, first[0]))
+    store.add_history(db, market_id, points)
+    return points
+
+
 DATE_BATCH = 100
 
 
@@ -407,6 +425,9 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                 # a made-up market opens at the model's odds given the coverage just found
                 price = await starting_price(m["title"], m["rules"], store.headlines(db, m["id"]))
                 store.add_price(db, m["id"], started, price)
+                # the chart of how the coverage got it there, sent oldest first and before the price it leads to
+                for ts, p in draw_history(db, m["id"]):
+                    bus.publish("price", {"market_id": m["id"], "ts": ts, "price": p})
                 bus.publish("price", {"market_id": m["id"], "ts": started, "price": price})
             if first:
                 store.set_filled(db, m["id"])
