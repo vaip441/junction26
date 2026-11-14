@@ -53,8 +53,15 @@ uv run --env-file .env uvicorn terminal.api:app --port 18911
 uv run --env-file .env python scripts/seed_markets.py http://127.0.0.1:18911   # tracks the markets in markets.txt
 ```
 
-Open http://127.0.0.1:18911/ for a plain debug page: ask a question, pick a market, type a sentence and
-watch it become a tick. The real screen is a separate frontend that talks to the interface below.
+The real screen is the React app in `ui/`. Built once, the terminal serves it at http://127.0.0.1:18911/
+(build it again after every change to `ui/`, then restart the terminal):
+
+```sh
+(cd ui && npm ci && VITE_API_URL= npm run build)   # an empty VITE_API_URL: the screen talks to the address it came from
+```
+
+http://127.0.0.1:18911/debug is a plain debug page: ask a question, pick a market, type a sentence and
+watch it become a tick. It is also what `/` shows until the screen is built.
 
 | Variable | Meaning |
 | --- | --- |

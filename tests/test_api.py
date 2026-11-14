@@ -520,3 +520,18 @@ def test_the_demo_market_can_be_reset_before_a_presentation_and_no_other_market_
         assert r.status_code == 200 and r.json()["price"] == 20.0 and r.json()["ticks_today"] == 0
         assert c.get("/markets/mu-demo/ticks").json() == [] and c.get("/markets/mu-demo/moves").json() == []
         assert [p["price"] for p in c.get("/markets/mu-demo/prices").json()] == [20.0]
+
+
+def test_the_built_screen_is_served_at_the_root_and_the_debug_page_moves_aside(path, tmp_path):
+    ui = tmp_path / "dist"
+    (ui / "assets").mkdir(parents=True)
+    (ui / "index.html").write_text("<html>the real screen</html>")
+    (ui / "assets" / "app.js").write_text("console.log(1)")
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, ui=ui)) as c:
+        assert "the real screen" in c.get("/").text
+        assert c.get("/assets/app.js").status_code == 200
+        assert "Terminal debug page" in c.get("/debug").text
+        assert c.get("/markets").json()[0]["id"] == "mu-demo"  # the interface still answers first
+        assert c.get("/nothing-here").status_code == 404
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, ui=tmp_path / "not-built")) as c:
+        assert "Terminal debug page" in c.get("/").text and "Terminal debug page" in c.get("/debug").text

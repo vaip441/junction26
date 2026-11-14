@@ -12,6 +12,7 @@ from typing import Literal
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
@@ -22,6 +23,7 @@ from terminal.record import record
 from terminal.seed import DEMO
 
 STATIC = Path(__file__).parent / "static"
+UI = Path(__file__).parent.parent / "ui" / "dist"  # the real screen, once built (see README)
 DAY = 86400
 MAX_RELATED = 5  # an event can hold over a hundred contracts; each one costs a price call a minute
 MAX_SHOWN = 6  # markets found for a question that are named to the frontend
@@ -62,7 +64,8 @@ def detail(db, m: dict, now: float) -> dict:
             "sources": store.sources(db, m["id"])}
 
 
-def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: str | None = None) -> FastAPI:
+def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: str | None = None,
+               ui: Path | None = None) -> FastAPI:
     # Every route is `async def`: the store is one sqlite connection, and a plain `def` route would use it
     # from a worker thread while the background loops use it from the event loop.
     key = key if key is not None else os.environ.get("TERMINAL_KEY", "")
@@ -322,11 +325,16 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         return StreamingResponse(events(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    @app.get("/", include_in_schema=False)
+    @app.get("/debug", include_in_schema=False)
     async def debug_page():
         return FileResponse(STATIC / "debug.html")
+
+    if ui is not None and (ui / "index.html").is_file():
+        app.mount("/", StaticFiles(directory=ui, html=True))  # last, so every route above answers first
+    else:  # the screen has not been built on this machine
+        app.get("/", include_in_schema=False)(debug_page)
 
     return app
 
 
-app = create_app()
+app = create_app(ui=UI)
