@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, moves, pages, poller, replay, scoring, truth, venues
+from terminal import contextdev, madeup, match, moves, pages, poller, replay, scoring, speech, truth, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -233,6 +233,25 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         if tick is None:
             raise HTTPException(503, "scoring unavailable, try again")
         return public(tick)
+
+    @app.post("/transcribe", dependencies=[Depends(write_access)])
+    async def transcribe(request: Request):
+        """Speech to text for the microphone: the body is one short recording (WAV), the answer its words.
+        The screen then sends the words as a mic tick. An empty text means nobody said anything."""
+        mime = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if mime not in speech.TYPES:
+            raise HTTPException(415, "send the recording as audio/wav")
+        if int(request.headers.get("content-length") or 0) > speech.MAX_BYTES:
+            raise HTTPException(413, "the recording is too long")
+        audio = await request.body()
+        if not audio:
+            raise HTTPException(422, "the recording is empty")
+        if len(audio) > speech.MAX_BYTES:
+            raise HTTPException(413, "the recording is too long")
+        try:
+            return {"text": await speech.transcribe(audio, mime)}
+        except speech.SpeechError:
+            raise HTTPException(502, "could not reach the speech model, try again")
 
     async def with_history(ids: list[str]) -> None:
         """Fill in the last week of prices for markets tracked just now, so the chart is not empty and the
