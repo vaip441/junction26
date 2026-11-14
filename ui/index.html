@@ -5,8 +5,60 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Priced In: prediction markets against the live web</title>
+    <!-- the name's font, asked for early so the splash does not show it in a stand-in font first -->
+    <link rel="preload" as="font" type="font/woff2" crossorigin
+          href="/node_modules/@fontsource-variable/archivo/files/archivo-latin-wdth-normal.woff2" />
+    <!-- The splash: the mark draws itself (the line runs, the news lands, the price jumps), the name follows,
+         and it fades into the app loading underneath. Here and not in the app so it shows before the app's
+         code has loaded. Once per browser session, gone at any click or key, off under reduced motion. -->
+    <style>
+      #splash {
+        position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
+        gap: 1.1rem; background: #0f0e0c; color: #efe9dc;
+        font: 800 3.4rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
+        animation: splash-out 0.35s ease-out 1.5s forwards;
+      }
+      #splash svg { height: 4.6rem; width: auto; overflow: visible; }
+      #splash path { fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+      #splash .run { stroke-dasharray: 12; stroke-dashoffset: 12; animation: splash-draw 0.22s ease-out 0.1s forwards; }
+      #splash .jump { stroke-dasharray: 32; stroke-dashoffset: 32; animation: splash-draw 0.45s cubic-bezier(0.23, 1, 0.32, 1) 0.5s forwards; }
+      #splash circle {
+        fill: #3dcc7a; stroke: #0f0e0c; stroke-width: 2.5; transform-box: fill-box; transform-origin: center;
+        transform: scale(0); animation: splash-land 0.3s cubic-bezier(0.23, 1, 0.32, 1) 0.3s forwards;
+      }
+      #splash span {
+        /* The wide cut, by its axis and in a rule of its own: the build's minifier folds font-stretch into a
+           font shorthand that browsers reject, and a shorthand in the same rule would reset the axis. */
+        font-variation-settings: 'wdth' 125;
+        letter-spacing: -0.01em; opacity: 0; animation: splash-name 0.4s ease-out 0.75s forwards;
+      }
+      @keyframes splash-draw { to { stroke-dashoffset: 0; } }
+      @keyframes splash-land { to { transform: scale(1); } }
+      @keyframes splash-name { from { opacity: 0; transform: translateX(-0.4rem); } to { opacity: 1; transform: none; } }
+      @keyframes splash-out { to { opacity: 0; visibility: hidden; } }
+      .no-splash #splash { display: none; }
+      @media (prefers-reduced-motion: reduce) { #splash { display: none; } }
+    </style>
+    <script>
+      try {
+        if (sessionStorage.getItem('splash')) document.documentElement.classList.add('no-splash')
+        sessionStorage.setItem('splash', '1')
+      } catch {
+        // no storage (a private window): the splash plays on every load
+      }
+      for (const event of ['pointerdown', 'keydown'])
+        addEventListener(event, () => document.documentElement.classList.add('no-splash'), { once: true })
+    </script>
   </head>
   <body>
+    <div id="splash" aria-hidden="true">
+      <svg viewBox="6 10 36 28">
+        <path class="run" d="M9 31H21" />
+        <path class="jump" d="M21 31V17H39" />
+        <circle cx="21" cy="31" r="5" />
+      </svg>
+      <span>Priced In</span>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
