@@ -388,7 +388,10 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const span = historySpan(data)
   const shown: RangeId | null = byHand ? null : RANGES.some((r) => r.id === range && r.seconds < span) ? range : 'all'
   // the newest price has been dragged off the right edge
-  const away = onScreen != null && data.length > 1 && onScreen.to < data.length - 1
+  // a replay's axis is fixed while its line grows, so no range change reports the bars it adds: what is on
+  // screen is all of it so far (else the newest price counts as off screen until the next report)
+  const seen = replayTotal && data.length ? { from: 0, to: data.length - 1 } : onScreen
+  const away = seen != null && data.length > 1 && seen.to < data.length - 1
 
   // markers and lead-time lines
   useEffect(() => {
@@ -542,7 +545,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
               Back to latest
             </button>
           )}
-          {api && <Readout chart={api.chart} series={api.series} data={data} range={shown} shown={onScreen} />}
+          {api && <Readout chart={api.chart} series={api.series} data={data} range={shown} shown={seen} />}
         </div>
       )}
       <div
