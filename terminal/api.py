@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
 from terminal import contextdev, madeup, match, moves, pages, poller, replay, scoring, speech, truth, venues, wire
+from terminal import preview as previews
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -205,6 +207,14 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         """The market's price jumps, newest first, each with the tick named as its cause (or null)."""
         market_or_404(id)
         return [moves.public_move(m) for m in store.moves(app.state.db, id, limit)]
+
+    @app.get("/preview")
+    async def preview(url: str):
+        """The image a page offers as its own, for the tape's hover card. Read once and remembered."""
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            raise HTTPException(400, "url must be an http(s) address")
+        return await previews.preview(app.state.db, url)
 
     @app.post("/markets/{id}/why", dependencies=[Depends(write_access)])
     async def why(id: str):

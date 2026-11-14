@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS pages (
     id TEXT PRIMARY KEY, market_id TEXT NOT NULL, url TEXT, title TEXT, monitor_id TEXT, secret TEXT,
     created_ts REAL NOT NULL, checked_ts REAL, changed_ts REAL);
 CREATE INDEX IF NOT EXISTS pages_by_market ON pages (market_id);
+CREATE TABLE IF NOT EXISTS previews (
+    url TEXT PRIMARY KEY, image TEXT, title TEXT, fetched_ts REAL NOT NULL);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
@@ -204,6 +206,15 @@ def dated_calls(db, market_id: str, since: float, before: float) -> list[tuple[f
 def prices(db, market_id: str, since: float = 0) -> list[dict]:
     return [dict(r) for r in db.execute("SELECT ts, price FROM prices WHERE market_id = ? AND ts >= ? ORDER BY ts",
                                         (market_id, since))]
+
+
+def get_preview(db, url: str) -> dict | None:
+    """The last preview read for an address, or None."""
+    return db.execute("SELECT * FROM previews WHERE url = ?", (url,)).fetchone()
+
+
+def set_preview(db, url: str, image: str | None, title: str | None, ts: float) -> None:
+    db.execute("INSERT OR REPLACE INTO previews (url, image, title, fetched_ts) VALUES (?,?,?,?)", (url, image, title, ts))
 
 
 def has_tick(db, market_id: str, dedupe_key: str) -> bool:

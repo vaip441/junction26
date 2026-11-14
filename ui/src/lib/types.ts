@@ -41,6 +41,14 @@ export interface Source {
   moved: number
 }
 
+/** The image a page offers as its own, read once by the backend and kept. */
+export interface Preview {
+  url: string
+  /** Null when the page declares no image, or could not be read. */
+  image: string | null
+  title: string | null
+}
+
 /** A page a Context.dev monitor checks every ten minutes; a change that bears on the market becomes a `page` tick. */
 export interface WatchedPage {
   url: string

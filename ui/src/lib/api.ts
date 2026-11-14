@@ -1,4 +1,4 @@
-import type { MarketDetail, MarketSummary, Move, PricePoint, Reading, Tick, WeekendRecord } from './types'
+import type { MarketDetail, MarketSummary, Move, PricePoint, Preview, Reading, Tick, WeekendRecord } from './types'
 
 export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:18911'
 
@@ -69,6 +69,8 @@ export const api = {
     request<{ context_dev: { keys: { credits_remaining: number | null }[]; per_minute: number; used_last_minute: number } }>('/status', {}, true),
   record: () => request<WeekendRecord>('/record'),
   reading: (after = 0) => request<Reading>(`/reading?after=${after}`),
+  /** The image a page declares as its own, for the hover card. The backend reads it once and keeps it. */
+  preview: (url: string) => request<Preview>(`/preview?url=${encodeURIComponent(url)}`),
 
   addMarket: (query: string, pollSeconds = 900) =>
     request<MarketDetail & { matched: boolean }>(
