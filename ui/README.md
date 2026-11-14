@@ -1,4 +1,4 @@
-# Terminal UI
+# Priced In UI
 
 React + Vite + TypeScript screen for the prediction market terminal. The plan, layout and build order
 are in [PLAN.md](PLAN.md); the backend contract is "Interface for the frontend" in

@@ -26,12 +26,12 @@ export function KeyPrompt() {
       <form
         role="dialog"
         aria-modal="true"
-        aria-label="Terminal key"
+        aria-label="Priced In key"
         onSubmit={save}
         onClick={(e) => e.stopPropagation()}
         className="pop-in flex w-full max-w-sm flex-col gap-3 rounded-xs border border-line bg-panel p-5"
       >
-        <h2 className="text-base font-semibold text-text">Terminal key</h2>
+        <h2 className="text-base font-semibold text-text">Priced In key</h2>
         <p className="text-xs text-muted">
           Adding a market or scoring a sentence needs the team's shared key. It is kept in this browser only.
         </p>

@@ -1,6 +1,6 @@
-# Prediction market terminal
+# Priced In
 
-A terminal for tracking how news and other signals move prediction market prices and the likelihood of events.
+How likely is it, and what just changed that? A terminal for tracking how news and other signals move prediction market prices and the likelihood of events.
 Built at Junction 2026 for the Context.dev challenge: a product that reacts to the live web.
 
 Ask a question in plain words, or paste a Kalshi or Polymarket link. The terminal finds the market that

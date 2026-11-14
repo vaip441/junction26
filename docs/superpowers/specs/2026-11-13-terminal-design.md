@@ -1,4 +1,4 @@
-# Prediction market terminal: design
+# Priced In, the prediction market terminal: design
 
 Junction 2026, Context.dev challenge ("build a product that reacts to the live web").
 Status: draft, awaiting Georg's approval. Items marked **(call)** were decided by the

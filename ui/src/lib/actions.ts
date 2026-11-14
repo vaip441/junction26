@@ -18,7 +18,7 @@ export async function sendTick(marketId: string, text: string, kind: 'mic' | 'ty
     const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
     if (err.status === 401) {
       useStore.getState().setNeedKey(true)
-      return 'needs the terminal key: enter it, then send again'
+      return 'needs the Priced In key: enter it, then send again'
     }
     return err.detail
   } finally {
@@ -37,7 +37,7 @@ export async function transcribe(audio: Blob, quiet = false): Promise<{ text: st
     const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
     if (err.status === 401) {
       if (!quiet) useStore.getState().setNeedKey(true)
-      return { error: 'needs the terminal key: enter it, then say it again' }
+      return { error: 'needs the Priced In key: enter it, then say it again' }
     }
     return { error: err.detail }
   }
@@ -59,7 +59,7 @@ export async function askFor(query: string): Promise<boolean> {
   } catch (e) {
     const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
     if (err.status === 401) useStore.getState().setNeedKey(true)
-    useStore.getState().askFailed(err.status === 401 ? 'needs the terminal key: enter it, then ask again' : err.detail)
+    useStore.getState().askFailed(err.status === 401 ? 'needs the Priced In key: enter it, then ask again' : err.detail)
     return false
   }
 }
@@ -76,7 +76,7 @@ export async function askWhy(marketId: string): Promise<string | null> {
     const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
     if (err.status === 401) {
       useStore.getState().setNeedKey(true)
-      return 'needs the terminal key: enter it, then ask again'
+      return 'needs the Priced In key: enter it, then ask again'
     }
     return err.detail
   }
@@ -92,7 +92,7 @@ export async function resetDemo(marketId: string): Promise<string | null> {
     const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
     if (err.status === 401) {
       useStore.getState().setNeedKey(true)
-      return 'needs the terminal key: enter it, then reset again'
+      return 'needs the Priced In key: enter it, then reset again'
     }
     return err.detail
   }
@@ -108,7 +108,7 @@ export async function removeMarket(marketId: string): Promise<string | null> {
     const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
     if (err.status === 401) {
       useStore.getState().setNeedKey(true)
-      return 'needs the terminal key: enter it, then remove again'
+      return 'needs the Priced In key: enter it, then remove again'
     }
     return err.detail
   }

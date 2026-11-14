@@ -141,7 +141,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         db.close()
 
     # no /docs: the address is public, and the README lists the interface
-    app = FastAPI(title="Prediction market terminal", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(title="Priced In", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
     def market_or_404(id: str) -> dict:
