@@ -116,6 +116,11 @@ def current_price(token: str) -> float | None:
     return round(float(get(CLOB + "/midpoint", token_id=token)["mid"]) * 100, 4)
 
 
+def resolved(token: str) -> bool:
+    """Whether the market behind a token is closed for good. Asked for closed markets only: an open one is not listed."""
+    return any(m.get("closed") is True for m in get(GAMMA + "/markets", clob_token_ids=token, closed="true") or [])
+
+
 def parse_history(data: dict | None) -> list[tuple[float, float]]:
     """(unix seconds, percent) from a prices-history answer, oldest first; odd points are left out."""
     out = []

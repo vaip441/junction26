@@ -5,7 +5,7 @@ import logging
 from terminal.venues import kalshi, polymarket
 from terminal.venues.errors import MarketNotFound, NotAVenueLink, VenueError
 
-__all__ = ["MarketNotFound", "NotAVenueLink", "VenueError", "current_price", "history", "market_id", "resolve"]
+__all__ = ["MarketNotFound", "NotAVenueLink", "VenueError", "current_price", "history", "market_id", "resolve", "resolved"]
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +39,12 @@ async def current_price(market: dict) -> float | None:
     """Latest price in percent; None when the venue has no usable price. Raises on a venue failure."""
     client = polymarket if market["venue"] == "polymarket" else kalshi
     return await asyncio.to_thread(client.current_price, market["venue_ref"])
+
+
+async def resolved(market: dict) -> bool:
+    """Whether the venue has resolved the market. Raises on a venue failure: not knowing is not a yes."""
+    client = polymarket if market["venue"] == "polymarket" else kalshi
+    return await asyncio.to_thread(client.resolved, market["venue_ref"])
 
 
 async def history(market: dict) -> list[tuple[float, float]]:

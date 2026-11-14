@@ -256,3 +256,26 @@ def test_polymarket_comments_are_the_newest_under_an_event_and_its_number_is_ask
     assert [a[0] for a in asked] == ["events", "comments", "comments"]
     assert polymarket_comments("no-such-event") == []
 
+
+def test_a_market_is_resolved_only_when_its_venue_says_so(monkeypatch):
+    import asyncio
+
+    from terminal import venues
+
+    states = {"KX-OPEN": "active", "KX-SHUT": "closed", "KX-DONE": "finalized", "KX-KNOWN": "determined"}
+    monkeypatch.setattr(kalshi, "get", lambda path, **params: {"market": {"status": states[path.rsplit("/", 1)[1]]}})
+    # trading shut but no outcome yet is not resolved
+    assert [kalshi.resolved(t) for t in states] == [False, False, True, True]
+
+    asked = []
+
+    def get(url, **params):
+        asked.append((url.rsplit("/", 1)[1], params))
+        return [{"closed": True}] if params["clob_token_ids"] == "over" else []
+
+    monkeypatch.setattr(polymarket, "get", get)
+    assert polymarket.resolved("over") is True and polymarket.resolved("open") is False
+    assert asked[0] == ("markets", {"clob_token_ids": "over", "closed": "true"})  # asked for closed ones only
+    run = lambda m: asyncio.run(venues.resolved(m))
+    assert run({"venue": "polymarket", "venue_ref": "over"}) is True and run({"venue": "kalshi", "venue_ref": "KX-OPEN"}) is False
+

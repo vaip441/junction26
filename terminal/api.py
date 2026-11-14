@@ -119,7 +119,9 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus, app.state.scorer, busy)),
                  asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake, busy,
                                                          watch_page)),
-                 asyncio.create_task(poller.date_loop(db, app.state.bus))] if poll else []
+                 asyncio.create_task(poller.date_loop(db, app.state.bus)),
+                 asyncio.create_task(poller.forever("resolved", poller.RESOLVED_EVERY,
+                                                    lambda: poller.drop_resolved(db, app.state.bus)))] if poll else []
         if poll and os.environ.get("TRUTH_FEED"):  # the feed file of trump-social-scraper, where one runs
             tasks.append(asyncio.create_task(truth.truth_loop(db, app.state.bus, app.state.scorer, os.environ["TRUTH_FEED"])))
         app.state.tasks = tasks

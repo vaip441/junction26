@@ -123,6 +123,13 @@ def current_price(ticker: str) -> float | None:
     return price(get(f"/markets/{ticker}")["market"])
 
 
+RESOLVED = ("determined", "finalized", "settled")  # the outcome is known; "closed" is only trading shut
+
+
+def resolved(ticker: str) -> bool:
+    return get(f"/markets/{ticker}")["market"]["status"] in RESOLVED
+
+
 def parse_history(data: dict | None) -> list[tuple[float, float]]:
     """(unix seconds, percent) from a candlesticks answer, oldest first: each hour's closing price, read
     like price() (the midpoint of a real two-sided quote, else the last trade); hours with neither are left out."""

@@ -75,3 +75,32 @@ def test_the_search_behind_a_move_never_doubles_an_article_pass(monkeypatch):
     busy.add("m")
     asyncio.run(poller.fetch_now(db, Bus(), None, m, busy, fetch=fetch))
     assert len(fetched) == 1  # the pass already searched: its ticks are what gets looked at
+
+
+def test_resolved_markets_are_dropped_with_everything_they_hold_and_the_rest_are_kept():
+    db, bus = store.connect(":memory:"), Bus()
+    add = lambda id, venue="kalshi", lead=None: store.add_market(db, id=id, venue=venue, venue_ref=id, title=id, rules="r",
+                                                                 url=None, lead_id=lead)
+    for id, lead in (("over", None), ("over-side", "over"), ("open", None), ("open-side", "open"), ("unknown", None)):
+        add(id, lead=lead)
+        store.add_price(db, id, 1.0, 50.0)
+    add("mu-x", venue="made_up")
+    unwatched, events = [], bus.subscribe()
+
+    async def resolved(m):
+        if m["id"] == "unknown":
+            raise RuntimeError("venue down")
+        return m["id"] in ("over", "open-side")
+
+    async def unwatch(db, id):
+        unwatched.append(id)
+
+    gone = asyncio.run(poller.drop_resolved(db, bus, resolved=resolved, unwatch=unwatch))
+    # a market goes with its related contracts; a related contract that resolved goes alone; a venue that
+    # could not be asked, and a made-up market, change nothing
+    assert sorted(gone) == ["open-side", "over"] and unwatched == ["over"]
+    assert sorted(m["id"] for m in store.all_priced(db)) == ["open", "unknown"] and store.get_market(db, "mu-x")
+    assert store.prices(db, "over") == [] and store.prices(db, "over-side") == []
+    assert events.get_nowait() == ("market", {"market_id": "over", "status": "deleted", "resolved": True})
+    assert events.empty()
+

@@ -5,7 +5,7 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from terminal import contextdev, googlenews, madeup, moves, posts, venues, watch
+from terminal import contextdev, googlenews, madeup, moves, pages, posts, venues, watch
 from terminal import db as store
 from terminal.pipeline import STORY_SECONDS, dedupe_key, ingest, public, title_key
 from terminal.scoring import Score
@@ -28,6 +28,31 @@ async def sample_prices(db, bus, now: float | None = None) -> int:
             bus.publish("price", {"market_id": m["id"], "ts": now, "price": price})
             stored += 1
     return stored
+
+
+RESOLVED_EVERY = 600  # seconds between asking the venues which markets are over
+
+
+async def drop_resolved(db, bus, *, resolved=None, unwatch=None) -> list[str]:
+    """Stop tracking every market its venue has resolved: nothing more will move it, and each pass over
+    it would still cost searches. A market goes with its related contracts, ticks and prices, like one
+    deleted by hand; a related contract that resolved goes alone. A venue that could not be asked changes
+    nothing. Returns the ids removed."""
+    markets = store.all_priced(db)
+    answers = await asyncio.gather(*((resolved or venues.resolved)(m) for m in markets), return_exceptions=True)
+    gone = []
+    for m, over in zip(markets, answers):
+        if isinstance(over, BaseException):
+            log.warning("could not ask whether %s is resolved: %s", m["id"], over)
+        elif over is True and store.get_market(db, m["id"]) is not None:  # not gone with its lead a moment ago
+            if m["lead_id"] is None:
+                await (unwatch or pages.unwatch)(db, m["id"])
+            store.delete_market(db, m["id"])
+            if m["lead_id"] is None:
+                bus.publish("market", {"market_id": m["id"], "status": "deleted", "resolved": True})
+            log.info("dropped %s: resolved on %s", m["id"], m["venue"])
+            gone.append(m["id"])
+    return gone
 
 
 async def forever(name: str, interval: float, step) -> None:

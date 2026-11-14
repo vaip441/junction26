@@ -80,3 +80,19 @@ export async function resetDemo(marketId: string): Promise<string | null> {
     return err.detail
   }
 }
+
+/** Stop tracking a market: it leaves the list at once, with its tape. Returns the error text, or null. */
+export async function removeMarket(marketId: string): Promise<string | null> {
+  try {
+    await api.deleteMarket(marketId)
+    useStore.getState().apply({ type: 'market', data: { market_id: marketId, status: 'deleted' } }) // the stream says so too
+    return null
+  } catch (e) {
+    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
+    if (err.status === 401) {
+      useStore.getState().setNeedKey(true)
+      return 'needs the terminal key: enter it, then remove again'
+    }
+    return err.detail
+  }
+}

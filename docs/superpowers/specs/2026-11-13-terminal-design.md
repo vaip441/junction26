@@ -380,7 +380,10 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   with status `reset` and a `price` event. 409 for any other market.
 - `DELETE /markets/{id}`: stop tracking a market; it, its related contracts, their
   ticks and prices are removed. 409 for the demo market. Sends a `market` event with
-  status `deleted`.
+  status `deleted`. A market its venue has resolved is dropped the same way without
+  being asked: every ten minutes each venue is asked which tracked contracts have an
+  outcome (Kalshi: determined or finalized; Polymarket: closed), and the event then
+  also carries `"resolved": true`. Its calls leave the weekend record with it.
 - `GET /markets/{id}/ticks?limit=` and `GET /markets/{id}/prices?since=`: history for
   first paint.
 - `GET /markets/{id}/moves?limit=`: the market's price moves, newest first (see "A
