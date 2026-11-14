@@ -35,7 +35,7 @@ export class ApiError extends Error {
 
 async function request<T>(path: string, init: RequestInit = {}, write = false): Promise<T> {
   const headers = new Headers(init.headers)
-  if (init.body) headers.set('content-type', 'application/json')
+  if (init.body && !headers.has('content-type')) headers.set('content-type', 'application/json')
   if (write) {
     const key = getWriteKey()
     if (key) headers.set('X-Terminal-Key', key)
@@ -81,6 +81,9 @@ export const api = {
       { method: 'POST', body: JSON.stringify({ text, kind }) },
       true,
     ),
+  /** Speech to text: one short recording in, the words said in it out (empty when nobody spoke). */
+  transcribe: (audio: Blob) =>
+    request<{ text: string }>('/transcribe', { method: 'POST', body: audio, headers: { 'content-type': 'audio/wav' } }, true),
   /** Explain the market's move over the last day, now. The answer also arrives as a `move` event. 409 when it barely moved. */
   why: (id: string) => request<Move>(`/markets/${encodeURIComponent(id)}/why`, { method: 'POST' }, true),
   /** Put the demo market back to its starting price with an empty tape, after a rehearsal. 409 for any other market. */
