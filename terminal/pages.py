@@ -20,7 +20,7 @@ from terminal import watch as writer  # the text model; `watch` below is this mo
 from terminal.pipeline import clean, ingest
 
 log = logging.getLogger(__name__)
-MIN_CONFIDENCE, STALE_SECONDS = 0.4, 300
+STALE_SECONDS = 300
 # a venue's own page and social feeds change all day without settling anything
 NOT_PAGES = ["polymarket.com", "kalshi.com", "x.com", "twitter.com", "reddit.com", "facebook.com", "youtube.com"]
 PROMPT = """A prediction market is watched for the moment its outcome is decided.
@@ -36,7 +36,7 @@ Reply with a JSON array holding that one string."""
 
 async def find(market: dict, *, ask=None, search=None, decide=None) -> dict | None:
     """{"url", "title"} of the page to watch for a market, found by a search the text model writes and
-    chosen by Decision 1; None when no page stands out. Raises when a step fails."""
+    chosen by Decision 1; None when "none of these" is likelier than any page. Raises when a step fails."""
     answer = await (ask or writer.ask_json)(PROMPT.format(title=market["title"], rules=market["rules"][:1500]))
     query = next((q.strip() for q in answer if isinstance(q, str) and q.strip()), None) if isinstance(answer, list) else None
     if not query:
@@ -61,7 +61,8 @@ async def find(market: dict, *, ask=None, search=None, decide=None) -> dict | No
         page = results[int(best[1:])]
     except (KeyError, TypeError, ValueError, IndexError, AttributeError) as e:
         raise scoring.ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
-    if p[best] < MIN_CONFIDENCE or p[best] <= p.get("none", 0.0):
+    # no bar on the best page itself: several good pages of one site split the vote between them
+    if p[best] <= p.get("none", 0.0):
         return None
     return {"url": page["url"], "title": page["title"]}
 
@@ -75,9 +76,10 @@ def instructions(market: dict) -> str:
 
 async def watch(db, market: dict, public_url: str, *, find=find, create=None, now: float | None = None) -> dict | None:
     """Find the market's page and have Context.dev watch it. The stored page, or None when no page is
-    worth watching (remembered, so it is not looked for again). Raises when a step fails, storing nothing."""
+    worth watching (remembered, so it is not looked for again for some hours). Raises when a step fails."""
     now = time.time() if now is None else now
     found, id = await find(market), secrets.token_urlsafe(24)
+    store.forget_unwatched(db, market["id"])  # an earlier look that found nothing
     if found is None:
         store.add_page(db, id, market["id"], None, None, None, None, now)
         return None

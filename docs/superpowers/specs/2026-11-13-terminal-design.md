@@ -199,7 +199,8 @@ article pass once the service has a public address (`PUBLIC_URL`). The page is f
 the live web, not from a model's memory: the text model writes one search for "the page
 most likely to change when the outcome is decided", Context.dev searches without a
 freshness filter, and Decision 1 chooses among the results, with "none of these" as a
-choice. Tried on four markets, it chose CENTCOM's press-release list for the Iran
+choice: no page is watched only when that choice is likelier than every page, and
+such a market is looked at again six hours later. Tried on four markets, it chose CENTCOM's press-release list for the Iran
 ceasefire market and the Wikipedia articles for Eurovision 2027 and the 2028 Republican
 primaries. The monitor is `page` with instructions built from the market's title and
 rules, every 10 minutes, with both `change.detected` and `run.completed` delivered: the

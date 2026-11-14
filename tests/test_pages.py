@@ -55,10 +55,12 @@ def test_the_page_to_watch_is_found_on_the_live_web_and_chosen_by_decision_1():
     assert "https://news.acme.example/" in questions["page"]["criteria"]["p1"]
 
 
-def test_no_page_is_watched_when_none_stands_out_and_a_failing_step_is_an_error():
+def test_no_page_is_watched_when_none_of_them_is_likelier_and_a_failing_step_is_an_error():
     find = lambda **kw: asyncio.run(pages.find(MARKET, **kw))
-    assert find(**finder({"p0": 0.3, "p1": 0.3, "none": 0.1})) is None
     assert find(**finder({"p0": 0.4, "none": 0.6})) is None
+    assert find(**finder({"p0": 0.3, "p1": 0.3, "none": 0.3})) is None
+    # several good pages split the vote (seen live: three UEFA pages at 0.31, 0.21, 0.16, none at 0.04): take the best
+    assert find(**finder({"p0": 0.16, "p1": 0.31, "none": 0.04}))["url"] == "https://news.acme.example/"
     assert find(**finder({}, results=[])) is None  # nothing found: nothing to ask
     with pytest.raises(ScoringError):
         find(**finder({"p9": 0.9}))
@@ -122,7 +124,13 @@ def test_a_market_with_no_page_worth_watching_is_remembered_and_a_failed_monitor
     assert store.pages(db, "m") == []  # tried again on the next pass
     assert asyncio.run(pages.watch(db, m, "https://t.example", find=nothing, create=refused, now=NOW)) is None
     [row] = store.pages(db, "m")
-    assert row["url"] is None and row["monitor_id"] is None  # looked for once, never again
+    assert row["url"] is None and row["monitor_id"] is None  # looked for, nothing found: remembered
+
+    async def create(url, instructions, hook, name):
+        return {"id": "mon_1", "secret": "whsec_a"}
+
+    page = asyncio.run(pages.watch(db, m, "https://t.example", find=found, create=create, now=NOW + 86400))
+    assert store.pages(db, "m") == [page] and page["url"]  # found on a later look: the empty record is gone
 
 
 def watched(db):

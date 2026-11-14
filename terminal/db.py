@@ -288,6 +288,11 @@ def pages(db, market_id: str) -> list[dict]:
     return [dict(r) for r in db.execute("SELECT * FROM pages WHERE market_id = ? ORDER BY created_ts, id", (market_id,))]
 
 
+def forget_unwatched(db, market_id: str) -> None:
+    """Drop the record that a market had no page worth watching, before it is looked at again."""
+    db.execute("DELETE FROM pages WHERE market_id = ? AND url IS NULL", (market_id,))
+
+
 def page_checked(db, id: str, ts: float, changed: bool) -> None:
     db.execute("UPDATE pages SET checked_ts = ?, changed_ts = CASE WHEN ? THEN ? ELSE changed_ts END WHERE id = ?",
                (ts, changed, ts, id))

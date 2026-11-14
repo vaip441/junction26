@@ -267,6 +267,7 @@ def due(db, last_fetch: dict, now: float) -> list[dict]:
 
 
 MARKETS_AT_ONCE = 4
+PAGE_RETRY = 6 * 3600
 
 
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *, queries_for=None,
@@ -303,7 +304,9 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                         return
                 except Exception as e:
                     log.warning("could not name the companies of %s, asking again next pass: %s", id, e)
-            if watch_page and not store.pages(db, id):  # once; `watch_page` is None without a public address
+            # once per market; one that had no page worth watching is looked at again after PAGE_RETRY, since
+            # the search and the model answer differently on another try. None without a public address.
+            if watch_page and not any(p["url"] or p["created_ts"] > started - PAGE_RETRY for p in store.pages(db, id)):
                 try:
                     await watch_page(db, m)
                 except Exception as e:

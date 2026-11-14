@@ -869,3 +869,21 @@ def test_a_market_gets_its_page_watched_once_and_a_failure_is_tried_again_next_p
         asyncio.run(poller.article_pass(db, bus, up, last, now=now, fetch=fetch, watch_page=watch_page))
     assert seen == [m["id"], m["id"]]  # the pass went on without it, asked once more, then never again
     asyncio.run(poller.article_pass(db, bus, up, {}, now=4000, fetch=fetch))  # no public address: no watching
+
+
+def test_a_market_that_had_no_page_worth_watching_is_looked_at_again_after_some_hours():
+    db, bus, m = setup()
+    store.set_companies(db, m["id"], [])
+    store.add_page(db, "none", m["id"], None, None, None, None, 1000.0)
+    seen = []
+
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        return 0
+
+    async def watch_page(db_, market):
+        seen.append(market["id"])
+
+    asyncio.run(poller.article_pass(db, bus, up, {}, now=1000 + poller.PAGE_RETRY - 60, fetch=fetch, watch_page=watch_page))
+    assert seen == []  # the search and the model give other answers on another day, not a minute later
+    asyncio.run(poller.article_pass(db, bus, up, {}, now=1000 + poller.PAGE_RETRY + 60, fetch=fetch, watch_page=watch_page))
+    assert seen == [m["id"]]
