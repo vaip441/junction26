@@ -23,5 +23,5 @@ def record(db, now: float | None = None, window: float = 900, min_move: float = 
         if abs(change) >= min_move:
             moved += 1
             same_way += (change > 0) == (t["verdict"] == "up")
-    since = db.execute("SELECT MIN(ts) FROM ticks").fetchone()[0]
+    since = db.execute("SELECT MIN(t.ts) FROM ticks t JOIN markets m ON m.id = t.market_id WHERE m.replay IS NULL").fetchone()[0]
     return {"called": called, "moved": moved, "same_way": same_way, "window_seconds": int(window), "since": since}
