@@ -226,4 +226,25 @@ def test_a_deleted_market_stops_its_monitor(tmp_path, monkeypatch):
         watched(db)
         store.add_page(db, "none", "m", None, None, None, None, NOW)
         assert c.delete("/markets/m").status_code == 200
-        assert stopped == ["mon_1"] and store.pages(db, "m") == [] and store.get_page(db, "tok") is None
+        assert store.pages(db, "m") == [] and store.get_page(db, "tok") is None
+        assert c.get("/markets").status_code == 200 and stopped == ["mon_1"]  # stopped right after the answer
+
+
+def test_deleting_does_not_wait_for_the_monitor_to_stop(tmp_path, monkeypatch):
+    # Context.dev is asked key by key, which took seconds: long enough to click away and think nothing happened
+    asked, release = [], asyncio.Event()
+
+    async def delete_monitor(id):
+        asked.append(id)
+        await release.wait()  # never, in this test: the answer must not depend on it
+        return True
+
+    monkeypatch.setattr(pages.contextdev, "delete_monitor", delete_monitor)
+    with TestClient(create_app(db_path=str(tmp_path / "t.db"), scorer=up, poll=False)) as c:
+        db = c.app.state.db
+        market(db)
+        watched(db)
+        assert c.delete("/markets/m").status_code == 200 and store.get_market(db, "m") is None
+        assert c.delete("/markets/m").status_code == 404  # a second click finds it gone, nothing worse
+        assert c.get("/markets").status_code == 200       # one more turn of the loop: the stopping has started
+        assert asked == ["mon_1"]

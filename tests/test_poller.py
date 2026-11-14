@@ -104,3 +104,19 @@ def test_resolved_markets_are_dropped_with_everything_they_hold_and_the_rest_are
     assert events.get_nowait() == ("market", {"market_id": "over", "status": "deleted", "resolved": True})
     assert events.empty()
 
+
+
+def test_after_a_restart_the_markets_come_due_one_after_another_not_all_at_once():
+    # all at once, the whole list was searched together every interval for ever, and the screen got its
+    # reading in a burst every three minutes
+    db = store.connect(":memory:")
+    for id in ("a", "b", "c"):
+        store.add_market(db, id=id, venue="kalshi", venue_ref=id, title=id, rules="r", url=None, queries=["q"], poll_seconds=180)
+        store.set_filled(db, id)
+    store.add_market(db, id="new", venue="kalshi", venue_ref="new", title="new", rules="r", url=None, poll_seconds=180)
+    store.add_market(db, id="still", venue="made_up", venue_ref=None, title="still", rules="r", url=None, poll_seconds=0)
+    last = poller.spread(db, now=1000)
+    assert last == {"a": 820, "b": 880, "c": 940}
+    assert [m["id"] for m in poller.due(db, last, 1000)] == ["new", "a"]  # one not yet filled never waits
+    assert [m["id"] for m in poller.due(db, {**last, "new": 1000, "a": 1000}, 1060)] == ["b"]
+    assert [m["id"] for m in poller.due(db, {**last, "new": 1000, "a": 1000, "b": 1060}, 1120)] == ["c"]

@@ -8,8 +8,9 @@ import { SourceIcon } from '../common/SourceIcon'
 
 const POLL_MS = 2000
 const KEEP = 24 // items on the strip
-const STEP_MS = 240 // they come in one at a time, so a batch reads as a stream
-const RUSH_MS = 90 // quicker while many are waiting
+// Items come in one at a time, so the few a market's search brings read as a stream and not a jolt:
+// unhurried while little is waiting, quicker as more is, so the strip is never far behind the reading.
+const pace = (waiting: number) => (waiting > 12 ? { every: 110, slide: 80 } : waiting > 4 ? { every: 380, slide: 220 } : { every: 850, slide: 280 })
 const WAITING = 60 // of a longer burst only the newest wait; the count is right all the same
 
 const MARK: Record<Verdict, { sign: string; tone: string; said: string }> = {
@@ -75,18 +76,18 @@ export function ReadingStrip() {
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout>
     const step = () => {
-      const rush = waiting.current.length > 8
+      const { every, slide } = pace(waiting.current.length)
       // the next item that has something to show: a repeat of one already here is passed over
       let added = null
       while (!held.current && !added && waiting.current.length) added = admit(list.current, waiting.current.shift()!)
       if (added) {
-        moving.current = added.front ? (rush ? 70 : 200) : 0
+        moving.current = added.front ? slide : 0
         list.current = added.list
         setItems(added.list)
       }
-      timer = setTimeout(step, rush ? RUSH_MS : STEP_MS)
+      timer = setTimeout(step, every)
     }
-    timer = setTimeout(step, STEP_MS)
+    timer = setTimeout(step, 400)
     return () => clearTimeout(timer)
   }, [])
 

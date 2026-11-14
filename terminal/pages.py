@@ -133,7 +133,13 @@ async def delivered(db, bus, scorer, page: dict, event, now: float | None = None
 
 async def unwatch(db, market_id: str) -> None:
     """Stop the monitors of a market that is being deleted: left running, each costs a credit every ten minutes."""
-    for page in store.pages(db, market_id):
+    await stop(store.pages(db, market_id), market_id)
+
+
+async def stop(watched: list[dict], market_id: str) -> None:
+    """Stop the monitors of these pages of a market (as store.pages gave them). Never raises: a monitor that
+    could not be stopped is logged, and scripts/stop_monitors.py stops what is left."""
+    for page in watched:
         if page["monitor_id"]:
             try:
                 if not await contextdev.delete_monitor(page["monitor_id"]):

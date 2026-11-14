@@ -98,6 +98,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     # from a worker thread while the background loops use it from the event loop.
     key = key if key is not None else os.environ.get("TERMINAL_KEY", "")
 
+    stopping: set[asyncio.Task] = set()  # monitors of deleted markets, being stopped
+
     def write_access(x_terminal_key: str = Header("")):
         """Writes cost model calls and Context.dev credits, so a public deployment sets TERMINAL_KEY."""
         if key and not hmac.compare_digest(x_terminal_key.encode(), key.encode()):
@@ -175,9 +177,14 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(409, "the demo market cannot be deleted")
         if m["lead_id"] is not None:
             raise HTTPException(404, "no such market")  # a related contract goes with its lead market
-        await pages.unwatch(app.state.db, id)
+        watched = store.pages(app.state.db, id)  # read first: a market's pages go with it
         store.delete_market(app.state.db, id)
         app.state.bus.publish("market", {"market_id": id, "status": "deleted"})
+        # Its monitors are stopped afterwards: Context.dev is asked key by key, which takes seconds, long
+        # enough for someone to click away with the market still listed and think nothing happened.
+        task = asyncio.create_task(pages.stop(watched, id))
+        stopping.add(task)  # held until done: a task nothing refers to can be collected mid-flight
+        task.add_done_callback(stopping.discard)
         return {"deleted": id}
 
     @app.post("/markets/{id}/reset", dependencies=[Depends(write_access)])

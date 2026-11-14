@@ -362,6 +362,14 @@ def retry_delay(fails: int) -> float:
     return min(RETRY_SECONDS * 2 ** min(fails - 1, 10), 3600)
 
 
+def spread(db, now: float) -> dict[str, float]:
+    """Last-fetch times that make the markets already filled come due one after another over their interval.
+    Starting empty, every market was due at the first pass and so together at every pass after it: the whole
+    list was searched at once every three minutes, and the screen got its reading in bursts."""
+    filled = [m for m in store.list_markets(db) if m["filled"] and m["poll_seconds"] > 0]
+    return {m["id"]: now - m["poll_seconds"] * (1 - i / len(filled)) for i, m in enumerate(filled)}
+
+
 def due(db, last_fetch: dict, now: float) -> list[dict]:
     """Lead markets whose polling interval has passed: not-yet-filled ones first, then the fastest.
     A poll interval of 0 means never (the demo market moves only by what is said to it)."""
@@ -455,7 +463,7 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
 async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = None, watch_page=None) -> None:
     """Run article passes forever. `wake` starts the next pass at once, for a newly added market.
     `busy` holds the markets being searched; the price loop adds one while it looks behind a move."""
-    last_fetch: dict[str, float] = {}
+    last_fetch = spread(db, time.time())
     running: set[asyncio.Task] = set()
     busy = set() if busy is None else busy
     limit = asyncio.Semaphore(MARKETS_AT_ONCE)  # shared, so overlapping passes cannot exceed the cap
