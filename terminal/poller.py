@@ -271,7 +271,7 @@ MARKETS_AT_ONCE = 4
 
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *, queries_for=None,
                        companies_for=None, fetch=None, starting_price=None, limit: asyncio.Semaphore | None = None,
-                       busy: set | None = None, fails: dict | None = None) -> None:
+                       busy: set | None = None, fails: dict | None = None, watch_page=None) -> None:
     """One round over the due markets. This is the only place articles are fetched, so a market's first
     completed pass is its backfill and every later pass is live; the two never race.
 
@@ -303,6 +303,12 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                         return
                 except Exception as e:
                     log.warning("could not name the companies of %s, asking again next pass: %s", id, e)
+            if watch_page and not store.pages(db, id):  # once; `watch_page` is None without a public address
+                try:
+                    await watch_page(db, m)
+                except Exception as e:
+                    log.warning("could not set up the page watch of %s, trying again next pass: %s: %s",
+                                id, type(e).__name__, e)
             first = not m["filled"]
             if first:
                 bus.publish("market", {"market_id": m["id"], "status": "finding sources"})
@@ -335,7 +341,7 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
     await asyncio.gather(*(one(m) for m in markets))
 
 
-async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = None) -> None:
+async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = None, watch_page=None) -> None:
     """Run article passes forever. `wake` starts the next pass at once, for a newly added market.
     `busy` holds the markets being searched; the price loop adds one while it looks behind a move."""
     last_fetch: dict[str, float] = {}
@@ -346,7 +352,7 @@ async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = 
 
     async def one_pass() -> None:
         try:
-            await article_pass(db, bus, scorer, last_fetch, limit=limit, busy=busy, fails=fails)
+            await article_pass(db, bus, scorer, last_fetch, limit=limit, busy=busy, fails=fails, watch_page=watch_page)
         except Exception:
             log.exception("article pass failed")
 

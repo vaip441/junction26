@@ -185,7 +185,7 @@ def test_adding_a_market_wakes_the_article_loop(path, monkeypatch):
     async def price_loop(db, bus, scorer, busy):
         return None
 
-    async def article_loop(db, bus, scorer, wake, busy):
+    async def article_loop(db, bus, scorer, wake, busy, watch_page):
         await wake.wait()
         woken.append([m["id"] for m in poller.due(db, {}, now=1e12)])
 

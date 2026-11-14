@@ -190,8 +190,23 @@ them for Wikipedia pages and for every deciding page except the headline market'
 - Each successful page check costs 1 credit: one page for the whole weekend is about
   300 credits, 20 pages about 6,000.
 - The first run only sets the baseline and is not a change.
-- The service exposes `POST /hooks/context` for these webhooks and must verify the
-  signature with the monitor's secret before accepting anything.
+- The service exposes `POST /hooks/context/{id}` for these webhooks, one unguessable
+  address per watched page, and verifies the signature with that monitor's secret
+  before parsing anything.
+
+**As built (14 Nov).** Each polled market gets one watched page, set up on its next
+article pass once the service has a public address (`PUBLIC_URL`). The page is found on
+the live web, not from a model's memory: the text model writes one search for "the page
+most likely to change when the outcome is decided", Context.dev searches without a
+freshness filter, and Decision 1 chooses among the results, with "none of these" as a
+choice. Tried on four markets, it chose CENTCOM's press-release list for the Iran
+ceasefire market and the Wikipedia articles for Eurovision 2027 and the 2028 Republican
+primaries. The monitor is `page` with instructions built from the market's title and
+rules, every 10 minutes, with both `change.detected` and `run.completed` delivered: the
+second is what gives the "last checked" time. A change becomes a tick of kind `page`,
+whose headline is Context.dev's summary of what changed; it is scored like any other
+tick. A change that cannot be scored is answered with 503, so Context.dev delivers it
+again. Deleting a market deletes its monitor; `scripts/stop_monitors.py` deletes them all.
 
 **Where monitors fit and where they do not** **(call)**. A monitor answers "did this
 one page change?". It does not answer "what is new about this topic across the web?".
@@ -305,8 +320,8 @@ read, so it starts at a fixed 20%.
 
 ### Storage
 
-One SQLite file with four tables: markets (related contracts are rows pointing at
-their lead market), ticks, prices, moves. Every market and related contract has its price
+One SQLite file with five tables: markets (related contracts are rows pointing at
+their lead market), ticks, prices, moves, watched pages. Every market and related contract has its price
 sampled at least once a minute from the venue APIs, which cost no Context.dev credits.
 
 The weekend record is a query, not stored state, so its rule can still change on
@@ -335,8 +350,10 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   arrive as a `price` event, usually within a minute. Related contracts can include
   the same question on the other venue. Errors carry a readable `detail`: 422 (not a
   question), 404 (closed or missing link), 502 or 503 (try again).
-- `GET /markets/{id}`: detail, including related contracts, deciding pages with
-  their last-checked time and status, and `sources`: where the market's ticks came
+- `GET /markets/{id}`: detail, including related contracts, `pages`: the page
+  Context.dev watches for this market, as `[{ "url", "title", "checked_ts",
+  "changed_ts" }]` (empty until one is found; the two times are null until the first
+  check and the first change), and `sources`: where the market's ticks came
   from, most ticks first, as `[{ "source", "ticks", "moved" }]` (`moved` counts the
   ticks called up or down).
 - `DELETE /markets/{id}`: stop tracking a market; it, its related contracts, their
@@ -351,7 +368,9 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
 - `GET /record`: the weekend record numbers.
 - `GET /status`: Context.dev capacity per key (use, resting time, credits left).
 - `GET /stream`: server-sent events. Event types: `tick`, `tick_update`, `price`,
-  `move`, `market`, `page_check`. A `move` event is a move as below, sent once, some
+  `move`, `market`, `page_check`. A `page_check` is `{ "market_id", "url", "ts",
+  "changed" }`, sent each time Context.dev has checked a watched page (every 10
+  minutes); when `changed` is true a `tick` of kind `page` follows. A `move` event is a move as below, sent once, some
   seconds after the price sample that showed it (the web is searched first). A `tick_update` is a whole tick again, sent when its
   `published_ts` arrives about a minute or two after the tick: replace the tick with
   the same `id`. One connection carries all markets; each event has a `market_id`.

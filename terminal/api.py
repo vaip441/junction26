@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, moves, poller, scoring, truth, venues
+from terminal import contextdev, madeup, match, moves, pages, poller, scoring, truth, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -55,7 +55,8 @@ def summary(db, m: dict, now: float) -> dict:
 
 def detail(db, m: dict, now: float) -> dict:
     return {**summary(db, m, now), "rules": m["rules"], "queries": m["queries"], "companies": m["companies"] or [],
-            "related": [summary(db, r, now) for r in store.related(db, m["id"])], "pages": [],
+            "related": [summary(db, r, now) for r in store.related(db, m["id"])],
+            "pages": [pages.public(p) for p in store.pages(db, m["id"]) if p["url"]],
             "sources": store.sources(db, m["id"])}
 
 
@@ -83,8 +84,12 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         app.state.wake = asyncio.Event()
         app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
         busy = set()  # markets being searched right now, by the article loop or behind a price move
+        # Context.dev can only call back an address the internet can reach: no PUBLIC_URL, no page watching
+        public_url = os.environ.get("PUBLIC_URL", "")
+        watch_page = (lambda db, m: pages.watch(db, m, public_url)) if public_url else None
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus, app.state.scorer, busy)),
-                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake, busy)),
+                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake, busy,
+                                                         watch_page)),
                  asyncio.create_task(poller.date_loop(db, app.state.bus))] if poll else []
         if poll and os.environ.get("TRUTH_FEED"):  # the feed file of trump-social-scraper, where one runs
             tasks.append(asyncio.create_task(truth.truth_loop(db, app.state.bus, app.state.scorer, os.environ["TRUTH_FEED"])))
@@ -121,6 +126,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(409, "the demo market cannot be deleted")
         if m["lead_id"] is not None:
             raise HTTPException(404, "no such market")  # a related contract goes with its lead market
+        await pages.unwatch(app.state.db, id)
         store.delete_market(app.state.db, id)
         app.state.bus.publish("market", {"market_id": id, "status": "deleted"})
         return {"deleted": id}
@@ -229,6 +235,21 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         app.state.wake.set()  # the article loop writes the queries and does the instant fill
         db = app.state.db
         return {**detail(db, store.get_market(db, lead_id), time.time()), "matched": matched}
+
+    @app.post("/hooks/context/{page_id}", include_in_schema=False)
+    async def context_hook(page_id: str, request: Request):
+        """Context.dev calls this after each check of a watched page. Nothing is believed, or even parsed,
+        before the signature made with that page's secret checks out."""
+        raw, page = await request.body(), store.get_page(app.state.db, page_id)
+        if page is None or not pages.verify(raw, request.headers.get("x-context-signature", ""), page["secret"] or ""):
+            raise HTTPException(401, "bad signature")  # the same answer for an unknown page: nothing to probe
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            raise HTTPException(400, "not JSON")
+        if not await pages.delivered(app.state.db, app.state.bus, app.state.scorer, page, event):
+            raise HTTPException(503, "could not score the change, deliver it again")
+        return {"ok": True}
 
     @app.get("/status")
     async def status():

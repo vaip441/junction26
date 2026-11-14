@@ -83,7 +83,7 @@ def context(db, market: dict, now: float, history: bool) -> str:
 async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headline: str, url: str | None = None,
                  body: str = "", published_ts: float | None = None, backfill: bool = False,
                  now: float | None = None, likes: int | None = None, replies: int | None = None,
-                 ruler=None) -> dict | None:
+                 ruler=None, key: str | None = None) -> dict | None:
     """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried).
 
     A tick that moves the price also carries the sentence of the market's rules that makes it matter
@@ -92,7 +92,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     """
     ruler = ruler or (rules.deciding if scorer is scoring.score else None)
     now = time.time() if now is None else now
-    key = dedupe_key(kind, url, headline, now)
+    key = key or dedupe_key(kind, url, headline, now)  # given for a watched page: its address is the same every change
     if store.has_tick(db, market["id"], key):
         return None
     story = title_key(headline) if kind == "article" else None  # posts: many people post the same words

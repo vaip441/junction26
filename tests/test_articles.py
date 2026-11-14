@@ -848,3 +848,24 @@ def test_sites_kept_out_of_the_news_search_are_kept_out_of_every_news_source():
     asyncio.run(poller.fetch_articles(db, bus, up, store.get_market(db, "m"), backfill=False, num_results=10,
                                       search=search, scrape=scrape, gnews=gnews, news=news))
     assert [t["source"] for t in store.ticks(db, "m", include_hidden=True)] == ["reuters.com"]
+
+
+def test_a_market_gets_its_page_watched_once_and_a_failure_is_tried_again_next_pass():
+    db, bus, m = setup()
+    store.set_companies(db, m["id"], [])
+    seen, outcomes = [], [RuntimeError("monitors are down"), "ok"]
+
+    async def fetch(db_, bus_, scorer, market, *, backfill, num_results):
+        return 0
+
+    async def watch_page(db_, market):
+        seen.append(market["id"])
+        if isinstance(outcome := outcomes.pop(0), Exception):
+            raise outcome
+        store.add_page(db_, "tok", market["id"], "https://a.example/", "A", "mon_1", "s", 1.0)
+
+    last = {}
+    for now in (1000, 2000, 3000):
+        asyncio.run(poller.article_pass(db, bus, up, last, now=now, fetch=fetch, watch_page=watch_page))
+    assert seen == [m["id"], m["id"]]  # the pass went on without it, asked once more, then never again
+    asyncio.run(poller.article_pass(db, bus, up, {}, now=4000, fetch=fetch))  # no public address: no watching

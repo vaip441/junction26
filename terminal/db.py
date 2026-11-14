@@ -1,4 +1,5 @@
-"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices, moves.
+"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices, moves,
+watched pages.
 
 Prices are percentages 0..100 and timestamps are unix seconds, everywhere.
 """
@@ -26,6 +27,10 @@ CREATE TABLE IF NOT EXISTS moves (
     id INTEGER PRIMARY KEY, market_id TEXT NOT NULL, ts REAL NOT NULL, since_ts REAL NOT NULL,
     from_price REAL NOT NULL, to_price REAL NOT NULL, tick_id INTEGER, confidence REAL, rule TEXT);
 CREATE INDEX IF NOT EXISTS moves_by_market ON moves (market_id, ts);
+CREATE TABLE IF NOT EXISTS pages (
+    id TEXT PRIMARY KEY, market_id TEXT NOT NULL, url TEXT, title TEXT, monitor_id TEXT, secret TEXT,
+    created_ts REAL NOT NULL, checked_ts REAL, changed_ts REAL);
+CREATE INDEX IF NOT EXISTS pages_by_market ON pages (market_id);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
@@ -100,6 +105,7 @@ def delete_market(db, id: str) -> None:
     for (mid,) in db.execute("SELECT id FROM markets WHERE id = ? OR lead_id = ?", (id, id)).fetchall():
         db.execute("DELETE FROM ticks WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM moves WHERE market_id = ?", (mid,))
+        db.execute("DELETE FROM pages WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM prices WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM markets WHERE id = ?", (mid,))
 
@@ -261,3 +267,27 @@ def moves(db, market_id: str, limit: int = 20) -> list[dict]:
 def last_move(db, market_id: str) -> float | None:
     """When this market's newest move was recorded."""
     return db.execute("SELECT MAX(ts) FROM moves WHERE market_id = ?", (market_id,)).fetchone()[0]
+
+
+# A watched page: `id` is the unguessable last part of its webhook address, `secret` signs its deliveries.
+# A row without a url records that the market was looked at and has no page worth watching.
+
+def add_page(db, id: str, market_id: str, url: str | None, title: str | None, monitor_id: str | None,
+             secret: str | None, ts: float) -> dict:
+    db.execute("INSERT INTO pages (id, market_id, url, title, monitor_id, secret, created_ts) VALUES (?,?,?,?,?,?,?)",
+               (id, market_id, url, title, monitor_id, secret, ts))
+    return get_page(db, id)
+
+
+def get_page(db, id: str) -> dict | None:
+    row = db.execute("SELECT * FROM pages WHERE id = ?", (id,)).fetchone()
+    return row and dict(row)
+
+
+def pages(db, market_id: str) -> list[dict]:
+    return [dict(r) for r in db.execute("SELECT * FROM pages WHERE market_id = ? ORDER BY created_ts, id", (market_id,))]
+
+
+def page_checked(db, id: str, ts: float, changed: bool) -> None:
+    db.execute("UPDATE pages SET checked_ts = ?, changed_ts = CASE WHEN ? THEN ? ELSE changed_ts END WHERE id = ?",
+               (ts, changed, ts, id))
