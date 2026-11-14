@@ -26,7 +26,7 @@ function ResetDemo({ marketId }: { marketId: string }) {
           setNote(await resetDemo(marketId))
         }}
         title="Put the demo market back to its starting price with an empty tape, after a rehearsal"
-        className={`rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${
+        className={`press rounded border px-2 py-1 text-[10px] font-semibold uppercase tracking-wider ${
           armed ? 'border-down/60 text-down' : 'border-line text-faint hover:text-text'
         }`}
       >

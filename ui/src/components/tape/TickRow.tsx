@@ -106,8 +106,8 @@ export function TickRow({
           <SourceIcon source={tick.source} className="h-3 w-3" />
           <span className="truncate">{shortSource(tick.source)}</span>
         </span>
-        {tick.likes != null && <span className="num">♥ {tick.likes}</span>}
-        {tick.replies != null && <span className="num">↩ {tick.replies}</span>}
+        {tick.likes != null && tick.likes > 0 && <span className="num">♥ {tick.likes}</span>}
+        {tick.replies != null && tick.replies > 0 && <span className="num">↩ {tick.replies}</span>}
       </p>
       </div>
     </li>

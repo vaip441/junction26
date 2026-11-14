@@ -36,7 +36,7 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
               setPicked(true)
               setTab(t.id)
             }}
-            className={`-mb-px border-b-2 py-1.5 text-[11px] font-semibold uppercase tracking-wider ${
+            className={`-mb-px border-b-2 py-1.5 text-[11px] transition-colors font-semibold uppercase tracking-wider ${
               tab === t.id ? 'border-accent text-text' : 'border-transparent text-muted hover:text-text'
             }`}
           >

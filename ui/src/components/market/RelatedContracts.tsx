@@ -18,13 +18,13 @@ export function RelatedContracts({ related }: { related: MarketSummary[] }) {
           <span className="min-w-0 flex-1 truncate text-xs text-text" title={r.title}>
             {r.title}
           </span>
-          <Price value={live[r.id] ?? r.price} className="text-sm font-semibold" />
+          <Price value={live[r.id] ?? r.price} flash className="text-sm font-semibold" />
           <Points value={r.change_24h} className="hidden text-xs sm:inline" />
           <button
             disabled={!r.url || busy}
             onClick={() => r.url && void askFor(r.url)}
             title={r.url ? 'Give it its own tape' : 'No link to track it by'}
-            className="rounded border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-40"
+            className="press rounded border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-40"
           >
             Track
           </button>

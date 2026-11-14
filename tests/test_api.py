@@ -548,7 +548,10 @@ def test_the_built_screen_is_served_at_the_root_and_the_debug_page_moves_aside(p
     (ui / "assets" / "app.js").write_text("console.log(1)")
     with TestClient(create_app(db_path=path, scorer=up, poll=False, ui=ui)) as c:
         assert "the real screen" in c.get("/").text
-        assert c.get("/assets/app.js").status_code == 200
+        # the page is checked for a newer build on every visit (a rebuilt screen once kept showing the old
+        # one from the browser's cache); its files carry a new name with every build and may be kept
+        assert c.get("/").headers["cache-control"] == "no-cache"
+        assert c.get("/assets/app.js").status_code == 200 and "cache-control" not in c.get("/assets/app.js").headers
         assert "Terminal debug page" in c.get("/debug").text
         assert c.get("/markets").json()[0]["id"] == "mu-demo"  # the interface still answers first
         assert c.get("/nothing-here").status_code == 404

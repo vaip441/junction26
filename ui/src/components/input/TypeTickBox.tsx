@@ -26,12 +26,12 @@ export function TypeTickBox({ marketId }: { marketId: string }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="…or type what you would say"
-          className="h-9 min-w-0 flex-1 rounded border border-line bg-bg px-3 text-sm text-text placeholder:text-faint focus:border-accent focus:outline-none"
+          className="h-9 min-w-0 flex-1 rounded border border-line bg-bg px-3 text-sm text-text placeholder:text-faint transition-colors focus:border-accent focus:outline-none"
         />
         <button
           type="submit"
           disabled={!text.trim()}
-          className="h-9 shrink-0 rounded border border-line px-3 text-xs font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-40"
+          className="press h-9 shrink-0 rounded border border-line px-3 text-xs font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-40"
         >
           Score it
         </button>

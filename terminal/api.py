@@ -31,6 +31,17 @@ HISTORY_WAIT = 8  # seconds a new market's answer may wait for the venue's price
 OTHER_VENUE_ABOVE = 0.2  # how likely the other venue's market must be the same question to be shown beside the match
 
 
+class Screen(StaticFiles):
+    """The built screen. Its page is checked for a newer build on every visit; the files it names change
+    name with every build, so the browser may keep those."""
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        if response.headers.get("content-type", "").startswith("text/html"):
+            response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 class TickIn(BaseModel):
     text: str
     kind: Literal["mic", "typed"]
@@ -385,7 +396,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         return FileResponse(STATIC / "debug.html")
 
     if ui is not None and (ui / "index.html").is_file():
-        app.mount("/", StaticFiles(directory=ui, html=True))  # last, so every route above answers first
+        app.mount("/", Screen(directory=ui, html=True))  # last, so every route above answers first
     else:  # the screen has not been built on this machine
         app.get("/", include_in_schema=False)(debug_page)
 

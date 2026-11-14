@@ -16,7 +16,7 @@ function BothVenues({ consensus }: { consensus: Consensus }) {
   return (
     <p className="mt-2 flex flex-wrap items-center gap-x-2 text-xs text-muted" title="The same question on both venues">
       {venues.map((v) => (
-        <span key={v.id}>
+        <span key={v.id} className="after:ml-2 after:text-faint after:content-['·']">
           {v.url ? (
             <a href={v.url} target="_blank" rel="noreferrer" className="hover:underline">
               {v.venue === 'kalshi' ? 'Kalshi' : 'Polymarket'}
@@ -25,7 +25,7 @@ function BothVenues({ consensus }: { consensus: Consensus }) {
           <span className="num text-text">{pct(v.price)}</span>
         </span>
       ))}
-      <span>
+      <span className="after:ml-2 after:text-faint after:content-['·']">
         consensus <span className="num font-semibold text-text">{pct((a.price + b.price) / 2)}</span>
       </span>
       <span className={gap >= 3 ? 'font-semibold text-accent' : ''}>
@@ -47,7 +47,7 @@ export function MarketHeader({ market }: { market: MarketSummary }) {
             </a>
           )}
         </div>
-        <h1 className="text-lg font-semibold leading-tight text-text">{market.title}</h1>
+        <h1 className="text-balance text-lg font-semibold leading-tight text-text">{market.title}</h1>
         {market.consensus && <BothVenues consensus={market.consensus} />}
       </div>
       <div className="text-right">
@@ -57,7 +57,12 @@ export function MarketHeader({ market }: { market: MarketSummary }) {
           <AnimatedPrice key={market.id} value={market.price} className="text-6xl font-bold leading-none" />
         )}
         <p className="mt-1 text-xs text-muted">
-          <Points value={market.change_24h} /> 24h · <span className="num">{market.ticks_today}</span> ticks today
+          {market.change_24h != null && (
+            <>
+              <Points value={market.change_24h} /> 24h ·{' '}
+            </>
+          )}
+          <span className="num">{market.ticks_today}</span> {market.ticks_today === 1 ? 'tick' : 'ticks'} today
         </p>
       </div>
     </div>

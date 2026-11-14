@@ -42,7 +42,7 @@ export function MicBar({ marketId }: { marketId: string }) {
           onClick={() => setMic(!micOn)}
           disabled={!usable}
           title="Space"
-          className={`flex h-9 shrink-0 items-center gap-2 rounded border px-3 text-xs font-semibold uppercase tracking-wider disabled:opacity-40 ${
+          className={`press flex h-9 shrink-0 items-center gap-2 rounded border px-3 text-xs font-semibold uppercase tracking-wider disabled:opacity-40 ${
             micOn ? 'border-down/60 text-text' : 'border-line text-muted hover:text-text'
           }`}
         >

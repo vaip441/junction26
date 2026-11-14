@@ -124,7 +124,7 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
         <button
           onClick={ask}
           disabled={state.busy}
-          className="shrink-0 rounded border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-50"
+          className="press shrink-0 rounded border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-50"
         >
           {state.busy ? 'Working out why it moved…' : 'Explain today’s move'}
         </button>

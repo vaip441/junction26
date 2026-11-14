@@ -6,7 +6,7 @@ function Key({ k, label, on, onClick }: { k: string; label: string; on?: boolean
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1 text-xs ${on ? 'text-text' : 'text-muted'} hover:text-text`}
+      className={`press flex items-center gap-1 text-xs ${on ? 'text-text' : 'text-muted'} hover:text-text`}
       title={`${label} (${k})`}
     >
       <kbd className="num rounded border border-line px-1 text-[10px] text-faint">{k}</kbd>

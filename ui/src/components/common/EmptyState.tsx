@@ -4,8 +4,8 @@ import type { ReactNode } from 'react'
 export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-1 p-6 text-center">
-      <p className="text-sm font-medium text-muted">{title}</p>
-      {children && <p className="max-w-xs text-xs text-faint">{children}</p>}
+      <p className="text-balance text-sm font-medium text-muted">{title}</p>
+      {children && <p className="max-w-xs text-balance text-xs text-faint">{children}</p>}
     </div>
   )
 }

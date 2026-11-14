@@ -33,7 +33,7 @@ export function AskBar() {
         onChange={(e) => setText(e.target.value)}
         disabled={working}
         placeholder="Paste a link or ask anything: “will Jensen step down this year?”   ( / )"
-        className="h-8 w-full rounded border border-line bg-bg px-3 text-sm text-text placeholder:text-faint focus:border-accent focus:outline-none disabled:opacity-60"
+        className="h-8 w-full rounded border border-line bg-bg px-3 text-sm text-text placeholder:text-faint transition-colors focus:border-accent focus:outline-none disabled:opacity-60"
       />
     </form>
   )

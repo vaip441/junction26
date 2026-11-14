@@ -26,7 +26,12 @@ export function RecordView() {
 
   return (
     <div className="fade-in fixed inset-0 z-40 flex flex-col overflow-y-auto bg-bg px-4 py-8">
-      <button onClick={() => close(false)} className="absolute right-4 top-4 text-sm text-muted hover:text-text" title="Close (Esc)">
+      <button
+        onClick={() => close(false)}
+        aria-label="Close"
+        title="Close (Esc)"
+        className="press absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded text-sm text-muted hover:bg-panel-2 hover:text-text"
+      >
         ✕
       </button>
       {!f ? (

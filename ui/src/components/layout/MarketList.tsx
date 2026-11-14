@@ -26,8 +26,8 @@ export function MarketList() {
             <span className="line-clamp-2 text-xs leading-snug text-text">{m.title}</span>
             <span className="flex items-center gap-2">
               <VenueBadge venue={m.venue} />
-              <Price value={m.price} className="text-sm font-semibold" />
-              <Points value={m.change_24h} className="text-xs" />
+              <Price value={m.price} flash className="text-sm font-semibold" />
+              {m.change_24h != null && <Points value={m.change_24h} className="text-xs" />}
             </span>
           </button>
         </li>
