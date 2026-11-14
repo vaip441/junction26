@@ -17,6 +17,8 @@ import { useNow } from '../../hooks/useNow'
 import { pct, tickTime, timeAgo } from '../../lib/format'
 import { focusTick } from '../../lib/focus'
 import { tickLifecycle } from '../../lib/lifecycle'
+import { causeLabel } from '../../lib/moves'
+import { shortSource } from '../../lib/sources'
 import type { Move, PricePoint, Tick } from '../../lib/types'
 import { useStore } from '../../state/store'
 import { EmptyState } from '../common/EmptyState'
@@ -361,7 +363,24 @@ export function PriceChart({ marketId }: { marketId: string }) {
             <span className="mr-2 font-semibold uppercase tracking-wider text-muted">Why did it move?</span>
             <MoveSpan move={hover.move} />
           </p>
-          <p className="line-clamp-4 text-xs leading-snug text-text">{hover.move.summary}</p>
+          {hover.move.explained && hover.move.cause ? (
+            <p className="line-clamp-3 text-xs leading-snug text-text">
+              <span className="text-muted">
+                {causeLabel(hover.move).label.toLowerCase()}
+                {causeLabel(hover.move).percent != null && ` (${causeLabel(hover.move).percent}%)`}: {shortSource(hover.move.cause.source)}:{' '}
+              </span>
+              {hover.move.cause.headline}
+            </p>
+          ) : (
+            <p className="line-clamp-3 text-xs leading-snug text-muted">
+              No news explains it
+              {hover.move.related[0] && (
+                <>
+                  : <span className="text-text">{hover.move.related[0].title}</span> moved at the same time
+                </>
+              )}
+            </p>
+          )}
           <p className="mt-0.5 text-[10px] text-faint">click for the answer under the chart</p>
         </div>
       )}

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { askWhy } from '../../lib/actions'
 import { absoluteTime, pct, pts, timeAgo } from '../../lib/format'
 import { focusTick } from '../../lib/focus'
+import { causeLabel } from '../../lib/moves'
 import { shortSource } from '../../lib/sources'
 import type { Move } from '../../lib/types'
 import { useStore } from '../../state/store'
@@ -16,52 +17,87 @@ export function MoveSpan({ move, className = '' }: { move: Move; className?: str
   )
 }
 
+function minutes(seconds: number): string {
+  const m = Math.max(1, Math.round(seconds / 60))
+  return m >= 90 ? `${Math.round(m / 60)} h` : `${m} min`
+}
+
 /**
- * What stands behind a move, said the way the backend means it: an item taken as the reason is the "likely
- * cause" (with the rules sentence it touches); otherwise the nearest item is only the "closest news", and
- * the related contracts that moved at the same time are named, which is often the whole story.
+ * What stands behind a move, laid out our way from the backend's fields (its one-sentence `summary` is the
+ * tooltip): an item taken as the reason is the likely or possible cause, shown by its headline with the
+ * rules sentence it touches. Otherwise the row says that no news explains it, names the related contracts
+ * that moved at the same time (often the whole story), and offers the nearest item only as "closest news".
  */
 export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void }) {
-  const item = move.explained ? move.cause : move.closest
+  if (move.explained && move.cause) {
+    const cause = move.cause
+    const { label, percent } = causeLabel(move)
+    return (
+      <div className="flex min-w-0 flex-col gap-0.5" title={move.summary}>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            focusTick(cause.id)
+          }}
+          title="Find it on the tape"
+          className="flex min-w-0 items-baseline gap-1.5 text-left hover:underline"
+        >
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted">
+            {label}
+            {percent != null && <span className="num"> {percent}%</span>}
+          </span>
+          <span className="line-clamp-2 text-text">{cause.headline}</span>
+        </button>
+        <span className="flex items-center gap-1.5 text-[11px] text-faint">
+          <SourceIcon source={cause.source} className="h-3 w-3" />
+          <span className="truncate">{shortSource(cause.source)}</span>
+        </span>
+        {move.rule && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onRule?.()
+            }}
+            title="Show it in the rules"
+            className="line-clamp-1 text-left text-[11px] italic text-muted hover:text-text"
+          >
+            § “{move.rule.text}”
+          </button>
+        )}
+      </div>
+    )
+  }
+  const closest = move.closest
   return (
-    <div className="flex min-w-0 flex-col gap-0.5">
-      <p className="text-text">{move.summary}</p>
-      {!move.explained && move.related.length > 0 && (
-        <p className="flex flex-wrap gap-x-3 text-[11px] text-muted">
+    <div className="flex min-w-0 flex-col gap-0.5" title={move.summary}>
+      <p className="text-muted">
+        No news explains it
+        {move.related.length > 0 && <span className="text-faint">: the contracts beside it moved at the same time</span>}
+      </p>
+      {move.related.length > 0 && (
+        <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-text">
           {move.related.map((r) => (
-            <span key={r.id} className="min-w-0 truncate">
-              {r.title} <span className={`num ${r.to >= r.from ? 'text-up' : 'text-down'}`}>{pts(r.to - r.from)}</span>
+            <span key={r.id} className="flex min-w-0 items-baseline gap-1.5">
+              <span className="truncate">{r.title}</span>
+              <span className={`num shrink-0 ${r.to >= r.from ? 'text-up' : 'text-down'}`}>{pts(r.to - r.from)}</span>
             </span>
           ))}
         </p>
       )}
-      {item && (
+      {closest && (
         <button
           onClick={(e) => {
             e.stopPropagation()
-            focusTick(item.id)
+            focusTick(closest.id)
           }}
           title="Find it on the tape"
           className="flex min-w-0 items-center gap-1.5 text-left text-[11px] text-faint hover:text-text"
         >
-          <span className="shrink-0 font-semibold uppercase tracking-wider">{move.explained ? 'Likely cause' : 'Closest news'}</span>
-          <SourceIcon source={item.source} className="h-3 w-3" />
+          <span className="shrink-0 font-semibold uppercase tracking-wider">Closest news</span>
+          <SourceIcon source={closest.source} className="h-3 w-3" />
           <span className="truncate">
-            {shortSource(item.source)}
-            {!move.explained && `: ${item.headline}`}
+            {shortSource(closest.source)}: {closest.headline}
           </span>
-        </button>
-      )}
-      {move.rule && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation()
-            onRule?.()
-          }}
-          title="Show it in the rules"
-          className="line-clamp-1 text-left text-[11px] italic text-muted hover:text-text"
-        >
-          § “{move.rule.text}”
         </button>
       )}
     </div>
@@ -71,7 +107,7 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
 /**
  * "Why did it move?": the market's price moves, newest first, each in one sentence. Most jumps are trades
  * on a thin market, not news, and the list says so. The button asks the same of the market's last day, at
- * any time: the terminal searches the web now and answers in a few seconds.
+ * any time: the backend answers in about a second from the day's strongest items.
  */
 export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[] | undefined }) {
   const showRule = useStore((s) => s.showRule)
@@ -90,10 +126,10 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
           disabled={state.busy}
           className="shrink-0 rounded border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-50"
         >
-          {state.busy ? 'Searching the web…' : 'Explain today’s move'}
+          {state.busy ? 'Working out why it moved…' : 'Explain today’s move'}
         </button>
         <span className={`min-w-0 truncate text-[11px] ${state.note ? 'text-down' : 'text-faint'}`}>
-          {state.note ?? 'Why did this market move over the last day? Asked now, answered in a few seconds.'}
+          {state.note ?? 'Why did this market move over the last day? Asked now, answered in about a second.'}
         </span>
       </div>
       {moves === undefined ? (
@@ -110,7 +146,7 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
               <div className="flex flex-col gap-0.5">
                 <MoveSpan move={m} className="text-sm" />
                 <span className="text-[10px] text-faint" title={`${absoluteTime(m.since)} to ${absoluteTime(m.ts)}`}>
-                  {m.asked ? 'the last day' : timeAgo(m.ts)}
+                  {m.asked ? 'over the last day' : `in ${minutes(m.ts - m.since)}`} · {timeAgo(m.ts)}
                 </span>
               </div>
               <MoveStory move={m} onRule={() => m.rule && showRule(m.rule)} />

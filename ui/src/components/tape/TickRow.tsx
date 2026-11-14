@@ -70,7 +70,8 @@ export function TickRow({
       {tick.rule && (
         <button
           onClick={() => showRule(tick.rule!)}
-          title={`The sentence of the rules that makes this matter: ${tick.rule.text}`}
+          // the figure only where it means something: a spoken sentence gets its closest rule however weak
+          title={`The sentence of the rules that makes this matter${tick.rule.confidence >= 0.4 ? ` (${Math.round(tick.rule.confidence * 100)}%)` : ''}: ${tick.rule.text}`}
           className="line-clamp-1 text-left text-[11px] italic text-muted hover:text-text"
         >
           § “{tick.rule.text}”

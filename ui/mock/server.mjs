@@ -90,16 +90,19 @@ function addMove(id, f) {
   const from = round(f.from), to = round(f.to)
   const related = explained ? [] : [...markets.values()].filter((r) => r.lead_id === id).slice(0, 1)
     .map((r) => ({ id: r.id, title: r.title, from: round(latest(r.id) + (to > from ? 2.5 : -2.5)), to: round(latest(r.id)) }))
-  const span = f.asked ? 'the last day' : `${Math.max(1, Math.round((f.ts - f.since) / 60))} minute${Math.round((f.ts - f.since) / 60) > 1 ? 's' : ''}`
+  const mins = Math.max(1, Math.round((f.ts - f.since) / 60))
+  const span = f.asked ? 'the last day' : mins >= 90 ? `${Math.round(mins / 60)} hours` : `${mins} minute${mins > 1 ? 's' : ''}`
+  const confidence = tick ? round((f.confidence ?? rand(0.2, 0.9)) * 1000) / 1000 : null
   let summary = `${to > from ? 'Up' : 'Down'} ${Math.abs(to - from).toFixed(1)} points in ${span}.`
-  if (explained) summary += ` Likely cause: ${tick.source}: ${tick.headline}`
+  // a cause at 0.4 or more is called likely, below that possible (a dozen items split the vote)
+  if (explained) summary += ` ${confidence >= 0.4 ? 'Likely' : 'Possible'} cause: ${tick.source}: ${tick.headline}`
   else {
     summary += ' No news explains it.'
     for (const r of related) summary += ` ${r.title} went ${r.to > r.from ? 'up' : 'down'} ${Math.abs(r.to - r.from).toFixed(1)} at the same time.`
   }
   const move = { id: nextMoveId++, market_id: id, ts: f.ts, since: f.since, from, to, summary, explained, asked: Boolean(f.asked),
     cause: explained ? tick : null, closest: explained ? null : tick,
-    confidence: tick ? round((f.confidence ?? rand(0.2, 0.9)) * 1000) / 1000 : null, rule: explained ? tick.rule : null, related }
+    confidence, rule: explained ? tick.rule : null, related }
   moves.get(id).unshift(move)
   return move
 }
@@ -573,14 +576,15 @@ async function route(req, url) {
       return [200, detail(m)]
     }
     if (parts[2] === 'why' && req.method === 'POST') {
-      // why did it move over the last day? searched now, answered in a few seconds, also sent as a move event
+      // why did it move over the last day? no search: answered in about a second from the day's strongest items
+      // (never one scored as pushing the other way), also sent as a move event
       const from = priceAt(m.id, now() - 86400) ?? prices.get(m.id)[0]?.price
       const to = latest(m.id)
       if (from == null || to == null || Math.abs(to - from) < 1) return [409, { detail: 'the price has not moved a point in the last day' }]
-      await sleep(rand(1500, 3000))
-      const strongest = [...ticks.get(m.id)].filter((t) => t.verdict !== 'none').sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))[0]
+      await sleep(rand(700, 1300))
+      const strongest = [...ticks.get(m.id)].filter((t) => t.verdict === (to > from ? 'up' : 'down')).sort((a, b) => Math.abs(b.strength) - Math.abs(a.strength))[0]
       const move = addMove(m.id, { since: now() - 86400, ts: now(), from, to, tick: strongest, asked: true,
-        explained: Boolean(strongest) && (strongest.verdict === 'up') === (to > from) })
+        explained: Boolean(strongest), confidence: rand(0.25, 0.7) })
       send('move', move)
       return [200, move]
     }

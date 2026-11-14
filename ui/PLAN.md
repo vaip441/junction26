@@ -154,19 +154,23 @@ The terminal also goes from the price back to the web. Two ways in:
 
 - **A jump.** A real market moves 3 points within 10 minutes; the backend searches at once and stores a move.
 - **On request.** `POST /markets/{id}/why` explains the market's change over the last day, now, for any
-  market (made-up ones too). A few seconds; the answer is a move with `asked: true`, also sent as a `move` event.
+  market (made-up ones too). It makes no search, so it answers in about a second; the answer is a move with
+  `asked: true`, also sent as a `move` event.
 
 What a move says matters more than how it looks. Measured on 14 Nov, 10 of 11 jumps had no news behind
 them: thin markets move on trades. So a move is honest by construction, and the screen shows it the way the
 backend means it:
 
-- `summary` is the move in one or two plain sentences and is enough by itself. Show it as it is.
-- `explained: true` → `cause` is the item taken as the reason: label it "likely cause", with the `rule` it touches.
+- `explained: true` → `cause` is the item taken as the reason. It is shown our way: the label, the headline, its
+  source, the `rule` it touches. The label follows the backend: "likely cause" from 0.4, with the percentage;
+  "possible cause" below that, without it (a dozen items split the vote, so a low figure is not doubt).
+- `summary` is the backend's one-sentence version. The screen builds its rows from the fields, which read
+  better at a glance, and keeps the summary as the tooltip.
 - `explained: false` → `closest` is only the nearest item: label it "closest news", never as the reason.
   `related` names the related contracts that moved over the same stretch, which is often the whole story
   ("a contract falling while its rival rises").
-- No confidence figure is shown on a move or on a rule: a closest item or closest rule can be weak, and a
-  small percentage beside it reads as the terminal doubting itself.
+- A confidence figure is shown only where it means something: on a likely cause, and in a rule's tooltip
+  from 0.4. Never on closest news, a possible cause, or a spoken sentence's closest rule.
 
 On screen: a shaded band over each jump on the chart (grey when not explained; none for an asked move,
 which spans the whole day), the "Why did it move?" tab listing each move by its summary with an
