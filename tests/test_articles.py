@@ -931,3 +931,23 @@ def test_a_first_fill_says_how_much_it_found_before_it_scores_and_a_live_pass_sa
     assert events[0] == ("market", {"market_id": "m", "status": "scoring", "found": 2})
     assert [e for e, _ in events[1:]] == ["tick", "tick"]
     assert fetch(False) == 0 and q.empty()
+
+
+def test_an_article_carries_the_passage_the_search_found_and_a_post_carries_none():
+    db, bus, m = setup(queries=("a",))
+    article = {"url": "https://news.example.com/p", "title": "Board names a successor", "description": "d",
+               "text": "[Board names a successor]\n\nThe board named its finance chief as interim chief executive on Thursday."}
+    post = {"url": "https://www.reddit.com/r/stocks/comments/9/succession/", "title": "Succession talk at the chipmaker",
+            "description": "", "text": "[Succession talk]\n\nA long enough passage that a search might return for this post too."}
+
+    async def search(query, **kw):
+        return [post] if kw.get("include_domains") else [article]
+
+    async def scrape(url):
+        return "", None
+
+    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    by_kind = {t["kind"]: t for t in store.ticks(db, "m")}
+    # the excerpt is for the frontend to show; a post's headline is already its own text
+    assert by_kind["article"]["passage"] == "The board named its finance chief as interim chief executive on Thursday."
+    assert by_kind["post"]["passage"] is None

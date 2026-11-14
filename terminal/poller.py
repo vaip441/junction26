@@ -206,7 +206,9 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                                     headline=r["title"], url=r["url"],
                                     body=(text or r.get("text") or r["description"])[:2000], published_ts=published,
                                     backfill=backfill or old, likes=known and known["likes"],
-                                    replies=known and known["replies"])
+                                    replies=known and known["replies"],
+                                    # the search's own excerpt of the page, for the frontend; a post is its own passage
+                                    passage=(contextdev.passage([r.get("text") or ""]) or None) if kind == "article" else None)
             except Exception:  # one odd page must not cost the market the rest of the batch
                 log.exception("could not ingest %s", r["url"])
                 return False

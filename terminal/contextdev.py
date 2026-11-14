@@ -7,6 +7,7 @@ the request goes out on the next one. Failures raise ContextError; callers decid
 import asyncio
 import logging
 import os
+import re
 import time
 from collections import deque
 from datetime import UTC, datetime
@@ -141,6 +142,29 @@ def status() -> dict:
         keys = []
     return {"keys": keys, "per_minute": sum(k["per_minute"] for k in keys),
             "used_last_minute": sum(k["used_last_minute"] for k in keys)}
+
+
+PASSAGE = 320  # characters of a page shown beside its tick: two lines on the tape
+
+
+def passage(highlights: list[str] | None) -> str:
+    """The one excerpt of a page to show beside its tick, on one line: the first of the passages Context.dev
+    found relevant to the query, without the page title each excerpt opens with, and past an image caption
+    where another passage follows. Empty when the page gave none."""
+    for excerpt in highlights or []:
+        if not isinstance(excerpt, str):
+            continue
+        body = re.sub(r"^\s*\[[^\]\n]*\]\s*", "", excerpt)  # "[Page title]" comes first in every excerpt
+        # passages are joined by a line of "…"; one taken from a list opens with its bullet
+        parts = [" ".join(p.split()).lstrip("-•* ") for p in re.split(r"\n\s*…\s*\n", body)]
+        parts = [p for p in parts if len(p) >= 40]
+        if not parts:
+            continue
+        text = next((p for p in parts if not re.match(r"Image \d+:", p)), parts[0])
+        if len(text) > PASSAGE:
+            text = text[:PASSAGE].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+        return text
+    return ""
 
 
 def parse_search(response: dict) -> list[dict]:

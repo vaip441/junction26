@@ -414,7 +414,8 @@ A tick:
       "up", "none", "down", "strength", "verdict": "up|none|down", "confidence",
       "price_at", "test": false, "backfill": false,
       "likes": 2126, "replies": 113,
-      "rule": { "start": 412, "end": 598, "text": "If it becomes impossible ...", "confidence": 0.89 } }
+      "rule": { "start": 412, "end": 598, "text": "If it becomes impossible ...", "confidence": 0.89 },
+      "passage": "On Thursday, the board announced that ..." }
 
 `ts` is when we detected the tick and `price_at` is the price at that moment,
 as a percentage from 0 to 100, like every other price in the interface.
@@ -422,6 +423,10 @@ A `post` is from X, Reddit or Truth Social; its `source` names who posted, as `x
 `reddit.com/r/<subreddit>` or `truthsocial.com/@realDonaldTrump`, and its `headline` is the post's text.
 Trump's posts come from the team's own scraper (`trump-social-scraper/`) within about 20 seconds of
 being made, and are scored for every market whose search queries share a word with the post.
+`passage` is, for an article found by the web search, the excerpt of its page that Context.dev found
+relevant to the query (one line, up to about 320 characters), to show beside the tick as its evidence;
+null for posts, for articles from the news index or Google News (which bring no page text), and for
+spoken, typed and page ticks. It plays no part in scoring.
 `rule` is the sentence of the market's rules that makes this tick matter, chosen by Decision 1 from
 the sentences of the rules text: `start` and `end` are character positions in the market's `rules`
 (from `GET /markets/{id}`), so it can be highlighted in place, and `text` is that exact stretch. It is

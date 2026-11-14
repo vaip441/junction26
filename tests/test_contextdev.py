@@ -348,3 +348,20 @@ def test_a_monitor_is_made_on_one_key_and_deleted_by_asking_each_key(monkeypatch
         return httpx.Response(404, json={})
 
     assert asyncio.run(pool(gone, monkeypatch).delete_monitor("mon_1")) is False
+
+
+def test_the_passage_shown_beside_a_tick_is_the_first_relevant_excerpt_on_one_line():
+    from terminal.contextdev import PASSAGE, passage
+
+    rows = parse_search(json.load(open("tests/fixtures/search_highlights_response.json")))
+    shown = passage([rows[1]["text"]])  # a real page: its title in brackets, then the excerpts
+    assert shown.startswith("On Thursday, Nvidia's board of directors announced that CEO Jensen Huang had resigned")
+    assert "\n" not in shown and "[" not in shown[:5] and len(shown) <= PASSAGE + 1
+    # an image caption is passed over when another passage follows; alone, it is still better than nothing
+    captioned = "[Title of the page]\n\nImage 1: Someone/Agency via Getty Images The chief executive is out.\n\n…\n\n" \
+                "The board named its finance chief as interim chief executive on Thursday."
+    assert passage([captioned]) == "The board named its finance chief as interim chief executive on Thursday."
+    assert passage(["[T]\n\nImage 1: Someone/Agency via Getty Images The chief executive is out today."]).startswith("Image 1")
+    long = passage(["[T]\n\n" + "word " * 200])
+    assert long.endswith("…") and len(long) <= PASSAGE + 1
+    assert passage([]) == "" and passage(None) == "" and passage(["[Only a title]"]) == "" and passage(["", None]) == ""

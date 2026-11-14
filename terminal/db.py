@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS ticks (
     source TEXT NOT NULL, url TEXT, headline TEXT NOT NULL, up REAL NOT NULL, none REAL NOT NULL, down REAL NOT NULL,
     strength REAL NOT NULL, verdict TEXT NOT NULL, confidence REAL NOT NULL, price_at REAL,
     test INTEGER NOT NULL, backfill INTEGER NOT NULL, hidden INTEGER NOT NULL, dedupe_key TEXT NOT NULL,
-    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER, title_key TEXT, rule TEXT,
+    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER, title_key TEXT, rule TEXT, passage TEXT,
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
@@ -35,8 +35,9 @@ CREATE INDEX IF NOT EXISTS pages_by_market ON pages (market_id);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
-# likes and replies: posts on X; title_key: articles; rule: the rules sentence behind a tick that moves the price
-OPTIONAL_COLS = ("likes", "replies", "title_key", "rule")
+# likes and replies: posts on X; title_key: articles; rule: the rules sentence behind a tick that moves the price;
+# passage: the excerpt of an article that the search found relevant, shown beside the tick
+OPTIONAL_COLS = ("likes", "replies", "title_key", "rule", "passage")
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -62,6 +63,8 @@ def connect(path: str) -> sqlite3.Connection:
     if "likes" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov evening
         db.execute("ALTER TABLE ticks ADD COLUMN likes INTEGER")
         db.execute("ALTER TABLE ticks ADD COLUMN replies INTEGER")
+    if "passage" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov afternoon
+        db.execute("ALTER TABLE ticks ADD COLUMN passage TEXT")
     return db
 
 
