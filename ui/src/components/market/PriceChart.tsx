@@ -47,6 +47,32 @@ const RANGES = [
 type RangeId = (typeof RANGES)[number]['id']
 /** Empty bars kept to the right of the newest price, as in the chart's own `rightOffset`. */
 const RIGHT_OFFSET = 4
+/** How far past the data a drag or a zoom may show, in bars: none to speak of. One bar of slack on the left
+ *  and one past the right margin, so the chart's own fit (which starts half a bar out) is never fought. */
+const EDGE_SLACK = 1
+
+/**
+ * The stretch of bars the chart may show: from the first price to the newest, with the right margin. A drag,
+ * a wheel or a pinch that would go past either end is held there, keeping its zoom, and zooming out stops
+ * at the whole history. Returns the range to show instead, or null when the one asked for is within bounds.
+ */
+function withinData(r: { from: number; to: number }, bars: number): { from: number; to: number } | null {
+  if (bars < 2) return null
+  const min = -EDGE_SLACK
+  const max = bars - 1 + RIGHT_OFFSET + EDGE_SLACK
+  const width = Math.min(r.to - r.from, max - min)
+  let from = r.from
+  let to = r.from + width
+  if (from < min) {
+    from = min
+    to = min + width
+  }
+  if (to > max) {
+    to = max
+    from = max - width
+  }
+  return Math.abs(from - r.from) < 0.01 && Math.abs(to - r.to) < 0.01 ? null : { from, to }
+}
 
 /** Seconds of price history on the chart. */
 function historySpan(data: { time: UTCTimestamp }[]): number {
@@ -221,7 +247,13 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const [onScreen, setOnScreen] = useState<Shown | null>(null)
   const [api, setApi] = useState<{ chart: IChartApi; series: ISeriesApi<'Area'> } | null>(null)
   // the latest range and data, for the resize observer made once below
-  const view = useRef<{ range: RangeId; byHand: boolean; data: { time: UTCTimestamp }[] }>({ range: 'all', byHand: false, data: [] })
+  // `bars`: how many bars the time axis holds, which during a replay is the whole of it, not only those drawn so far
+  const view = useRef<{ range: RangeId; byHand: boolean; data: { time: UTCTimestamp }[]; bars: number }>({
+    range: 'all',
+    byHand: false,
+    data: [],
+    bars: 0,
+  })
   const drag = useRef<number | null>(null)
 
   const prices = useStore((s) => s.prices[marketId])
@@ -248,6 +280,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
       timeScale: { borderColor: line, timeVisible: true, secondsVisible: false, rightOffset: RIGHT_OFFSET, tickMarkFormatter: axisLabel },
       // a finger moving up or down over the chart scrolls the page, not the chart
       handleScroll: { vertTouchDrag: false },
+      // the price axis always fits the prices on screen: dragging it would stretch or slide the line off the chart
+      handleScale: { axisPressedMouseMove: { time: true, price: false }, axisDoubleClickReset: { time: true, price: true } },
       crosshair: { vertLine: { color: text, labelBackgroundColor: line }, horzLine: { color: text, labelBackgroundColor: line } },
       localization: {
         // the scale leaves room above the line, which at 100% would be labelled 110% and 120%
@@ -318,6 +352,12 @@ export function PriceChart({ marketId }: { marketId: string }) {
     // which bars are on screen, once a frame at most: a drag reports every pixel
     let frame = 0
     const onRange = (r: { from: number; to: number } | null) => {
+      // held to where there is data, at once: a drag past either end stops there instead of showing empty chart
+      const held = r && withinData(r, view.current.bars)
+      if (held) {
+        c.timeScale().setVisibleLogicalRange(held) // reports the held range, which is then within bounds
+        return
+      }
       cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
         const n = view.current.data.length
@@ -357,6 +397,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
     if (!area.current || !chart.current) return
     area.current.setData(data)
     view.current.data = data
+    view.current.bars = replayTotal ?? data.length
     if (replayTotal) {
       // the axis spans the whole replay from its first frame, so the line is drawn across it left to right
       chart.current.timeScale().setVisibleLogicalRange({ from: 0, to: replayTotal - 1 + RIGHT_OFFSET })
