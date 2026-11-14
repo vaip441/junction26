@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, moves, pages, poller, replay, scoring, speech, truth, venues
+from terminal import contextdev, madeup, match, metrics, moves, pages, poller, replay, scoring, speech, truth, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -87,17 +87,28 @@ def detail(db, m: dict, now: float) -> dict:
     return {**summary(db, m, now), "rules": m["rules"], "queries": m["queries"], "companies": m["companies"] or [],
             "related": [summary(db, r, now) for r in store.related(db, m["id"])],
             "pages": [pages.public(p) for p in store.pages(db, m["id"]) if p["url"]],
-            "sources": store.sources(db, m["id"])}
+            "sources": store.sources(db, m["id"]),
+            "found_by": store.found_by(db, m["id"])}  # items found, by how they were found (see db.PROVENANCE)
+
+
+async def no_scorer(*_):
+    raise scoring.ScoringError("offline: there is no scorer")
 
 
 def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: str | None = None,
-               ui: Path | None = None, replays: Path | None = None) -> FastAPI:
+               ui: Path | None = None, replays: Path | None = None, offline: bool = False) -> FastAPI:
+    # offline: the replay demo (see terminal/offline.py). Nothing is polled, searched or scored, so every
+    # write is refused before it could reach the network, and GET /metrics says so for the screen.
     # Every route is `async def`: the store is one sqlite connection, and a plain `def` route would use it
     # from a worker thread while the background loops use it from the event loop.
     key = key if key is not None else os.environ.get("TERMINAL_KEY", "")
+    if offline:
+        poll, scorer = False, no_scorer
 
     def write_access(x_terminal_key: str = Header("")):
         """Writes cost model calls and Context.dev credits, so a public deployment sets TERMINAL_KEY."""
+        if offline:
+            raise HTTPException(503, "offline replay demo: nothing is searched or scored here")
         if key and not hmac.compare_digest(x_terminal_key.encode(), key.encode()):
             raise HTTPException(401, "missing or wrong X-Terminal-Key header")
 
@@ -229,7 +240,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         if m["venue"] == "made_up" and store.latest_price(app.state.db, id) is None:
             raise HTTPException(409, "this market is still opening, try again in a moment")
         tick = await ingest(app.state.db, app.state.bus, app.state.scorer, m, kind=body.kind,
-                            source="microphone" if body.kind == "mic" else "typed", headline=body.text)
+                            source="microphone" if body.kind == "mic" else "typed", headline=body.text,
+                            provenance="microphone" if body.kind == "mic" else "typed")
         if tick is None:
             raise HTTPException(503, "scoring unavailable, try again")
         return public(tick)
@@ -401,7 +413,14 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
 
     @app.get("/record")
     async def weekend_record():
+        """Directional follow-through of the live calls, with every count behind it (see record.py)."""
         return record(app.state.db)
+
+    @app.get("/metrics")
+    async def measured():
+        """Measured latency of the live ticks of the last day (see metrics.py), and whether this is the
+        offline replay demo. Figures are null until there are enough ticks to measure."""
+        return {"mode": "offline" if offline else "live", **metrics.latency(app.state.db)}
 
     @app.get("/stream")
     async def stream(request: Request):

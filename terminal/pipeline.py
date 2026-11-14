@@ -92,14 +92,18 @@ def context(db, market: dict, now: float, history: bool) -> str:
 async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headline: str, url: str | None = None,
                  body: str = "", published_ts: float | None = None, backfill: bool = False,
                  now: float | None = None, likes: int | None = None, replies: int | None = None,
-                 ruler=None, key: str | None = None, passage: str | None = None) -> dict | None:
+                 ruler=None, key: str | None = None, passage: str | None = None,
+                 provenance: str = "unknown", discovered_ts: float | None = None) -> dict | None:
     """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried).
 
     A tick that moves the price also carries the sentence of the market's rules that makes it matter
     (`ruler`, by default rules.deciding wherever the real scorer is used): for an item from the web only
     a sentence that stands out, for a spoken or typed one the closest sentence, however weak.
     `passage` is the excerpt of the page shown beside the tick; it is stored as given and plays no part in scoring.
+    `provenance` is how the item was found (see db.PROVENANCE) and `discovered_ts` when: by default now, for an
+    item that reaches us as it is ingested. The time it had been scored and stored is kept beside it.
     """
+    started = time.monotonic()  # durations are measured on this clock; the wall clock can be set back
     ruler = ruler or (rules.deciding if scorer is scoring.score else None)
     now = time.time() if now is None else now
     key = key or dedupe_key(kind, url, headline, now)  # given for a watched page: its address is the same every change
@@ -149,7 +153,9 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "url": url, "headline": headline, "up": s.up, "none": s.none, "down": s.down, "strength": s.strength,
         "verdict": v, "confidence": confidence, "price_at": price, "test": kind in ("mic", "typed"),
         "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies,
-        "title_key": story, "rule": rule and json.dumps(rule), "passage": passage and clean(passage, 400)})
+        "title_key": story, "rule": rule and json.dumps(rule), "passage": passage and clean(passage, 400),
+        "provenance": provenance, "discovered_ts": now if discovered_ts is None else min(discovered_ts, now),
+        "scored_ts": now + (time.monotonic() - started)})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
     # history is already in the starting price; and what moves the price must be on the tape, so a

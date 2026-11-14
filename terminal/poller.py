@@ -176,9 +176,32 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                                  *(news(c, since=time.time() - FEED_WINDOW, reserve=reserve) for c in companies),
                                  *(gnews(q) for q in queries),  # last: a story also found above keeps its own address
                                  return_exceptions=True)
-    fresh, failed, stories = {}, [], set()
-    sources = searches + [("news", c, None) for c in companies] + [("Google News", q, None) for q in queries]
-    for (kind, q, _), results in zip(sources, found):
+    # fresh: dedupe key -> (kind, result). Each result carries how it was found ("provenance") and when
+    # ("discovered"). An item found two ways in one pass is one tick, credited to the way that comes first in
+    # store.PROVENANCE whatever order the answers are read in; the other way is not recorded.
+    fresh, failed, stories = {}, [], {}
+    discovered = time.time()  # the searches have just answered: this is when their results reached us
+    rank = store.PROVENANCE.index
+
+    def offer(key: str, kind: str, r: dict, provenance: str, story: str | None = None, at: float | None = None) -> None:
+        """Keep a candidate unless the same item (by address, or by headline for an article) is already kept
+        from a way of finding that ranks at least as high."""
+        held = key if key in fresh else stories.get(story) if story else None
+        if held is not None:
+            if rank(provenance) >= rank(fresh[held][1]["provenance"]):
+                return
+            del fresh[held]
+            for known, k in list(stories.items()):
+                if k == held:
+                    del stories[known]
+        fresh[key] = (kind, {**r, "provenance": provenance, "discovered": discovered if at is None else at})
+        if story:
+            stories[story] = key
+
+    sources = ([(kind, q, "context_web_search") for kind, q, _ in searches]
+               + [("news", c, "context_news_search") for c in companies]
+               + [("Google News", q, "google_news") for q in queries])
+    for (kind, q, provenance), results in zip(sources, found):
         if isinstance(results, BaseException):
             log.warning("%s search failed for %r on %s: %s", kind, q, market["id"], results)
             failed.append(kind)
@@ -190,16 +213,15 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             except ValueError:  # an address that cannot be parsed
                 continue
             story = title_key(r["title"]) if kind == "article" else None  # one story, many outlets and addresses
-            if key in fresh or store.has_tick(db, market["id"], key):
+            if store.has_tick(db, market["id"], key):
                 continue
             # the web search is told which sites are not news; the news index and Google News are held to the same list
             host = r.get("source") or urlsplit(r["url"]).netloc.lower().removeprefix("www.")
             if kind == "article" and any(host == site or host.endswith("." + site) for site in NOT_NEWS + POST_SITES):
                 continue
-            if story and (story in stories or store.has_title(db, market["id"], story, time.time() - STORY_SECONDS)):
+            if story and store.has_title(db, market["id"], story, time.time() - STORY_SECONDS):
                 continue
-            fresh[key] = (kind, r)
-            stories.add(story)
+            offer(key, kind, r, provenance, story)
     # a failed posts search alone does not fail the pass; one whose article searches all failed does
     if failed.count("article") == len(queries) > 0:
         raise FetchFailed(f"{len(failed)} of {len(searches)} searches failed for {market['id']}")
@@ -209,8 +231,8 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                     or not posts.shares_words(f"{r['title']} {r['description']}", queries)):
                 continue
             key = dedupe_key("post", r["url"], r["title"], 0)
-            if key not in fresh and not store.has_tick(db, market["id"], key):
-                fresh[key] = ("post", r)
+            if not store.has_tick(db, market["id"], key):
+                offer(key, "post", r, "reddit", at=time.time())  # read from the subreddit's own feed, not a search
     if slug := comment_slug(db, market):
         try:
             said = await (comments or venue_comments)(slug)
@@ -219,9 +241,10 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             said = []
         for c in said:
             key, text = f"pm-comment:{c['id']}", " ".join(c["text"].split())  # its page's address is every comment's
-            if c["published"] >= time.time() - FEED_WINDOW and key not in fresh and not store.has_tick(db, market["id"], key):
-                fresh[key] = ("post", {"url": f"https://polymarket.com/event/{slug}", "title": text[:280],
-                                       "description": text, "published": c["published"], "comment": c, "key": key})
+            if c["published"] >= time.time() - FEED_WINDOW and not store.has_tick(db, market["id"], key):
+                offer(key, "post", {"url": f"https://polymarket.com/event/{slug}", "title": text[:280],
+                                    "description": text, "published": c["published"], "comment": c, "key": key},
+                      "polymarket_comments", at=time.time())
     # Bluesky's own search: free, and each post arrives whole. A search that fails is an extra lost, not the pass.
     said = await asyncio.gather(*((bluesky or posts.bluesky)(q, time.time() - FEED_WINDOW) for q in queries),
                                 return_exceptions=True)
@@ -232,9 +255,9 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             continue
         for p in found_posts:
             key = dedupe_key("post", p["url"], p["text"], 0)
-            if posts.bluesky_worth(p) and key not in fresh and not store.has_tick(db, market["id"], key):
-                fresh[key] = ("post", {"url": p["url"], "title": p["text"][:280], "description": p["text"],
-                                       "published": p["published"], "bluesky": p})
+            if posts.bluesky_worth(p) and not store.has_tick(db, market["id"], key):
+                offer(key, "post", {"url": p["url"], "title": p["text"][:280], "description": p["text"],
+                                    "published": p["published"], "bluesky": p}, "bluesky", at=time.time())
     if backfill:  # for the frontend: how much the first fill found, before the scoring that takes most of its time
         bus.publish("market", {"market_id": market["id"], "status": "scoring", "found": len(fresh)})
     limit = asyncio.Semaphore(10)
@@ -276,6 +299,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                                     body=(text or r.get("text") or r["description"])[:2000], published_ts=published,
                                     backfill=backfill or old, likes=known and known["likes"],
                                     replies=known and known["replies"], key=r.get("key"),
+                                    provenance=r["provenance"], discovered_ts=r["discovered"],
                                     # the search's own excerpt of the page, for the frontend; a post is its own passage
                                     passage=(contextdev.passage([r.get("text") or ""]) or None) if kind == "article" else None)
             except Exception:  # one odd page must not cost the market the rest of the batch

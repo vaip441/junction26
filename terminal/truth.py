@@ -57,7 +57,8 @@ async def ingest_post(db, bus, scorer, post: dict, now: float | None = None) -> 
         if m["poll_seconds"] > 0 and posts.shares_words(it["body"], m["queries"]):
             # a post made while the scraper was down arrives late: it is history, not a live tick
             tick = await ingest(db, bus, scorer, m, kind="post", source=SOURCE, headline=it["headline"], url=it["url"],
-                                body=it["body"], published_ts=it["published"], backfill=not post.get("live", True), now=now)
+                                body=it["body"], published_ts=it["published"], backfill=not post.get("live", True), now=now,
+                                provenance="truth_social")
             stored += tick is not None
     return stored
 

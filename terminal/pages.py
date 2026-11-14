@@ -125,6 +125,7 @@ async def delivered(db, bus, scorer, page: dict, event, now: float | None = None
     except ValueError:
         detected = None
     tick = await ingest(db, bus, scorer, market, kind="page", key=key, url=page["url"], now=now, published_ts=detected,
+                        provenance="context_monitor",  # found by a Context.dev monitor, delivered to our webhook
                         source=urlsplit(page["url"]).netloc.lower().removeprefix("www."),
                         headline=clean(str(change.get("summary") or change.get("title") or "The page changed"), 250),
                         body=str(change.get("after_text_excerpt") or change.get("diff") or "")[:2000])

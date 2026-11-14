@@ -1,4 +1,14 @@
-"""The weekend record: of the ticks we called up or down, how often did the price then move that way?
+"""The weekend record: directional follow-through. Of the ticks the model called up or down, how often did
+the market's price then move, and which way?
+
+What this measures: association between a call and the price a quarter of an hour later. A call counts as
+followed when the price is at least `min_move` points away from where it stood at the call, in the called
+direction. It does not show that the item caused the move (the same news reaches traders by other roads, and
+prices move for reasons we never saw), and it is not accuracy, a win rate or a trading result: nothing was
+bought or sold, and a market that drifts one way flatters every call made that way.
+
+Counted: calls on real, live markets whose window is over. Left out: made-up markets, replays, spoken and
+typed ticks, backfill, and calls made when the market had no price to stand on.
 
 A query, not stored state, so the rule can still change on demo day.
 """
@@ -18,14 +28,25 @@ START = 1794671613
 
 def record(db, now: float | None = None, window: float = 900, min_move: float = 1.0, since: float = START) -> dict:
     now = time.time() if now is None else now
-    called = moved = same_way = 0
+    calls = same = opposite = 0
+    markets = set()
     for t in db.execute(ELIGIBLE, (window, now, since)):
-        called += 1
+        calls += 1
+        markets.add(t["market_id"])
         later = store.price_at(db, t["market_id"], t["ts"] + window)
         change = later - t["price_at"]
         if abs(change) >= min_move:
-            moved += 1
-            same_way += (change > 0) == (t["verdict"] == "up")
+            if (change > 0) == (t["verdict"] == "up"):
+                same += 1
+            else:
+                opposite += 1
     first = db.execute("SELECT MIN(t.ts) FROM ticks t JOIN markets m ON m.id = t.market_id WHERE m.replay IS NULL AND t.ts >= ?",
                        (since,)).fetchone()[0]
-    return {"called": called, "moved": moved, "same_way": same_way, "window_seconds": int(window), "since": first}
+    return {"calls": calls,                             # directional calls whose window is over
+            "evaluable": same + opposite,               # of those, followed by a move of min_move or more
+            "same_direction": same, "opposite_direction": opposite,
+            "no_qualifying_move": calls - same - opposite,
+            "window_seconds": int(window), "min_move_points": min_move,
+            "markets": len(markets),                    # distinct real markets the calls were made on
+            "start": since,                             # calls are counted from here (see START)
+            "since": first}                             # the first tick stored after that, or None

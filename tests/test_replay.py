@@ -50,7 +50,7 @@ def test_a_replay_is_not_polled_and_stays_out_of_the_weekend_record(tmp_path):
     db = store.connect(":memory:")
     replay.load(db, folder(tmp_path))
     assert store.all_priced(db) == []
-    assert record(db, now=10_000, since=0)["called"] == 0
+    assert record(db, now=10_000, since=0)["calls"] == 0
     assert record(db, now=10_000, since=0)["since"] is None  # the record does not start on a replay's election night
 
 

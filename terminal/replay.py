@@ -17,8 +17,10 @@ def _keep(db, r: dict) -> None:
                      replay={"start": r["start"], "end": r["end"], "outcome": r["outcome"]})
     store.add_history(db, r["id"], [tuple(p) for p in r["prices"]])
     for t in r["ticks"]:
+        # prerecorded: found and scored when the replay was built, so it has no live discovery or scoring time
         store.add_tick(db, {**t, "market_id": r["id"], "test": False, "backfill": False, "hidden": False,
-                            "dedupe_key": t["url"], "rule": t["rule"] and json.dumps(t["rule"])})
+                            "dedupe_key": t["url"], "rule": t["rule"] and json.dumps(t["rule"]),
+                            "provenance": "replay", "discovered_ts": None, "scored_ts": None})
 
 
 def load(db, folder: Path) -> list[str]:

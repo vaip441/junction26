@@ -1,9 +1,12 @@
 """Scoring a tick with Gemini Decision 1: how much does this item move the YES price?"""
 import math
 import os
+import time
 from typing import NamedTuple
 
 import httpx
+
+from terminal import metrics
 
 URL = "https://generativelanguage.googleapis.com/v1beta/decisions"
 LEVELS = ["Should lower the price a lot", "Should lower the price a little",
@@ -97,8 +100,10 @@ async def decide(input: str, questions: dict) -> dict:
     if _client is None:
         _client = httpx.AsyncClient(timeout=20)
     try:
+        began = time.monotonic()
         r = await _client.post(URL, headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
                                json={"model": "gemini-decision-1", "input": input, "questions": questions})
+        metrics.timed("gemini_decision", time.monotonic() - began)
         if r.status_code == 400:
             raise Rejected(f"Decision 1 rejected the request: {r.text[:200]}")
         r.raise_for_status()

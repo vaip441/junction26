@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS ticks (
     strength REAL NOT NULL, verdict TEXT NOT NULL, confidence REAL NOT NULL, price_at REAL,
     test INTEGER NOT NULL, backfill INTEGER NOT NULL, hidden INTEGER NOT NULL, dedupe_key TEXT NOT NULL,
     date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER, title_key TEXT, rule TEXT, passage TEXT,
+    provenance TEXT NOT NULL DEFAULT 'unknown', discovered_ts REAL, scored_ts REAL,
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
@@ -36,8 +37,17 @@ CREATE INDEX IF NOT EXISTS pages_by_market ON pages (market_id);
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
 # likes and replies: posts on X; title_key: articles; rule: the rules sentence behind a tick that moves the price;
-# passage: the excerpt of an article that the search found relevant, shown beside the tick
-OPTIONAL_COLS = ("likes", "replies", "title_key", "rule", "passage")
+# passage: the excerpt of an article that the search found relevant, shown beside the tick;
+# discovered_ts: when the item first reached us (a search answered, a feed was read, a webhook arrived);
+# scored_ts: when it had been scored and stored. `ts` stays what it always was, the moment ingestion began:
+# the tape, the record and the replays are all told by it.
+OPTIONAL_COLS = ("likes", "replies", "title_key", "rule", "passage", "discovered_ts", "scored_ts")
+# How an item was found, which is not who published it (`source`). In priority order: when two ways find
+# the same item in one pass, the earlier one here is recorded, and only that one. "unknown": stored before
+# 14 Nov 18:30, when this began to be written down.
+PROVENANCE = ("context_monitor", "context_web_search", "context_news_search", "google_news", "reddit",
+              "polymarket_comments", "bluesky", "truth_social", "microphone", "typed", "replay", "unknown")
+CONTEXT_DEV = ("context_monitor", "context_web_search", "context_news_search")  # the ways that are Context.dev's
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -69,6 +79,11 @@ def connect(path: str) -> sqlite3.Connection:
         db.execute("ALTER TABLE ticks ADD COLUMN replies INTEGER")
     if "passage" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov afternoon
         db.execute("ALTER TABLE ticks ADD COLUMN passage TEXT")
+    if "provenance" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov 18:30
+        # how those ticks were found was never written down, and it is not guessed from their source now
+        db.execute("ALTER TABLE ticks ADD COLUMN provenance TEXT NOT NULL DEFAULT 'unknown'")
+        db.execute("ALTER TABLE ticks ADD COLUMN discovered_ts REAL")
+        db.execute("ALTER TABLE ticks ADD COLUMN scored_ts REAL")
     return db
 
 
@@ -205,9 +220,12 @@ def has_title(db, market_id: str, title_key: str, since: float) -> bool:
 
 def add_tick(db, tick: dict) -> dict | None:
     """Store a tick; None if this market already has one with the same dedupe_key."""
-    cols = TICK_COLS + OPTIONAL_COLS
+    cols = TICK_COLS + OPTIONAL_COLS + ("provenance",)
+    provenance = tick.get("provenance") or "unknown"
+    if provenance not in PROVENANCE:
+        raise ValueError(f"unknown provenance {provenance!r}")
     cur = db.execute(f"INSERT OR IGNORE INTO ticks ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                     [tick[c] for c in TICK_COLS] + [tick.get(c) for c in OPTIONAL_COLS])
+                     [tick[c] for c in TICK_COLS] + [tick.get(c) for c in OPTIONAL_COLS] + [provenance])
     if not cur.rowcount:
         return None
     return _tick(db.execute("SELECT * FROM ticks WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -258,6 +276,25 @@ def sources(db, market_id: str, limit: int = 20) -> list[dict]:
     return [dict(r) for r in db.execute(
         "SELECT source, COUNT(*) AS ticks, SUM(verdict IN ('up', 'down')) AS moved FROM ticks"
         " WHERE market_id = ? AND hidden = 0 GROUP BY source ORDER BY ticks DESC, source LIMIT ?", (market_id, limit))]
+
+
+def found_by(db, market_id: str) -> list[dict]:
+    """How many of a market's items each way of finding things found, most first. Every stored item counts,
+    shown on the tape or not: this is what was discovered, not what was called."""
+    return [dict(r) for r in db.execute(
+        "SELECT provenance, COUNT(*) AS items, SUM(hidden = 0) AS shown FROM ticks WHERE market_id = ?"
+        " GROUP BY provenance ORDER BY items DESC, provenance", (market_id,))]
+
+
+def live_timings(db, since: float) -> list[dict]:
+    """published, discovered and scored times of the ticks that say how fast the terminal is: found live on a
+    real market since a time. Left out: made-up markets, replays, spoken and typed ticks, backfill, and ticks
+    from before these times were written down. Hidden ticks stay in for discovery (they were found), and the
+    caller leaves them out of scoring: trash is stored hidden without the model being asked."""
+    return [dict(r) for r in db.execute(
+        "SELECT t.published_ts, t.discovered_ts, t.scored_ts, t.hidden, t.provenance FROM ticks t"
+        " JOIN markets m ON m.id = t.market_id WHERE t.test = 0 AND t.backfill = 0 AND m.venue != 'made_up'"
+        " AND m.replay IS NULL AND t.discovered_ts IS NOT NULL AND t.discovered_ts >= ?", (since,))]
 
 
 def subreddits(db, market_id: str, limit: int = 3) -> list[str]:

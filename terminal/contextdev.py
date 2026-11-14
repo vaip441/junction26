@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 
 import httpx
 
+from terminal import metrics
+
 API = "https://api.context.dev/v1"
 log = logging.getLogger(__name__)
 _client: httpx.AsyncClient | None = None
@@ -102,7 +104,9 @@ async def _post(path: str, body: dict, key: str) -> dict:
         _client = httpx.AsyncClient(timeout=60)
     lim = limiter()
     try:
+        began = time.monotonic()
         r = await _client.post(API + path, json=body, headers={"Authorization": f"Bearer {key}"})
+        metrics.timed(f"context_dev{path.replace('/', '_')}", time.monotonic() - began)
         if r.status_code in (401, 402, 403, 429):
             rest = float(r.headers.get("retry-after", 30)) if r.status_code == 429 else REST_SECONDS
             lim.refused(key, rest)
@@ -200,6 +204,8 @@ async def published_times(urls: list[str]) -> dict[str, float | None]:
 
     A batch takes about a minute, costs 1 credit per page read, and has its own rate limit, so it takes
     nothing from the searches. Keys take turns.
+
+    The cache is left on here: a page's publish time does not change, so a copy read days ago answers as well.
     """
     global _client, _batch_turn
     if _client is None:
@@ -244,6 +250,10 @@ async def search(query: str, *, freshness: str | None = "last_24_hours", include
     """Search results with the passages of each page that are relevant to the query (one request, 2 credits).
 
     Background callers pass `reserve` to leave that many requests a minute per key for a person asking.
+
+    Freshness: every search is run against the live web when it is asked, and `freshness` keeps the results
+    to pages published in that window. The API's cache setting for search (maxAgeMs) is documented for the
+    Markdown of result pages only, which is not requested here, so none is sent: it would be a guess.
     """
     body = {"query": query[:500], "numResults": num_results, "highlightsOptions": {"enabled": True}}
     if freshness:
@@ -273,16 +283,22 @@ async def news(company: str, *, since: float, limit: int = 25, reserve: int = 0)
     Measured on 14 Nov: for Nvidia the newest was 5 minutes old and all 25 under 90 minutes, where the web
     search returns pages from anywhere in the last day. The index knows companies only: for people, countries
     and public bodies it was weeks behind.
+
+    Freshness: the index is filtered by publish time (`date.from`). No cache setting is documented for this
+    endpoint, so none is sent.
     """
     body = {"searchBy": {"type": "entity", "entity": {"type": "name", "name": company}}, "limit": limit,
             "filterBy": {"articleLanguage": ["en"], "date": {"from": int(since * 1000)}}}
     return parse_news(await _call("/news/search", body, wait=True, reserve=reserve))
 
 
+SCRAPE_MAX_AGE_MS = 0  # a page found a moment ago is read as it is now: by default a copy up to 3 days old may come back
+
+
 async def scrape(url: str) -> tuple[str, float | None]:
     """Text and publish time of a page, or nothing when there is no spare capacity: searches come first."""
     data = await _call("/web/scrape", {"url": url, "formats": {"markdown": True},
-                                       "sharedParams": {"mainContentOnly": True}},
+                                       "sharedParams": {"mainContentOnly": True}, "maxAgeMs": SCRAPE_MAX_AGE_MS},
                        wait=False, reserve=limiter().per_minute // 2)
     return ("", None) if data is None else parse_scrape(data)
 
