@@ -96,6 +96,29 @@ export interface Tick {
   passage?: string | null
 }
 
+/** One item the service read from the web, whether or not it earned a place on the tape. */
+export interface ReadItem {
+  id: number
+  market_id: string
+  /** The title of the market it was read for. */
+  market: string
+  ts: number
+  published_ts: number | null
+  source: string
+  headline: string
+  verdict: Verdict
+  /** Scored "no effect" with confidence: stored, kept off the tape. */
+  hidden: boolean
+}
+
+/** `GET /reading`: the last day's counts, and the newest items after the id asked for, newest first. */
+export interface Reading {
+  read: number
+  shown: number
+  window_seconds: number
+  recent: ReadItem[]
+}
+
 /** A related contract that moved over the same stretch as a move: often the whole story when no news explains it. */
 export interface MovedWith {
   id: string

@@ -5,6 +5,7 @@ Prices are percentages 0..100 and timestamps are unix seconds, everywhere.
 """
 import json
 import sqlite3
+import time
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS markets (
@@ -230,6 +231,19 @@ def ticks(db, market_id: str, limit: int = 100, include_hidden: bool = False) ->
     hidden = "" if include_hidden else "AND hidden = 0"
     return [_tick(r) for r in db.execute(
         f"SELECT * FROM ticks WHERE market_id = ? {hidden} ORDER BY ts DESC, id DESC LIMIT ?", (market_id, limit))]
+
+
+def reading(db, after: int = 0, limit: int = 40, window: float = 86400, now: float | None = None) -> dict:
+    """What the service has read from the web lately, shown on the tape or not: how many items in the last
+    day, how many of them were shown, and the newest ones stored after tick `after`, newest first."""
+    now = time.time() if now is None else now
+    web = ("FROM ticks t JOIN markets m ON m.id = t.market_id "
+           "WHERE m.replay IS NULL AND t.kind NOT IN ('mic', 'typed')")
+    read, shown = db.execute(f"SELECT COUNT(*), COALESCE(SUM(t.hidden = 0), 0) {web} AND t.ts > ?", (now - window,)).fetchone()
+    recent = db.execute(f"SELECT t.id, t.market_id, m.title AS market, t.ts, t.published_ts, t.source, t.headline, "
+                        f"t.verdict, t.hidden {web} AND t.id > ? ORDER BY t.id DESC LIMIT ?", (after, limit))
+    return {"read": read, "shown": shown, "window_seconds": int(window),
+            "recent": [{**dict(r), "hidden": bool(r["hidden"])} for r in recent]}
 
 
 def recent_headlines(db, market_id: str, limit: int = 12) -> list[str]:

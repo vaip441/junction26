@@ -111,6 +111,7 @@ and of every stream event, is in
 | `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market`, `page_check` |
 | `GET /record` | of the ticks called up or down, how often the price then moved that way |
 | `GET /status` | Context.dev use and credits per key (needs the key) |
+| `GET /reading?after=<tick id>` | everything read from the web lately, shown on a tape or not: the last day's counts and the newest items |
 
 ## Deploy
 

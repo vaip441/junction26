@@ -69,15 +69,21 @@ async def wire_loop(db, bus, scorer, feed: str, interval: float = 2, read=None) 
     """
     there: set[str] | None = None
     source = urlsplit(feed).netloc
+    looked = 0.0                       # when the read before this one was sent
+    appeared: dict[str, float] = {}    # a new article: the last time we looked and it was not there
 
     async def step() -> None:
-        nonlocal there
+        nonlocal there, looked
+        before, looked = looked, time.time()
         found = await (read or fetch)(feed)
         if there is None:
             there = {a["slug"] for a in found}
             return
         for a in found:
             if a["slug"] not in there:
-                await ingest_article(db, bus, scorer, a, source)
+                # The site stamps an article minutes before it shows it (14 Nov: stamped 18:59:20, not there at
+                # 19:09:53, there at 19:09:55). It was published when it appeared: no earlier than our last look.
+                since = appeared.setdefault(a["slug"], before)
+                await ingest_article(db, bus, scorer, {**a, "published": max(a["published"], since)}, source)
 
     await forever("wire feed", interval, step)

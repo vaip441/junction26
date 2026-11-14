@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -58,10 +59,12 @@ def test_an_article_is_a_staged_tick_on_each_market_it_touches_and_stays_out_of_
 def test_only_articles_published_after_the_start_are_scored_and_a_failed_scoring_is_tried_again():
     db, bus, calls = store.connect(":memory:"), Bus(), []
     markets(db)
-    reads = [{"articles": [article("old")]},                                      # there at the start: not news
-             {"articles": [article("new", headline="Fed cuts rates"), article("old")]},  # scoring fails this time
-             {"articles": [article("new", headline="Fed cuts rates"), article("old")]},
-             {"articles": [article("new", headline="Fed cuts rates"), article("old")]}]
+    new = article("new", headline="Fed cuts rates")  # stamped hours ago, like every article of the site
+    reads = [{"articles": [article("old")]},          # there at the start: not news
+             {"articles": [new, article("old")]},     # scoring fails this time
+             {"articles": [new, article("old")]},
+             {"articles": [new, article("old")]}]
+    started = time.time()
 
     async def read(feed):
         if not reads:
@@ -76,4 +79,8 @@ def test_only_articles_published_after_the_start_are_scored_and_a_failed_scoring
 
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(wire.wire_loop(db, bus, scorer, FEED, interval=0, read=read))
-    assert [t["headline"] for t in store.ticks(db, "fed")] == ["Fed cuts rates"] and len(calls) == 2
+    [t] = store.ticks(db, "fed")
+    assert t["headline"] == "Fed cuts rates" and len(calls) == 2
+    # It was not on the site when we last looked, so it was published after that, whatever its stamp says.
+    # The second try keeps the time found at the first.
+    assert started <= t["published_ts"] <= t["ts"] and "Published 1 minute ago" in calls[0] and calls[1] == calls[0]

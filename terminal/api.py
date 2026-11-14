@@ -408,6 +408,11 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     async def weekend_record():
         return record(app.state.db)
 
+    @app.get("/reading")
+    async def reading(after: int = 0):
+        """Everything read from the web lately, shown or not, for the strip that shows the reading itself."""
+        return store.reading(app.state.db, after)
+
     @app.get("/stream")
     async def stream(request: Request):
         bus = app.state.bus

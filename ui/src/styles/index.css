@@ -169,6 +169,32 @@ body {
   background: var(--color-down);
 }
 
+/* The reading strip: a dot that breathes while the service reads, items that fade in as they arrive, and
+   a soft right edge where the oldest leave. */
+@keyframes live-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text);
+  animation: live-dot 2.4s ease-in-out infinite;
+}
+@keyframes read-in {
+  from {
+    opacity: 0;
+  }
+}
+.read-in {
+  animation: read-in 260ms ease-out;
+}
+.strip-fade {
+  mask-image: linear-gradient(to right, #000 calc(100% - 3rem), transparent);
+}
+
 /* A new row slides in at the top of the tape. */
 @keyframes slide-in {
   from {
@@ -368,6 +394,8 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .live-dot,
+  .read-in,
   .tape-focus,
   .pop-in,
   .row-in,

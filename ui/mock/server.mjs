@@ -561,6 +561,15 @@ async function route(req, url) {
   if (req.method === 'GET' && url.pathname === '/record') {
     return [200, { called: 142, moved: 97, same_way: 71, window_seconds: WINDOW, since: startedAt - 2 * 86400 }]
   }
+  if (req.method === 'GET' && url.pathname === '/reading') {
+    // the mock hides nothing, so everything read is shown
+    const after = Number(url.searchParams.get('after')) || 0
+    const all = [...ticks.values()].flat().filter((t) => t.kind !== 'mic' && t.kind !== 'typed').sort((a, b) => b.id - a.id)
+    const recent = all.filter((t) => t.id > after).slice(0, 40).map((t) => ({
+      id: t.id, market_id: t.market_id, market: markets.get(t.market_id)?.title ?? '', ts: t.ts, published_ts: t.published_ts,
+      source: t.source, headline: t.headline, verdict: t.verdict, hidden: false }))
+    return [200, { read: all.length, shown: all.length, window_seconds: 86400, recent }]
+  }
   if (req.method === 'GET' && url.pathname === '/status') {
     creditsUsed += Math.round(rand(0, 6))
     const keys = [1, 2, 3].map((key) => ({ key, used_last_minute: Math.round(rand(0, 10)), per_minute: 10,

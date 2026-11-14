@@ -1,4 +1,4 @@
-import { absoluteTime, pct, tickTime, timeAgo } from '../../lib/format'
+import { absoluteTime, caught, pct, tickTime, timeAgo } from '../../lib/format'
 import type { Lifecycle } from '../../lib/lifecycle'
 import type { Move, Tick, TickKind } from '../../lib/types'
 import { useStore } from '../../state/store'
@@ -37,6 +37,7 @@ export function TickRow({
   const setTab = useStore((s) => s.setTab)
   const at = tickTime(tick)
   const quiet = tick.verdict === 'none'
+  const quick = caught(tick)
   // arrived in the last few seconds: animate the decision (first paint of history stays still)
   const fresh = !tick.backfill && (playing || now - tick.ts < 15)
   // found in the last few seconds, live news or earlier coverage alike: the row opens up in place, so the
@@ -55,6 +56,15 @@ export function TickRow({
         </span>
         <Badge tone={tick.test ? 'madeup' : 'neutral'}>{KIND_LABEL[tick.kind]}</Badge>
         {tick.backfill && <Badge>Earlier</Badge>}
+        {quick && (
+          // how soon after it was published this reached the tape: the proof of "live", on the item itself
+          <span
+            title={`Published ${absoluteTime(tick.published_ts!)}, on the tape ${quick.text} later`}
+            className={`num shrink-0 whitespace-nowrap ${quick.fast ? 'inv text-[11px]' : 'text-xs text-muted'}`}
+          >
+            Caught in {quick.text}
+          </span>
+        )}
         <span className="num ml-auto shrink-0 text-xs text-faint" title={absoluteTime(at)}>
           {timeAgo(at, now)}
         </span>

@@ -6,6 +6,7 @@ import { KeyPrompt } from '../components/input/KeyPrompt'
 import { SpeakBar } from '../components/input/SpeakBar'
 import { EdgeFlash } from '../components/layout/EdgeFlash'
 import { MarketList } from '../components/layout/MarketList'
+import { ReadingStrip } from '../components/layout/ReadingStrip'
 import { TopBar } from '../components/layout/TopBar'
 import { MarketHeader } from '../components/market/MarketHeader'
 import { MoveBanner } from '../components/market/MoveBanner'
@@ -46,6 +47,7 @@ export function App() {
   return (
     <div className="flex h-full flex-col">
       <TopBar />
+      <ReadingStrip />
       <main className="grid min-h-0 flex-1 grid-cols-1 gap-px bg-line max-lg:auto-rows-max max-lg:overflow-y-auto lg:grid-cols-[260px_1fr_380px]">
         <div className="flex min-h-0 flex-col bg-panel">
           <Panel title="Markets" className="min-h-0 flex-1 max-lg:max-h-48">

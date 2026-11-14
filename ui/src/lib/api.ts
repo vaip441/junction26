@@ -1,4 +1,4 @@
-import type { MarketDetail, MarketSummary, Move, PricePoint, Tick, WeekendRecord } from './types'
+import type { MarketDetail, MarketSummary, Move, PricePoint, Reading, Tick, WeekendRecord } from './types'
 
 export const API_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:18911'
 
@@ -68,6 +68,7 @@ export const api = {
   status: () =>
     request<{ context_dev: { keys: { credits_remaining: number | null }[]; per_minute: number; used_last_minute: number } }>('/status', {}, true),
   record: () => request<WeekendRecord>('/record'),
+  reading: (after = 0) => request<Reading>(`/reading?after=${after}`),
 
   addMarket: (query: string, pollSeconds = 900) =>
     request<MarketDetail & { matched: boolean }>(
