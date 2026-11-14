@@ -1,4 +1,6 @@
 """The one path every tick takes: dedupe -> score -> store -> publish."""
+import asyncio
+import json
 import logging
 import re
 import time
@@ -6,6 +8,7 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from terminal import db as store
+from terminal import rules, scoring
 from terminal.pricing import nudge
 from terminal.scoring import Rejected, Score, ScoringError, is_hidden, verdict
 
@@ -22,8 +25,26 @@ def dedupe_key(kind: str, url: str | None, headline: str, ts: float) -> str:
         # add to TRACKING when a site's own noise parameter shows up as duplicates
         query = urlencode(sorted((k, v) for k, v in parse_qsl(u.query) if not TRACKING.match(k.lower())))
         host = u.netloc.lower().removeprefix("www.")
+        if host in ("x.com", "twitter.com", "mobile.twitter.com") and (post := re.search(r"/status/(\d+)", u.path)):
+            return f"x.com/status/{post[1]}"  # one post has many addresses: either site, any handle, /i/, /photo/1
         return host + u.path.rstrip("/") + (f"?{query}" if query else "")
     return re.sub(r"[^a-z0-9]+", " ", headline.lower()).strip()
+
+
+PUBLISHER = re.compile(r"\s+(?:[-|–—]\s+[^-|–—]{1,40}|By\s+\S+(?:\s\S+){0,2})$")  # " - Reuters", " | World News", " By Investing.com"
+
+
+def title_key(headline: str) -> str | None:
+    """A headline without its trailing publisher, case and punctuation. One wire story runs on a dozen
+    sites, and one article is found by several searches under different addresses: same key, one tick.
+    None for a headline too short to tell stories apart (under four words)."""
+    words = lambda t: re.findall(r"[^\W_]+", t.casefold())
+    cut = PUBLISHER.sub("", headline.strip())
+    kept = words(cut) if len(words(cut)) >= 4 else words(headline)
+    return " ".join(kept[:40]) if len(kept) >= 4 else None  # the whole headline: ones that only start alike differ
+
+
+STORY_SECONDS = 3 * 86400  # a headline counts as the same story this long; a recurring one is new after that
 
 
 def clean(text: str, limit: int) -> str:
@@ -61,17 +82,37 @@ def context(db, market: dict, now: float, history: bool) -> str:
 
 async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headline: str, url: str | None = None,
                  body: str = "", published_ts: float | None = None, backfill: bool = False,
-                 now: float | None = None, likes: int | None = None, replies: int | None = None) -> dict | None:
-    """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried)."""
+                 now: float | None = None, likes: int | None = None, replies: int | None = None,
+                 ruler=None) -> dict | None:
+    """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried).
+
+    A tick that moves the price, and every spoken or typed one, also carries the sentence of the market's
+    rules that makes it matter (`ruler`, by default rules.deciding wherever the real scorer is used).
+    """
+    ruler = ruler or (rules.deciding if scorer is scoring.score else None)
     now = time.time() if now is None else now
     key = dedupe_key(kind, url, headline, now)
     if store.has_tick(db, market["id"], key):
         return None
+    story = title_key(headline) if kind == "article" else None  # posts: many people post the same words
+    if story and store.has_title(db, market["id"], story, now - STORY_SECONDS):
+        return None
     spoken = kind in ("mic", "typed")  # a judge's own sentence is new by nature: no newness check, no history
     item = (f"{clean(source, 60)}: {clean(headline, 250)}" + (f"\nPublished {day(published_ts)}." if published_ts else "")
             + (f"\n{clean(body, 2000)}" if body else ""))
+    async def rule_for() -> dict | None:
+        try:
+            return await ruler(market, item)
+        except ScoringError as e:  # the tick is worth having without its rule
+            log.warning("no rule found for %r on %s: %s", headline[:60], market["id"], e)
+
+    rule = None
     try:
-        s = await scorer(context(db, market, now, history=not spoken), item, not spoken)
+        scoring_call = scorer(context(db, market, now, history=not spoken), item, not spoken)
+        if spoken and ruler:  # side by side: a person is waiting
+            s, rule = await asyncio.gather(scoring_call, rule_for())
+        else:
+            s = await scoring_call
     except ScoringError as e:
         log.warning("scoring failed for %r on %s: %s", headline[:60], market["id"], e)
         if spoken or not (backfill or isinstance(e, Rejected)):
@@ -79,7 +120,13 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         # History is fetched once, and an item the model refuses will be refused again. Left unstored,
         # every later pass would search it up and score it anew, so it is kept as a hidden no-effect tick.
         s = Score(0.0, 1.0, 0.0, 0.0)
+    if store.get_market(db, market["id"]) is None:
+        return None  # deleted while this item was being scored
     v, confidence = verdict(s)
+    if ruler and not spoken and v != "none":
+        rule = await rule_for()
+        if store.get_market(db, market["id"]) is None:
+            return None
     made_up, latest = market["venue"] == "made_up", store.latest_price(db, market["id"])
     # A made-up price is ours alone, so it always moves from the newest value: two sentences scored
     # out of order must both count. A real market's tick records the venue price at detection time.
@@ -88,10 +135,13 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "market_id": market["id"], "ts": now, "published_ts": published_ts, "kind": kind, "source": source,
         "url": url, "headline": headline, "up": s.up, "none": s.none, "down": s.down, "strength": s.strength,
         "verdict": v, "confidence": confidence, "price_at": price, "test": kind in ("mic", "typed"),
-        "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies})
+        "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies,
+        "title_key": story, "rule": rule and json.dumps(rule)})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
-    if made_up and latest is not None and not backfill:  # history is already in the starting price
+    # history is already in the starting price; and what moves the price must be on the tape, so a
+    # hidden tick moves nothing (259 of them once drifted a market from 58% to 62% with 3 ticks shown)
+    if made_up and latest is not None and not backfill and not tick["hidden"]:
         new, at = nudge(price, s.strength), max(now, latest[0] + 0.001)
         store.add_price(db, market["id"], at, new)
         bus.publish("price", {"market_id": market["id"], "ts": at, "price": new})
@@ -102,4 +152,4 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
 
 def public(tick: dict) -> dict:
     """A tick as the frontend sees it."""
-    return {k: v for k, v in tick.items() if k not in ("dedupe_key", "hidden")}
+    return {k: v for k, v in tick.items() if k not in ("dedupe_key", "title_key", "hidden")}

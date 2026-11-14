@@ -41,3 +41,22 @@ async def queries_for(title: str, rules: str) -> list[str]:
     if not queries:
         raise QueryError("the model returned no queries")
     return queries
+
+
+COMPANIES = """A prediction market is tracked for news.
+
+Market: {title}
+Rules: {rules}
+
+Name the companies this market is about, as the press writes them (for example "Nvidia", "OpenAI"). Only
+companies that are in the news under their own name: no people, countries, governments, parties or teams.
+Reply with a JSON array of at most 2 strings only; an empty array if the market is not about a company."""
+
+
+async def companies_for(title: str, rules: str) -> list[str]:
+    """Up to 2 companies whose news bears on a market, possibly none. QueryError if the model call fails."""
+    try:
+        answer = await ask_json(COMPANIES.format(title=title, rules=rules[:1500]))
+        return [c.strip()[:80] for c in answer if isinstance(c, str) and c.strip()][:2]
+    except Exception as e:
+        raise QueryError(f"{type(e).__name__}: {str(e)[:150]}") from e

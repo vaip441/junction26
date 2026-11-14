@@ -5,6 +5,8 @@ After=network-online.target
 [Service]
 WorkingDirectory=/home/georg/junction26/junction26
 EnvironmentFile=/home/georg/junction26/junction26/.env
+# where the Truth Social scraper (trump-social-scraper/, see trump-scraper.service) appends new posts
+Environment=TRUTH_FEED=/home/georg/junction26/junction26/trump-social-scraper/data/feed.jsonl
 ExecStart=/home/georg/junction26/junction26/.venv/bin/uvicorn terminal.api:app --host 127.0.0.1 --port 18911 --timeout-graceful-shutdown 5
 Restart=always
 RestartSec=3

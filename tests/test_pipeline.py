@@ -204,3 +204,115 @@ def test_an_item_the_model_refuses_outright_is_stored_hidden_not_retried_every_p
     assert store.latest_price(db, "m")[1] == 20.0
     # a spoken or typed sentence is never stored as a silent no-effect: the person is told
     assert run(db, bus, refuses, m, kind="typed", headline="refused sentence") is None
+
+
+def test_a_hidden_tick_does_not_move_a_made_up_price():
+    # what moved the price must be on the tape: 259 hidden ticks once drifted a market from 58% to 62%
+    db, bus, q, m = setup()
+
+    async def faint(*_):
+        return Score(0.02, 0.9, 0.08, -0.05)
+
+    assert run(db, bus, faint, m, url="https://a.example/1")["hidden"] is True
+    assert store.prices(db, "m") == [{"ts": 0, "price": 20.0}] and drain(q) == []
+
+
+def test_one_post_on_x_is_one_tick_whatever_its_address_looks_like():
+    from terminal.pipeline import dedupe_key
+
+    keys = {dedupe_key("post", url, "h", 0) for url in (
+        "https://x.com/SomeAnalyst/status/2120971125412827486", "https://twitter.com/SomeAnalyst/status/2120971125412827486?s=20",
+        "https://x.com/i/status/2120971125412827486", "https://mobile.twitter.com/i/web/status/2120971125412827486",
+        "https://x.com/SomeAnalyst/status/2120971125412827486/photo/1")}
+    assert keys == {"x.com/status/2120971125412827486"}
+    assert dedupe_key("post", "https://x.com/SomeAnalyst", "h", 0) == "x.com/SomeAnalyst"  # a profile is not a post
+
+
+def test_a_tick_for_a_market_deleted_while_it_was_being_scored_is_not_stored():
+    db, bus, q, m = setup()
+
+    async def slow(*_):
+        store.delete_market(db, "m")  # the market goes away mid-scoring
+        return UP
+
+    assert run(db, bus, slow, m, url="https://a.example/1") is None
+    assert db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0] == 0 and drain(q) == []
+
+
+def test_a_headline_without_its_publisher_is_the_same_story():
+    from terminal.pipeline import title_key
+
+    same = {title_key(h) for h in (
+        "Iran's Guards say they targeted a US early-warning radar in Bahrain | World News",
+        "Iran's Guards say they targeted a US early-warning radar in Bahrain - ARMENPRESS",
+        "Iran’s Guards say they targeted a US early-warning radar in Bahrain",
+        "Iran's Guards say they targeted a US early-warning radar in Bahrain By Investing.com")}
+    assert len(same) == 1
+    assert title_key("Fed hikes - Reuters") is None and title_key("Live updates") is None  # too short to tell stories apart
+    assert title_key("Trump - Xi summit ends early") == "trump xi summit ends early"  # a dash inside a short headline stays
+    assert title_key("Fed raises rates by 25 points") != title_key("Fed raises rates by 50 points")
+
+
+def test_one_story_run_by_several_outlets_is_one_tick_and_scored_once():
+    db, bus, q, m = setup(venue="kalshi")
+    scored = []
+
+    async def spy(*_):
+        scored.append(1)
+        return UP
+
+    first = run(db, bus, spy, m, url="https://apnews.com/a", headline="Microsoft says services fully restored after outage")
+    again = run(db, bus, spy, m, url="https://local10.com/b", headline="Microsoft says services fully restored after outage - Local 10")
+    assert first is not None and again is None and len(scored) == 1
+    assert run(db, bus, spy, m, url="https://apnews.com/c", headline="Fed hikes") is not None
+    assert run(db, bus, spy, m, url="https://reuters.com/d", headline="Fed hikes") is not None  # short headlines: by address only
+    # posts are told apart by address alone: many people post the same words
+    assert run(db, bus, spy, m, kind="post", url="https://x.com/a/status/2120971125412827486",
+               headline="Microsoft says services fully restored after outage") is not None
+
+
+def test_a_tick_that_moves_the_price_names_the_rule_behind_it():
+    db, bus, q, m = setup(venue="kalshi")
+    asked = []
+
+    async def ruler(market, item):
+        asked.append(item)
+        return {"start": 3, "end": 9, "text": "a rule", "confidence": 0.8}
+
+    moved = run(db, bus, up, m, url="https://a.example/1", headline="Board names a new chief executive", ruler=ruler)
+    assert moved["rule"] == {"start": 3, "end": 9, "text": "a rule", "confidence": 0.8}
+    assert store.ticks(db, "m")[0]["rule"] == moved["rule"] and drain(q)[0][1]["rule"] == moved["rule"]
+    quiet = run(db, bus, no_effect, m, url="https://a.example/2", headline="Nothing much happened in the markets", ruler=ruler)
+    assert quiet["rule"] is None and len(asked) == 1  # an item that moves nothing costs no second call
+
+
+def test_a_spoken_sentence_always_gets_its_rule_and_a_failing_lookup_loses_nothing():
+    db, bus, q, m = setup()
+
+    async def ruler(market, item):
+        return {"start": 0, "end": 1, "text": "r", "confidence": 0.9}
+
+    async def broken_ruler(market, item):
+        raise ScoringError("api down")
+
+    assert run(db, bus, no_effect, m, kind="typed", headline="Trump was killed", ruler=ruler)["rule"]["text"] == "r"
+    tick = run(db, bus, up, m, kind="typed", headline="The team shipped", ruler=broken_ruler)
+    assert tick is not None and tick["rule"] is None and tick["verdict"] == "up"
+    assert run(db, bus, up, m, kind="typed", headline="No ruler given")["rule"] is None  # a stand-in scorer brings no ruler
+
+
+def test_headlines_that_only_start_alike_are_different_stories():
+    from terminal.pipeline import title_key
+
+    a = "Stock market today: Dow, S&P 500 and Nasdaq futures slip as traders wait for the Fed decision on rates"
+    b = "Stock market today: Dow, S&P 500 and Nasdaq futures slip as traders wait for the jobs report on Friday"
+    assert title_key(a) != title_key(b)
+
+
+def test_a_headline_seen_days_ago_does_not_hide_todays_story():
+    db, bus, q, m = setup(venue="kalshi")
+    day = 86400
+    old = run(db, bus, up, m, url="https://a.example/monday", headline="Stock market today: what to watch this morning", now=10 * day)
+    soon = run(db, bus, up, m, url="https://b.example/copy", headline="Stock market today: what to watch this morning", now=11 * day)
+    later = run(db, bus, up, m, url="https://a.example/friday", headline="Stock market today: what to watch this morning", now=14 * day)
+    assert old is not None and soon is None and later is not None  # a recurring headline is a new story after three days

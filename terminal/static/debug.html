@@ -16,6 +16,9 @@
 <div id="price">–</div>
 <form id="form"><input id="text" placeholder="Type a sentence or headline" maxlength="500" required><button>Send as tick</button></form>
 <p id="error" role="alert"></p>
+<h2>Why did it move?</h2>
+<ul id="moves"></ul>
+<h2>Tape</h2>
 <ul id="tape"></ul>
 <script>
 const $ = id => document.getElementById(id);
@@ -35,6 +38,26 @@ function row(t) {
   const reach = t.likes == null ? "" : ` · ${t.likes} likes, ${t.replies} replies`;
   s.textContent = ` ${when} · ${t.source}${reach}${t.test ? " · test" : ""}${t.backfill ? " · backfill" : ""}`;
   li.append(b, s, document.createElement("br"), document.createTextNode(t.headline));
+  if (t.rule) {  // the sentence of the market's rules that makes this tick matter
+    const r = document.createElement("small");
+    r.textContent = `rule (${Math.round(t.rule.confidence * 100)}%): ${t.rule.text}`;
+    li.append(document.createElement("br"), r);
+  }
+  return li;
+}
+function moveRow(m) {  // a price jump and the item named as its cause
+  const li = document.createElement("li");
+  const b = document.createElement("b"); b.className = m.to > m.from ? "up" : "down";
+  b.textContent = `${pct(m.from)} → ${pct(m.to)}`;
+  const s = document.createElement("small");
+  s.textContent = ` ${new Date(m.since * 1000).toLocaleTimeString()} to ${new Date(m.ts * 1000).toLocaleTimeString()}`;
+  const cause = m.cause ? `likely cause (${Math.round(m.confidence * 100)}%): ${m.cause.source}: ${m.cause.headline}`
+                        : "no cause found on the web";
+  li.append(b, s, document.createElement("br"), document.createTextNode(cause));
+  if (m.rule) {
+    const r = document.createElement("small"); r.textContent = `rule: ${m.rule.text}`;
+    li.append(document.createElement("br"), r);
+  }
   return li;
 }
 async function load() {
@@ -45,6 +68,8 @@ async function load() {
   $("price").textContent = pct(markets.find(m => m.id === current)?.price);
   const ticks = await (await fetch(`/markets/${current}/ticks?limit=50`)).json();
   $("tape").replaceChildren(...ticks.map(row));
+  const moves = await (await fetch(`/markets/${current}/moves?limit=5`)).json();
+  $("moves").replaceChildren(...moves.map(moveRow));
 }
 $("market").onchange = () => { current = $("market").value; load(); };
 // POST with the write key; asks for the key once if the server refuses.
@@ -88,6 +113,7 @@ $("add").onsubmit = async e => {
 const es = new EventSource("/stream");
 es.addEventListener("tick", e => { const t = JSON.parse(e.data); if (t.market_id === current) $("tape").prepend(row(t)); });
 es.addEventListener("tick_update", e => { if (JSON.parse(e.data).market_id === current) load(); });
+es.addEventListener("move", e => { const m = JSON.parse(e.data); if (m.market_id === current) $("moves").prepend(moveRow(m)); });
 es.addEventListener("price", e => { const p = JSON.parse(e.data); if (p.market_id === current) $("price").textContent = pct(p.price); });
 es.addEventListener("market", e => {
   const m = JSON.parse(e.data);

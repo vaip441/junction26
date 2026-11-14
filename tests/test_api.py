@@ -182,10 +182,10 @@ def test_adding_a_market_wakes_the_article_loop(path, monkeypatch):
 
     woken = []
 
-    async def price_loop(db, bus):
+    async def price_loop(db, bus, scorer, busy):
         return None
 
-    async def article_loop(db, bus, scorer, wake):
+    async def article_loop(db, bus, scorer, wake, busy):
         await wake.wait()
         woken.append([m["id"] for m in poller.due(db, {}, now=1e12)])
 
@@ -416,3 +416,18 @@ def test_every_route_runs_on_the_event_loop_because_the_store_is_one_connection(
     app = create_app(db_path=path, scorer=up, poll=False)
     plain_routes = [r.path for r in app.routes if isinstance(r, APIRoute) and not inspect.iscoroutinefunction(r.endpoint)]
     assert plain_routes == []
+
+
+def test_moves_are_listed_newest_first_with_their_cause_as_a_tick(path):
+    from terminal import db as store
+
+    with client(path) as c:
+        tick = typed(c).json()
+        db = c.app.state.db
+        store.add_move(db, "mu-demo", 100.0, 40.0, 20.0, 24.0, None, None, None)
+        store.add_move(db, "mu-demo", 200.0, 140.0, 24.0, 30.0, tick["id"], 0.8, '{"start": 0, "end": 4, "text": "Rule", "confidence": 0.9}')
+        first, second = c.get("/markets/mu-demo/moves").json()
+        assert c.get("/markets/nope/moves").status_code == 404
+    assert first == {"id": 2, "market_id": "mu-demo", "ts": 200.0, "since": 140.0, "from": 24.0, "to": 30.0,
+                     "confidence": 0.8, "rule": {"start": 0, "end": 4, "text": "Rule", "confidence": 0.9}, "cause": tick}
+    assert second["cause"] is None and second["rule"] is None and second["to"] == 24.0

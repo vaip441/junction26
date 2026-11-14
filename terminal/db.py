@@ -1,4 +1,4 @@
-"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices.
+"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices, moves.
 
 Prices are percentages 0..100 and timestamps are unix seconds, everywhere.
 """
@@ -9,7 +9,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS markets (
     id TEXT PRIMARY KEY, venue TEXT NOT NULL, venue_ref TEXT, title TEXT NOT NULL, rules TEXT NOT NULL,
     url TEXT, lead_id TEXT, queries TEXT NOT NULL DEFAULT '[]', poll_seconds INTEGER NOT NULL DEFAULT 900,
-    filled INTEGER NOT NULL DEFAULT 0,
+    filled INTEGER NOT NULL DEFAULT 0, companies TEXT,
     created_ts REAL NOT NULL DEFAULT (unixepoch('subsec')));
 CREATE TABLE IF NOT EXISTS prices (
     market_id TEXT NOT NULL, ts REAL NOT NULL, price REAL NOT NULL, PRIMARY KEY (market_id, ts));
@@ -18,14 +18,19 @@ CREATE TABLE IF NOT EXISTS ticks (
     source TEXT NOT NULL, url TEXT, headline TEXT NOT NULL, up REAL NOT NULL, none REAL NOT NULL, down REAL NOT NULL,
     strength REAL NOT NULL, verdict TEXT NOT NULL, confidence REAL NOT NULL, price_at REAL,
     test INTEGER NOT NULL, backfill INTEGER NOT NULL, hidden INTEGER NOT NULL, dedupe_key TEXT NOT NULL,
-    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER,
+    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER, title_key TEXT, rule TEXT,
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
+CREATE TABLE IF NOT EXISTS moves (
+    id INTEGER PRIMARY KEY, market_id TEXT NOT NULL, ts REAL NOT NULL, since_ts REAL NOT NULL,
+    from_price REAL NOT NULL, to_price REAL NOT NULL, tick_id INTEGER, confidence REAL, rule TEXT);
+CREATE INDEX IF NOT EXISTS moves_by_market ON moves (market_id, ts);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
-POST_COLS = ("likes", "replies")  # known only for posts on X
+# likes and replies: posts on X; title_key: articles; rule: the rules sentence behind a tick that moves the price
+OPTIONAL_COLS = ("likes", "replies", "title_key", "rule")
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -35,6 +40,12 @@ def connect(path: str) -> sqlite3.Connection:
     db.executescript(SCHEMA)
     if "filled" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores created before 13 Nov
         db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
+    if "companies" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov noon
+        db.execute("ALTER TABLE markets ADD COLUMN companies TEXT")
+    if "title_key" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov noon
+        db.execute("ALTER TABLE ticks ADD COLUMN title_key TEXT")
+        db.execute("ALTER TABLE ticks ADD COLUMN rule TEXT")
+    db.execute("CREATE INDEX IF NOT EXISTS ticks_by_title ON ticks (market_id, title_key)")
     if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
         db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
     if "likes" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov evening
@@ -44,11 +55,13 @@ def connect(path: str) -> sqlite3.Connection:
 
 
 def _market(row) -> dict | None:
-    return row and {**row, "queries": json.loads(row["queries"]), "filled": bool(row["filled"])}
+    return row and {**row, "queries": json.loads(row["queries"]), "filled": bool(row["filled"]),
+                    "companies": row["companies"] and json.loads(row["companies"])}  # None: not asked for yet
 
 
 def _tick(row) -> dict:
-    return {**row, "test": bool(row["test"]), "backfill": bool(row["backfill"]), "hidden": bool(row["hidden"])}
+    return {**row, "test": bool(row["test"]), "backfill": bool(row["backfill"]), "hidden": bool(row["hidden"]),
+            "rule": row["rule"] and json.loads(row["rule"])}
 
 
 def add_market(db, *, id, venue, venue_ref, title, rules, url, lead_id=None, queries=(), poll_seconds=900) -> dict:
@@ -60,6 +73,11 @@ def add_market(db, *, id, venue, venue_ref, title, rules, url, lead_id=None, que
 
 def set_queries(db, id: str, queries: list[str]) -> None:
     db.execute("UPDATE markets SET queries = ? WHERE id = ?", (json.dumps(queries), id))
+
+
+def set_companies(db, id: str, companies: list[str]) -> None:
+    """The companies a market is about, whose news is followed; an empty list when it is about none."""
+    db.execute("UPDATE markets SET companies = ? WHERE id = ?", (json.dumps(companies), id))
 
 
 def set_filled(db, id: str) -> None:
@@ -78,9 +96,10 @@ def promote(db, id: str) -> None:
 
 
 def delete_market(db, id: str) -> None:
-    """Remove a market, its related contracts, and all their ticks and prices."""
+    """Remove a market, its related contracts, and all their ticks, prices and moves."""
     for (mid,) in db.execute("SELECT id FROM markets WHERE id = ? OR lead_id = ?", (id, id)).fetchall():
         db.execute("DELETE FROM ticks WHERE market_id = ?", (mid,))
+        db.execute("DELETE FROM moves WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM prices WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM markets WHERE id = ?", (mid,))
 
@@ -127,11 +146,17 @@ def has_tick(db, market_id: str, dedupe_key: str) -> bool:
                       (market_id, dedupe_key)).fetchone() is not None
 
 
+def has_title(db, market_id: str, title_key: str, since: float) -> bool:
+    """Whether this market got an article with this headline, from any outlet or address, since a time."""
+    return db.execute("SELECT 1 FROM ticks WHERE market_id = ? AND title_key = ? AND ts >= ?",
+                      (market_id, title_key, since)).fetchone() is not None
+
+
 def add_tick(db, tick: dict) -> dict | None:
     """Store a tick; None if this market already has one with the same dedupe_key."""
-    cols = TICK_COLS + POST_COLS
+    cols = TICK_COLS + OPTIONAL_COLS
     cur = db.execute(f"INSERT OR IGNORE INTO ticks ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                     [tick[c] for c in TICK_COLS] + [tick.get(c) for c in POST_COLS])
+                     [tick[c] for c in TICK_COLS] + [tick.get(c) for c in OPTIONAL_COLS])
     if not cur.rowcount:
         return None
     return _tick(db.execute("SELECT * FROM ticks WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -171,7 +196,9 @@ def set_published(db, url: str, ts: float | None) -> list[dict]:
     """Record what reading an address found, on every tick that has it. Returns the shown ticks that gained a time."""
     gained = [] if ts is None else [r["id"] for r in db.execute(
         "SELECT id FROM ticks WHERE url = ? AND published_ts IS NULL AND hidden = 0", (url,))]
-    db.execute("UPDATE ticks SET published_ts = COALESCE(published_ts, ?), date_checked = 1 WHERE url = ?", (ts, url))
+    # a page more than a day older than the moment it was found is history, not a live tick
+    db.execute("UPDATE ticks SET published_ts = COALESCE(published_ts, ?), date_checked = 1,"
+               " backfill = backfill OR COALESCE(COALESCE(published_ts, ?) < ts - 86400, 0) WHERE url = ?", (ts, ts, url))
     return [_tick(db.execute("SELECT * FROM ticks WHERE id = ?", (id,)).fetchone()) for id in gained]
 
 
@@ -200,3 +227,37 @@ def headlines(db, market_id: str, limit: int = 20) -> list[str]:
 def count_shown(db, market_id: str, since: float) -> int:
     return db.execute("SELECT COUNT(*) FROM ticks WHERE market_id = ? AND hidden = 0 AND ts >= ?",
                       (market_id, since)).fetchone()[0]
+
+
+def around(db, market_id: str, since: float, until: float, limit: int) -> list[dict]:
+    """A market's shown, live ticks from the web published in a stretch of time (found, where the publish
+    time is unknown), newest first: what could explain a price move at its end."""
+    return [_tick(r) for r in db.execute(
+        "SELECT * FROM ticks WHERE market_id = ? AND hidden = 0 AND test = 0 AND backfill = 0"
+        " AND COALESCE(published_ts, ts) BETWEEN ? AND ? ORDER BY COALESCE(published_ts, ts) DESC, id DESC LIMIT ?",
+        (market_id, since, until, limit))]
+
+
+def add_move(db, market_id: str, ts: float, since: float, from_price: float, to_price: float,
+             tick_id: int | None, confidence: float | None, rule: str | None) -> dict:
+    """A price move and the tick named as its cause, if any."""
+    cur = db.execute("INSERT INTO moves (market_id, ts, since_ts, from_price, to_price, tick_id, confidence, rule)"
+                     " VALUES (?,?,?,?,?,?,?,?)", (market_id, ts, since, from_price, to_price, tick_id, confidence, rule))
+    return next(m for m in moves(db, market_id, limit=1000) if m["id"] == cur.lastrowid)
+
+
+def moves(db, market_id: str, limit: int = 20) -> list[dict]:
+    """A market's price moves, newest first, each with the tick named as its cause (or None)."""
+    out = []
+    for r in db.execute('SELECT id, market_id, ts, since_ts AS since, from_price AS "from", to_price AS "to", tick_id,'
+                        " confidence, rule FROM moves WHERE market_id = ? ORDER BY ts DESC, id DESC LIMIT ?",
+                        (market_id, limit)).fetchall():
+        cause = db.execute("SELECT * FROM ticks WHERE id = ?", (r["tick_id"],)).fetchone()
+        out.append({**{k: r[k] for k in r.keys() if k != "tick_id"}, "rule": r["rule"] and json.loads(r["rule"]),
+                    "cause": cause and _tick(cause)})
+    return out
+
+
+def last_move(db, market_id: str) -> float | None:
+    """When this market's newest move was recorded."""
+    return db.execute("SELECT MAX(ts) FROM moves WHERE market_id = ?", (market_id,)).fetchone()[0]

@@ -231,6 +231,30 @@ async def search(query: str, *, freshness: str | None = "last_24_hours", include
     return parse_search(await _call("/web/search", body, wait=True, reserve=reserve))  # searches queue for capacity
 
 
+def parse_news(response: dict) -> list[dict]:
+    """Articles of the news index, shaped like search results plus the time each was published."""
+    out = []
+    for a in response.get("data") or []:
+        if a.get("title") and str(a.get("url") or "").startswith(("https://", "http://")):
+            published = _published({"publishedTime": a.get("published_at")})
+            out.append({"url": a["url"], "title": a["title"], "description": a.get("description") or "", "text": "",
+                        # some publishers' clocks run an hour ahead: nothing was published after now
+                        "published": published and min(published, time.time())})
+    return out
+
+
+async def news(company: str, *, since: float, limit: int = 25, reserve: int = 0) -> list[dict]:
+    """The newest articles about a company since a time, newest first (one request, 3 credits).
+
+    Measured on 14 Nov: for Nvidia the newest was 5 minutes old and all 25 under 90 minutes, where the web
+    search returns pages from anywhere in the last day. The index knows companies only: for people, countries
+    and public bodies it was weeks behind.
+    """
+    body = {"searchBy": {"type": "entity", "entity": {"type": "name", "name": company}}, "limit": limit,
+            "filterBy": {"articleLanguage": ["en"], "date": {"from": int(since * 1000)}}}
+    return parse_news(await _call("/news/search", body, wait=True, reserve=reserve))
+
+
 async def scrape(url: str) -> tuple[str, float | None]:
     """Text and publish time of a page, or nothing when there is no spare capacity: searches come first."""
     data = await _call("/web/scrape", {"url": url, "formats": {"markdown": True},

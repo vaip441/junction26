@@ -114,6 +114,14 @@ A microphone sentence, a typed headline, an article and a page change are all ti
 and differ only in their `kind`. This is what makes the demo opener cheap: it is the
 real pipeline with a different source.
 
+One thing runs the other way, from the price back to the web ("why did it move?"). When a
+real market's price is 3 points or more away from where it was within the last 10 minutes,
+the terminal searches for that market at once, outside its polling interval, and asks
+Decision 1 which of the items published from 30 minutes before the move began is its most
+likely cause, with "none of these" as a choice. The move is stored with that tick, how
+likely it is, and the sentence of the rules it touches; a move nothing explains is stored
+without a cause. Measured on 14 Nov, the tracked markets made about ten such moves a day.
+
 ### Sources
 
 | Job | Source |
@@ -297,8 +305,8 @@ read, so it starts at a fixed 20%.
 
 ### Storage
 
-One SQLite file with three tables: markets (related contracts are rows pointing at
-their lead market), ticks, prices. Every market and related contract has its price
+One SQLite file with four tables: markets (related contracts are rows pointing at
+their lead market), ticks, prices, moves. Every market and related contract has its price
 sampled at least once a minute from the venue APIs, which cost no Context.dev credits.
 
 The weekend record is a query, not stored state, so its rule can still change on
@@ -336,12 +344,15 @@ JSON over HTTP, open CORS. Reads need nothing; the two `POST` routes need the he
   status `deleted`.
 - `GET /markets/{id}/ticks?limit=` and `GET /markets/{id}/prices?since=`: history for
   first paint.
+- `GET /markets/{id}/moves?limit=`: the market's price jumps, newest first, each with
+  its likely cause (see "A move" below).
 - `POST /markets/{id}/ticks` `{ "text": "...", "kind": "mic" | "typed" }`: a spoken or
   typed tick. Always stored with `test: true`.
 - `GET /record`: the weekend record numbers.
 - `GET /status`: Context.dev capacity per key (use, resting time, credits left).
 - `GET /stream`: server-sent events. Event types: `tick`, `tick_update`, `price`,
-  `market`, `page_check`. A `tick_update` is a whole tick again, sent when its
+  `move`, `market`, `page_check`. A `move` event is a move as below, sent once, some
+  seconds after the price sample that showed it (the web is searched first). A `tick_update` is a whole tick again, sent when its
   `published_ts` arrives about a minute or two after the tick: replace the tick with
   the same `id`. One connection carries all markets; each event has a `market_id`.
   A `market` event is `{ "market_id", "status" }`. While plain words are being worked
@@ -356,12 +367,20 @@ A tick:
       "source", "url", "headline",
       "up", "none", "down", "strength", "verdict": "up|none|down", "confidence",
       "price_at", "test": false, "backfill": false,
-      "likes": 2126, "replies": 113 }
+      "likes": 2126, "replies": 113,
+      "rule": { "start": 412, "end": 598, "text": "If it becomes impossible ...", "confidence": 0.89 } }
 
 `ts` is when we detected the tick and `price_at` is the price at that moment,
 as a percentage from 0 to 100, like every other price in the interface.
-A `post` is from X or Reddit; its `source` names who posted, as `x.com/<handle>` or
-`reddit.com/r/<subreddit>`, and its `headline` is the post's text.
+A `post` is from X, Reddit or Truth Social; its `source` names who posted, as `x.com/<handle>`,
+`reddit.com/r/<subreddit>` or `truthsocial.com/@realDonaldTrump`, and its `headline` is the post's text.
+Trump's posts come from the team's own scraper (`trump-social-scraper/`) within about 20 seconds of
+being made, and are scored for every market whose search queries share a word with the post.
+`rule` is the sentence of the market's rules that makes this tick matter, chosen by Decision 1 from
+the sentences of the rules text: `start` and `end` are character positions in the market's `rules`
+(from `GET /markets/{id}`), so it can be highlighted in place, and `text` is that exact stretch. It is
+set on spoken and typed ticks and on ticks that call a move, and null otherwise or when no sentence
+stands out.
 `likes` and `replies` are the post's counts on X when it was found, and null for everything else
 (Reddit gives no vote counts without a login). Replies, posts that are only a link, posts on X past
 their first hour with under 20 likes, and Reddit's recurring threads and removed posts are never shown.
@@ -370,6 +389,19 @@ time and fall back to `ts`. X posts have it at once, and so do Reddit posts read
 subreddit's feed; news articles get it at once or within a couple of minutes; Reddit posts found
 by search and pages that state no time never do. Instant-fill ticks carry
 `backfill: true` and are drawn on the chart at `published_ts`.
+
+A move:
+
+    { "id", "market_id", "ts", "since", "from": 23.5, "to": 20.0,
+      "cause": { ...a tick... } | null, "confidence": 0.65 | null,
+      "rule": { "start", "end", "text", "confidence" } | null }
+
+The price went from `from` at `since` to `to` at `ts`. `cause` is the tick Decision 1 names
+as the most likely reason, a whole tick as above (it is also on the tape, or arrives as a
+`tick` event just before the `move`), and `confidence` is how likely. Both are null when
+nothing published around the move explains it. `rule` is the sentence of the rules the
+cause touches, in the same form as on a tick. Only real markets have moves: a made-up
+market's price moves by its own ticks.
 
 The frontend owns speech-to-text (microphone to sentences), the spoken call-out of
 each verdict, and all layout. The concept mockup is at
