@@ -122,6 +122,14 @@ interface State {
   endReplay: (finished?: boolean) => void
 }
 
+/**
+ * A question that failed stays over the market so its error can be read, but going anywhere else means it
+ * has been read: it must not sit over the chart of the market that was just picked.
+ */
+function dismissed(s: State): Partial<State> {
+  return s.ask?.error ? { ask: null, meter: null } : {}
+}
+
 export const useStore = create<State>((set) => ({
   markets: {},
   order: [],
@@ -164,9 +172,9 @@ export const useStore = create<State>((set) => ({
   clearLiveMove: () => set({ liveMove: null }),
   setTab: (tab) => set({ tab }),
   openTab: (tab) => set({ tab, view: 'details' }),
-  setView: (view) => set({ view }),
+  setView: (view) => set((s) => ({ view, ...dismissed(s) })),
   showRule: (rule) => set((s) => ({ tab: 'rules', view: 'details', focusRule: { start: rule.start, end: rule.end, n: (s.focusRule?.n ?? 0) + 1 } })),
-  select: (id) => set({ selectedId: id, view: 'live' }), // a picked market is opened
+  select: (id) => set((s) => ({ selectedId: id, view: 'live', ...dismissed(s) })), // a picked market is opened
   setStream: (stream) => set({ stream }),
   startAsk: (query) =>
     set({

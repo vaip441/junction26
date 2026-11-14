@@ -14,8 +14,12 @@ export function useHotkeys(): void {
       const typing = target instanceof Element ? target.closest('input, textarea, [contenteditable="true"]') : null
       if (e.key === 'Escape') {
         const s = useStore.getState()
-        if (typing) (target as HTMLElement).blur()
-        else if (s.recordOpen) s.toggleRecord(false)
+        if (typing) {
+          ;(target as HTMLElement).blur()
+          // a failed question puts the cursor back in the field to be fixed: leaving the field closes it too,
+          // or it took two presses, the first of which showed nothing
+          if (s.ask?.error) s.clearAsk()
+        } else if (s.recordOpen) s.toggleRecord(false)
         else if (s.ask) s.clearAsk()
         return
       }
