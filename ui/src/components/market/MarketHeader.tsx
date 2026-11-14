@@ -45,7 +45,7 @@ function BothVenues({ consensus }: { consensus: Consensus }) {
 /** The demo market is the one the backend never lets go of. */
 export const DEMO_ID = 'mu-demo'
 
-/** Stop tracking this market. Two clicks, so a stray one on stage does nothing. */
+/** Stop tracking this market. Two clicks, so a stray one on stage does nothing. It sits at the end of the tabs, or at the foot of the details on a narrow screen. */
 export function Remove({ marketId }: { marketId: string }) {
   const [note, setNote] = useState<string | null>(null)
   if (marketId === DEMO_ID) return null
@@ -127,7 +127,6 @@ export function MarketHeader({ market, compact = false }: { market: MarketSummar
         <div className="flex min-h-7 items-center gap-3">
           <Venue market={market} />
           {market.replay && <Badge>Replay</Badge>}
-          {!market.replay && <Remove key={market.id} marketId={market.id} />}
         </div>
         <h1 className="text-balance text-[1.6rem] font-semibold leading-[1.15] tracking-[-0.015em] text-text">{market.title}</h1>
       </div>

@@ -170,6 +170,37 @@ function Readout({ chart, series, data, range, shown }: { chart: IChartApi; seri
   )
 }
 
+/**
+ * What the marks on the line are, for someone reading the chart without a guide: only the marks this chart
+ * can have. A made-up market has calls and nothing else; a real one also has its price jumps and the dashed
+ * lines from a call to where the price caught up with it.
+ */
+function Legend({ jumps, leads }: { jumps: boolean; leads: boolean }) {
+  const item = 'flex items-center gap-1.5 whitespace-nowrap'
+  return (
+    <p className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-0.5 text-[11px] leading-4 text-muted" aria-label="What the marks on the chart mean">
+      <span className={item}>
+        <i className="h-2 w-2 rounded-full bg-up" /> called up
+      </span>
+      <span className={item}>
+        <i className="h-2 w-2 rounded-full bg-down" /> called down
+      </span>
+      {/* only where there is width to spare: on a narrower chart it would cost the plot a second line */}
+      <span className={`${item} max-2xl:hidden`}>a bigger dot is a stronger call</span>
+      {jumps && (
+        <span className={item}>
+          <i className="flex h-3 w-3 items-center justify-center rounded-full border border-muted text-[8px] font-semibold not-italic leading-none">?</i> price jump, explained
+        </span>
+      )}
+      {leads && (
+        <span className={item}>
+          <i className="w-4 border-t border-dashed border-muted" /> call ahead of the price
+        </span>
+      )}
+    </p>
+  )
+}
+
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
@@ -560,9 +591,17 @@ export function PriceChart({ marketId }: { marketId: string }) {
         : null
 
   const life = tick ? tickLifecycle(tick, prices, Boolean(market?.made_up), now) : null
+  // which marks this chart has, for its legend: a call drawn as a dot, a jump as a band, a lead as a dashed line
+  const madeUp = Boolean(market?.made_up)
+  const hasCalls = data.length > 0 && (ticks ?? []).some((t) => t.verdict !== 'none' && !(t.backfill && t.published_ts == null))
+  const hasJumps = (moves ?? []).some((m) => !m.asked)
+  const hasLeads = useMemo(
+    () => !madeUp && (ticks ?? []).slice(0, MAX_MARKERS).some((t) => t.price_at != null && tickLifecycle(t, prices, false, now)?.leadSeconds != null),
+    [madeUp, ticks, prices, now],
+  )
 
   return (
-    <div className="flex h-full min-h-56 flex-col gap-2">
+    <div className="flex h-full min-h-40 flex-col gap-2">
       {/* the controls and the readout sit over the plot, not on it: nothing covers the line */}
       {!empty && data.length > 1 && (
         <div className="flex min-h-6 shrink-0 flex-wrap items-center gap-x-3 gap-y-1">
@@ -578,7 +617,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
                   title={available ? undefined : 'The price history is shorter than this'}
                   onClick={() => pickRange(r.id)}
                   // under a finger the buttons are taller and wider; under a mouse they stay as small as the readout beside them
-                  className={`num rounded-xs px-1.5 py-0.5 text-xs font-semibold transition-colors [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1.5 ${
+                  className={`num rounded-xs px-1.5 py-0.5 text-xs font-semibold transition-colors [@media(pointer:coarse)]:px-3 [@media(pointer:coarse)]:py-2.5 ${
                     shown === r.id
                       ? 'bg-text text-bg'
                       : available
@@ -678,6 +717,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
         </div>
       )}
       </div>
+      {!empty && hasCalls && <Legend jumps={hasJumps} leads={hasLeads} />}
     </div>
   )
 }

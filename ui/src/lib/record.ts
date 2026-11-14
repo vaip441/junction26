@@ -21,6 +21,6 @@ export function recordFigures(r: WeekendRecord): RecordFigures {
     noMove: r.called - r.moved,
     hitRate: r.moved > 0 ? (r.same_way / r.moved) * 100 : null,
     windowMinutes: Math.round(r.window_seconds / 60),
-    since: r.since ? new Date(r.since * 1000).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit' }) : '—',
+    since: r.since ? new Date(r.since * 1000).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }) : '—',
   }
 }

@@ -44,15 +44,19 @@ type Shown = ReturnType<typeof useSelectedMarket> & {
   silent: boolean
 }
 
-/** What sits over the chart: the banner of a move just explained, a replay's result, the search strip, the prompt to talk. */
-function OverChart({ id, market, silent }: Pick<Shown, 'silent'> & { id: string; market: NonNullable<Shown['market']> }) {
+/**
+ * What sits over the chart: the banner of a move just explained, a replay's result, the search strip, the
+ * prompt to talk. `low`: the prompt sits at the foot of the chart, just above the microphone and the box to
+ * type in, instead of in the middle of it, half a screen away from the thing it asks for.
+ */
+function OverChart({ id, market, silent, low = false }: Pick<Shown, 'silent'> & { id: string; market: NonNullable<Shown['market']>; low?: boolean }) {
   return (
     <>
       {!market.made_up && <MoveBanner marketId={id} />}
       {market.replay && <ReplayResult market={market} replay={market.replay} />}
       <AskStrip marketId={id} />
       {silent && (
-        <div className="absolute inset-0 z-10 flex items-center justify-center bg-panel p-6">
+        <div className={`absolute inset-0 z-10 flex justify-center overflow-hidden bg-panel p-6 ${low ? 'items-end pb-8' : 'items-center'}`}>
           <JudgePrompt />
         </div>
       )}
@@ -64,8 +68,9 @@ function OverChart({ id, market, silent }: Pick<Shown, 'silent'> & { id: string;
 function Columns({ id, market, detail, ticks, prices, asking, pending, silent }: Shown) {
   return (
     // the middle column may shrink below what it holds: left at `1fr`, a window under about 1220px wide kept
-    // it at its full width and pushed half of the tape off the right edge of the screen
-    <main className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_380px] gap-px bg-line">
+    // it at its full width and pushed half of the tape off the right edge of the screen. The tape, which is
+    // all text, takes its share of a wide screen instead of leaving every extra pixel to the chart.
+    <main className="grid min-h-0 flex-1 grid-cols-[260px_minmax(0,1fr)_clamp(380px,27vw,520px)] gap-px bg-line">
       <div className="flex min-h-0 flex-col bg-panel">
         <Panel title="Markets" className="min-h-0 flex-1">
           <MarketList />
@@ -79,12 +84,19 @@ function Columns({ id, market, detail, ticks, prices, asking, pending, silent }:
           <>
             <MarketHeader market={market} />
             {market.replay && <ReplayBar key={id} market={market} replay={market.replay} />}
-            <div className="relative min-h-64 flex-1 p-4">
+            <div className="relative min-h-48 flex-1 p-4">
               <PriceChart marketId={id} />
-              <OverChart id={id} market={market} silent={silent} />
+              <OverChart id={id} market={market} silent={silent} low />
             </div>
-            <MarketTabs marketId={id} madeUp={market.made_up || Boolean(market.replay)} detail={detail} />
+            {/* right under the chart they move, and under the prompt that asks for them */}
             {market.made_up && <SpeakBar marketId={id} />}
+            <MarketTabs
+              marketId={id}
+              madeUp={market.made_up || Boolean(market.replay)}
+              detail={detail}
+              // out of the header, where it stood beside the venue as the first thing to press
+              trailing={!market.replay && id !== DEMO_ID ? <Remove key={id} marketId={id} /> : undefined}
+            />
           </>
         ) : (
           <EmptyState title="Pick a market">Or paste a link or ask a question in the bar above.</EmptyState>

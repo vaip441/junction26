@@ -5,9 +5,9 @@ import { touchOnly } from '../../lib/device'
 import { useStore } from '../../state/store'
 
 const LABEL: Record<MicState, string> = {
-  off: 'Press Space to turn the mic on',
+  off: 'Press Space, then talk: each sentence is scored',
   starting: 'Starting the mic…',
-  listening: 'Listening',
+  listening: 'Listening: each sentence is scored',
   unsupported: 'No microphone to use here: type below',
   denied: 'Mic blocked: allow it in the address bar, or type below',
 }
@@ -59,7 +59,7 @@ export function MicBar({ marketId }: { marketId: string }) {
           ) : writing ? (
             <span className="italic text-text">Writing down what was said…</span>
           ) : state === 'off' && touchOnly() ? (
-            'Tap to turn the mic on' // no Space key under a finger
+            'Tap, then talk: each sentence is scored' // no Space key under a finger
           ) : (
             LABEL[state]
           )}

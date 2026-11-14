@@ -28,7 +28,7 @@ function Watched({ page }: { page: WatchedPage }) {
 }
 
 /** Where this market's ticks came from, found by the terminal itself: items per source and how many were calls. */
-export function SourcesPanel({ sources, pages = [] }: { sources: Source[]; pages?: WatchedPage[] }) {
+export function SourcesPanel({ sources, pages = [], searched = true }: { sources: Source[]; pages?: WatchedPage[]; searched?: boolean }) {
   const top = Math.max(1, ...sources.map((s) => s.ticks))
   return (
     <div className="flex flex-col">
@@ -36,7 +36,12 @@ export function SourcesPanel({ sources, pages = [] }: { sources: Source[]; pages
         <Watched key={p.url} page={p} />
       ))}
       {sources.length === 0 ? (
-        <EmptyState title="No sources yet">The terminal is still searching the web for this market.</EmptyState>
+        searched ? (
+          <EmptyState title="No sources yet">The terminal is still searching the web for this market.</EmptyState>
+        ) : (
+          // the demo market: nothing is searched for it, and "still searching" would never come true
+          <EmptyState title="No sources">The web is not searched for this market: it moves only by what is said to it.</EmptyState>
+        )
       ) : (
         <ul className="flex flex-col gap-1.5 p-3">
           {sources.map((s) => (

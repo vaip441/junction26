@@ -16,8 +16,12 @@ export function JudgePrompt() {
   }, [])
   return (
     <div className="pointer-events-none flex flex-col items-center gap-2 text-center">
-      <p className="text-2xl font-semibold text-text/80">Say something about it. The market is listening.</p>
-      <p key={i} className="fade-in text-sm text-muted">
+      {/* sized to the window on a wide screen, to be read from across a room; never so large that a narrow
+          middle column needs more lines than the chart has room for */}
+      <p className="text-balance text-2xl font-semibold text-text/80 lg:text-[clamp(1.5rem,2.2vw,2.25rem)] lg:leading-tight lg:tracking-[-0.015em]">
+        Say something about it. The market is listening.
+      </p>
+      <p key={i} className="fade-in text-sm text-muted lg:text-[clamp(0.875rem,1.1vw,1.125rem)]">
         {EXAMPLES[i]}
       </p>
     </div>

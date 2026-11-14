@@ -120,7 +120,7 @@ export function AskBar() {
       ) : (
         !heard && (
           <span className="hidden shrink-0 text-xs text-faint group-focus-within:hidden md:inline" aria-hidden="true">
-            press /
+            Press /
           </span>
         )
       )}
@@ -134,7 +134,8 @@ export function AskBar() {
           className={`press btn flex h-7 shrink-0 items-center gap-2 px-2.5! ${listening ? 'border-text! text-text!' : ''}`}
         >
           <span className={`h-2 w-2 rounded-full ${listening && state === 'listening' ? 'animate-pulse bg-down' : listening ? 'bg-madeup' : 'bg-faint'}`} />
-          {listening ? 'Listening' : 'Speak'}
+          {/* "Speak" alone read the same as the microphone under a made-up market's chart, which scores what is said */}
+          {listening ? 'Listening' : narrow ? 'Speak' : 'Ask by voice'}
         </button>
       )}
     </form>

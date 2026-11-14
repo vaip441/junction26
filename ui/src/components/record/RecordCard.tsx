@@ -39,7 +39,7 @@ export function RecordCard({ compact = false }: { compact?: boolean }) {
     >
       <span className="label flex items-center justify-between">
         Weekend record
-        <span className="font-normal text-faint">press R</span>
+        <span className="font-normal text-faint">Press R</span>
       </span>
       <span className="flex items-baseline justify-between gap-2">
         <span className="board text-5xl text-text">{f.hitRate == null ? '—' : `${Math.round(f.hitRate)}%`}</span>
