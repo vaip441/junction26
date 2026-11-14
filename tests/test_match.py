@@ -181,3 +181,31 @@ def test_one_search_failing_still_leaves_the_other():
     assert [g[0]["slug"] for g in run(search=web, venue_search=venue_search(RuntimeError("down")))] == ["a"]
     with pytest.raises(match.SearchFailed):
         run(search=down, venue_search=venue_search(RuntimeError("down")))
+
+
+def test_kalshis_own_search_finds_a_market_the_web_search_missed():
+    async def search(query, **kw):  # the web search knows only this year's award, which is closed
+        return [{"url": "https://kalshi.com/markets/kxballondor/ballon-dor/kxballondor-26", "title": "t", "description": ""}]
+
+    groups = asyncio.run(match.candidates(
+        "super ballon d'or winner", search=search, resolve=resolve_all, venue_search=venue_search(["pm-a"]),
+        kalshi_search=venue_search(["https://kalshi.com/markets/kxsuperballondor/e/kxsuperballondor-30",
+                                    "https://kalshi.com/markets/kxballondor/e/kxballondor-26", "https://kalshi.com/markets/kx/e/kx-3",
+                                    "https://kalshi.com/markets/kx/e/kx-4"])))
+    # Polymarket's top three, Kalshi's top three, then the web results, each event once
+    assert [g[0]["slug"] for g in groups] == ["pm-a", "kxsuperballondor-30", "kxballondor-26", "kx-3"]
+
+
+def test_kalshis_own_search_failing_leaves_the_others_and_it_alone_is_enough():
+    async def down(query, **kw):
+        raise ContextError("down")
+
+    async def web(query, **kw):
+        return [{"url": "https://polymarket.com/event/a", "title": "t", "description": ""}]
+
+    failed = venue_search(RuntimeError("down"))
+    run = lambda **kw: asyncio.run(match.candidates("x", resolve=resolve_all, **kw))
+    assert [g[0]["slug"] for g in run(search=web, venue_search=venue_search([]), kalshi_search=failed)] == ["a"]
+    assert [g[0]["slug"] for g in run(search=down, venue_search=failed,
+                                      kalshi_search=venue_search(["https://kalshi.com/markets/kx/e/kx-1"]))] == ["kx-1"]
+

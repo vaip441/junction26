@@ -22,6 +22,7 @@ def no_post_lookups_over_the_network(monkeypatch):
 
     monkeypatch.setattr(polymarket, "history", lambda token: [])
     monkeypatch.setattr(kalshi, "history", lambda ticker: [])
+    monkeypatch.setattr(kalshi, "search", lambda words: [])  # asked on every question in plain words
     monkeypatch.setattr(googlenews, "_get", google)
     monkeypatch.setattr(watch, "ask_json", ask_json)
     monkeypatch.setattr(posts, "x_post", x_post)

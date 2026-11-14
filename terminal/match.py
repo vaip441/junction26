@@ -1,6 +1,6 @@
 """Plain words -> the Kalshi or Polymarket market that asks the same thing, if there is one.
 
-Context.dev search restricted to the two venues, and Polymarket's own search, find market pages from
+Context.dev search restricted to the two venues, and each venue's own search, find market pages from
 the raw words; each is resolved through the venue (web search also returns closed and last-year pages)
 and Decision 1 picks.
 """
@@ -13,7 +13,7 @@ from terminal.venues import kalshi, polymarket
 
 VENUE_SITES = ["polymarket.com", "kalshi.com"]
 log = logging.getLogger(__name__)
-MAX_EVENTS, OWN_RESULTS = 8, 3  # events weighed in all; how many of them may come from Polymarket's own search
+MAX_EVENTS, OWN_RESULTS = 11, 3  # events weighed in all; how many of them may come from each venue's own search
 SHOWN, MAX_CONTRACTS = 6, 30  # contracts named when describing an event; contracts offered when choosing one
 SEARCH_SECONDS = 10  # a person is waiting: a search that is queued or slow is given up on, not waited out
 
@@ -38,24 +38,28 @@ def market_links(results: list[dict]) -> list[str]:
     return list(_links(results).values())[:MAX_EVENTS]
 
 
-async def candidates(words: str, *, search=None, resolve=None, venue_search=None) -> list[list[dict]]:
+async def candidates(words: str, *, search=None, resolve=None, venue_search=None,
+                     kalshi_search=None) -> list[list[dict]]:
     """One list of open contracts per event found, most undecided contract first.
 
-    Two searches side by side: Polymarket's own (it knows markets listed today) and the web search
-    restricted to both venues (it also finds Kalshi). SearchFailed only when both fail.
+    Three searches side by side: each venue's own (it knows markets listed today, and the small ones a
+    web search engine passes over) and the web search restricted to both venues, which reads a question
+    in whole sentences best. SearchFailed only when the web and Polymarket both fail and Kalshi finds nothing.
     """
-    web, own = await asyncio.gather(
+    web, own, kal = await asyncio.gather(
         asyncio.wait_for((search or contextdev.search)(words, freshness=None, include_domains=VENUE_SITES,
                                                        num_results=10), SEARCH_SECONDS),
         asyncio.wait_for(asyncio.to_thread(venue_search or polymarket.search, words), SEARCH_SECONDS),
+        asyncio.wait_for(asyncio.to_thread(kalshi_search or kalshi.search, words), SEARCH_SECONDS),
         return_exceptions=True)
-    for name, found in (("web", web), ("Polymarket", own)):
+    for name, found in (("web", web), ("Polymarket", own), ("Kalshi", kal)):
         if isinstance(found, BaseException):
             log.warning("%s search failed for %r: %s: %s", name, words[:60], type(found).__name__, found)
-    if isinstance(web, BaseException) and isinstance(own, BaseException):
-        raise SearchFailed(str(web))
     links = {} if isinstance(own, BaseException) else {
         "pm:" + slug: f"https://polymarket.com/event/{slug}" for slug in own[:OWN_RESULTS]}
+    links.update(_links([{"url": link} for link in ([] if isinstance(kal, BaseException) else kal[:OWN_RESULTS])]))
+    if not links and isinstance(web, BaseException) and isinstance(own, BaseException):
+        raise SearchFailed(str(web))
     for key, link in ({} if isinstance(web, BaseException) else _links(web)).items():
         links.setdefault(key, link)
     found = await asyncio.gather(*((resolve or venues.resolve)(link) for link in list(links.values())[:MAX_EVENTS]),

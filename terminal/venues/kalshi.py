@@ -10,6 +10,7 @@ import urllib.request
 from terminal.venues.errors import MarketNotFound
 
 BASE = "https://api.elections.kalshi.com/trade-api/v2"
+SEARCH = "https://api.elections.kalshi.com/v1/search/series"  # the search box on kalshi.com: v2 has no search by words
 RATE = 12  # req/s; public limit is ~20/s and 429 backoff collapses throughput, so stay well under
 TICKER = re.compile(r"^[A-Za-z0-9._-]{1,80}$")
 _lock = threading.Lock()
@@ -18,7 +19,7 @@ _next = [0.0]
 
 def get(path, **params):
     q = urllib.parse.urlencode({k: v for k, v in params.items() if v not in (None, "")}, doseq=True)
-    url = f"{BASE}{path}" + (f"?{q}" if q else "")
+    url = (path if path.startswith("https://") else f"{BASE}{path}") + (f"?{q}" if q else "")
     for attempt in range(4):
         with _lock:
             t = max(time.monotonic(), _next[0])
@@ -54,6 +55,17 @@ def parse_link(url: str) -> str | None:
     """The ticker at the end of a kalshi.com/markets/... address, upper-cased."""
     link = canonical(url)
     return link and link.rsplit("/", 1)[1].upper()
+
+
+def search(words: str, limit: int = 10) -> list[str]:
+    """Pages of open events matching plain words, best first: Kalshi's own search. A web search engine
+    often knows only the busiest market on a subject ("Ballon d'Or", not "Super Ballon d'Or")."""
+    # shortcut: an undocumented endpoint, so an answer in another shape finds nothing; the web search still runs
+    found = (get(SEARCH, query=words[:200], page_size=limit) or {}).get("current_page") or []
+    pairs = [(str(e.get("series_ticker") or ""), str(e.get("event_ticker") or ""))
+             for e in found if isinstance(e, dict) and e.get("active_market_count")]
+    return [f"https://kalshi.com/markets/{series.lower()}/e/{event.lower()}"
+            for series, event in pairs if TICKER.match(series) and TICKER.match(event)]
 
 
 def price(m: dict) -> float | None:

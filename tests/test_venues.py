@@ -202,3 +202,25 @@ def test_kalshi_history_reads_each_hour_like_a_live_price():
     # a real two-sided quote gives its midpoint; without one, the last trade; with neither, the hour is left out
     assert kalshi.parse_history({"candlesticks": [one_sided, nothing, quote, {"price": {}}]}) == [(100.0, 42.0), (200.0, 99.0)]
     assert kalshi.parse_history(None) == []
+
+
+from terminal.venues.kalshi import search as kalshi_search  # the real one: conftest swaps kalshi.search out
+
+
+def test_kalshi_search_returns_open_event_pages_in_rank_order(monkeypatch):
+    def get(path, **params):
+        assert (path, params) == (kalshi.SEARCH, {"query": "super ballon d'or winner", "page_size": 10})
+        return {"current_page": [
+            {"series_ticker": "KXBALLONDOR", "event_ticker": "KXBALLONDOR-27", "active_market_count": 80},
+            {"series_ticker": "KXBALLONDOR", "event_ticker": "KXBALLONDOR-26", "active_market_count": 0},  # closed
+            {"series_ticker": "KXSUPERBALLONDOR", "event_ticker": "KXSUPERBALLONDOR-30", "active_market_count": 1},
+            {"series_ticker": "KX/odd", "event_ticker": "x y", "active_market_count": 3},
+            {"event_ticker": "KXNOSERIES-1", "active_market_count": 1}]}
+
+    monkeypatch.setattr(kalshi, "get", get)
+    assert kalshi_search("super ballon d'or winner") == [
+        "https://kalshi.com/markets/kxballondor/e/kxballondor-27",
+        "https://kalshi.com/markets/kxsuperballondor/e/kxsuperballondor-30"]
+    monkeypatch.setattr(kalshi, "get", lambda path, **params: {})
+    assert kalshi_search("nothing like it") == []
+
