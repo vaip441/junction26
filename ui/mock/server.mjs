@@ -414,6 +414,9 @@ function fakeScore(text) {
   return { verdict: 'none', strength: 0, confidence: rand(0.5, 0.8) }
 }
 
+// What the mock "hears" in a recording.
+const HEARD = ['Okay, that is clever.', 'I think they could win this.', 'Is this not just another dashboard?', 'The price really moves when I talk.']
+
 async function postTick(m, body) {
   const text = String(body.text ?? '').trim()
   if (!text) return [422, { detail: 'say something first' }]
@@ -549,6 +552,12 @@ async function route(req, url) {
 
   if (req.method === 'GET' && url.pathname === '/markets') return [200, [...markets.values()].filter((m) => m.lead_id == null).map(summary)]
   if (req.method === 'POST' && url.pathname === '/markets') return postMarket(await readBody(req))
+  if (req.method === 'POST' && url.pathname === '/transcribe') {
+    // speech to text: the recording is not listened to, a made-up sentence comes back after a moment
+    await readBody(req)
+    await sleep(rand(500, 1200))
+    return [200, { text: pick(HEARD) }]
+  }
   if (req.method === 'GET' && url.pathname === '/record') {
     return [200, { called: 142, moved: 97, same_way: 71, window_seconds: WINDOW, since: startedAt - 2 * 86400 }]
   }
