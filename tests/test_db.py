@@ -117,3 +117,16 @@ def test_deleting_a_market_takes_its_contracts_ticks_and_prices_with_it():
     delete_market(db, "m")
     assert get_market(db, "m") is None and get_market(db, "rel") is None and get_market(db, "other") is not None
     assert ticks(db, "m") == [] and prices(db, "rel") == [] and len(ticks(db, "other")) == 1
+
+
+def test_a_markets_subreddits_are_those_whose_posts_were_shown_most():
+    from terminal.db import subreddits
+
+    db = connect(":memory:")
+    market(db)
+    for i, (source, hidden) in enumerate([("reddit.com/r/nvidia", False), ("reddit.com/r/nvidia", False),
+                                          ("reddit.com/r/hardware", False), ("reddit.com/r/asksg", True),
+                                          ("x.com/someone", False)]):
+        add_tick(db, tick(key=str(i), kind="post", source=source, hidden=hidden))
+    add_tick(db, tick("n", key="z", kind="post", source="reddit.com/r/elsewhere"))
+    assert subreddits(db, "m") == ["nvidia", "hardware"] and subreddits(db, "m", limit=1) == ["nvidia"]

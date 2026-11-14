@@ -5,9 +5,10 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from terminal import contextdev, madeup, venues, watch
+from terminal import contextdev, madeup, posts, venues, watch
 from terminal import db as store
 from terminal.pipeline import dedupe_key, ingest, public
+from terminal.scoring import Score
 
 log = logging.getLogger(__name__)
 
@@ -55,9 +56,11 @@ POST_SITES = ["x.com", "twitter.com", "reddit.com"]
 
 
 def post_source(url: str) -> str:
-    """Who posted: x.com/<handle> or reddit.com/r/<subreddit>."""
+    """Who posted, as far as the address says: x.com/<handle> or reddit.com/r/<subreddit>."""
     u = urlsplit(url)
     host, parts = u.netloc.lower().removeprefix("www."), [p for p in u.path.split("/") if p]
+    if parts[:1] == ["i"]:
+        parts = []  # x.com/i/status/<id> names no one
     return "/".join([host] + parts[:2 if host.endswith("reddit.com") else 1])
 
 
@@ -75,15 +78,21 @@ def posted_at(url: str) -> float | None:
 BACKGROUND_RESERVE = 2
 
 
+async def unscored(*_) -> Score:
+    """Trash is kept as a hidden no-effect tick without asking the model: stored, it is never looked at again."""
+    return Score(0.0, 1.0, 0.0, 0.0)
+
+
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
-                         search=None, scrape=None) -> int:
-    """Search every query of a market, plus X and Reddit once, and ingest results not seen before.
-    Returns how many ticks were stored.
+                         search=None, scrape=None, lookup=None, feed=None) -> int:
+    """Search every query of a market, plus X and Reddit once, read the newest posts of the subreddits
+    that were relevant to it before, and ingest what was not seen before. Returns how many ticks were stored.
 
     Every query runs on every pass: measured on 14 Nov, a market's four queries returned 25 to 28
     different results between them, so dropping or rotating them would lose coverage, not waste.
     """
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
+    lookup, feed = lookup or posts.x_post, feed or posts.subreddit_new
     queries, reserve = market["queries"], 0 if backfill else BACKGROUND_RESERVE
     searches = [("article", q, {"exclude_domains": NOT_NEWS}) for q in queries]
     searches.append(("post", queries[0], {"include_domains": POST_SITES}))  # posts: the first query only
@@ -105,13 +114,26 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     # a failed posts search alone does not fail the pass; one whose article searches all failed does
     if failed.count("article") == len(queries) > 0:
         raise FetchFailed(f"{len(failed)} of {len(searches)} searches failed for {market['id']}")
+    for sub in store.subreddits(db, market["id"]):
+        for r in await feed(sub):  # off-topic posts and recurring threads are passed over at no cost
+            if posts.reddit_trash(r["url"], r["title"]) or not posts.shares_words(f"{r['title']} {r['description']}", queries):
+                continue
+            key = dedupe_key("post", r["url"], r["title"], 0)
+            if key not in fresh and not store.has_tick(db, market["id"], key):
+                fresh[key] = ("post", r)
     limit = asyncio.Semaphore(10)
 
     async def one(kind: str, r: dict) -> bool:
         async with limit:
-            text, published, read = "", None, None
-            if kind == "post":
-                published = posted_at(r["url"])  # a post is its own text; Reddit pages carry no time
+            text, published, read, known, trash = "", None, None, None, False
+            source = post_source(r["url"]) if kind == "post" else urlsplit(r["url"]).netloc.lower().removeprefix("www.")
+            if kind == "post" and (published := posted_at(r["url"])):  # on X: the id holds the time
+                if known := await lookup(r["url"]):
+                    source, text = f"x.com/{known['handle']}", known["text"]
+                    trash = posts.x_trash(known, time.time() - published)
+            elif kind == "post":  # Reddit: a feed gives the time; a search result does not, nor does the page
+                published = r.get("published")
+                trash = source.split("/")[0].endswith("reddit.com") and posts.reddit_trash(r["url"], r["title"])
             elif (read := store.date_known(db, r["url"])) is not None:
                 published = read[0]  # this address was read before, under this or another market
             else:
@@ -120,11 +142,11 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                     read = (published,) if text or published else None  # else left for the batch fill
                 except Exception as e:
                     log.warning("scrape failed for %s: %s", r["url"], e)
-            source = post_source(r["url"]) if kind == "post" else urlsplit(r["url"]).netloc.lower().removeprefix("www.")
             try:
-                tick = await ingest(db, bus, scorer, market, kind=kind, source=source, headline=r["title"],
-                                    url=r["url"], body=(text or r.get("text") or r["description"])[:2000],
-                                    published_ts=published, backfill=backfill)
+                tick = await ingest(db, bus, unscored if trash else scorer, market, kind=kind, source=source,
+                                    headline=r["title"], url=r["url"],
+                                    body=(text or r.get("text") or r["description"])[:2000], published_ts=published,
+                                    backfill=backfill, likes=known and known["likes"], replies=known and known["replies"])
             except Exception:  # one odd page must not cost the market the rest of the batch
                 log.exception("could not ingest %s", r["url"])
                 return False

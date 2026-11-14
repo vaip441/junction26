@@ -32,7 +32,8 @@ function row(t) {
   // when it was published, where known; otherwise when the terminal found it
   const when = t.published_ts ? "published " + new Date(t.published_ts * 1000).toLocaleString()
                               : "found " + new Date(t.ts * 1000).toLocaleTimeString();
-  s.textContent = ` ${when} · ${t.source}${t.test ? " · test" : ""}${t.backfill ? " · backfill" : ""}`;
+  const reach = t.likes == null ? "" : ` · ${t.likes} likes, ${t.replies} replies`;
+  s.textContent = ` ${when} · ${t.source}${reach}${t.test ? " · test" : ""}${t.backfill ? " · backfill" : ""}`;
   li.append(b, s, document.createElement("br"), document.createTextNode(t.headline));
   return li;
 }

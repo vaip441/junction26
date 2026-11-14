@@ -355,15 +355,20 @@ A tick:
       "kind": "article|post|filing|page|mic|typed",
       "source", "url", "headline",
       "up", "none", "down", "strength", "verdict": "up|none|down", "confidence",
-      "price_at", "test": false, "backfill": false }
+      "price_at", "test": false, "backfill": false,
+      "likes": 2126, "replies": 113 }
 
 `ts` is when we detected the tick and `price_at` is the price at that moment,
 as a percentage from 0 to 100, like every other price in the interface.
 A `post` is from X or Reddit; its `source` names who posted, as `x.com/<handle>` or
 `reddit.com/r/<subreddit>`, and its `headline` is the post's text.
+`likes` and `replies` are the post's counts on X when it was found, and null for everything else
+(Reddit gives no vote counts without a login). Replies, posts that are only a link, posts on X past
+their first hour with under 20 likes, and Reddit's recurring threads and removed posts are never shown.
 `published_ts` is when the item was published, where known: show this as the tick's
-time and fall back to `ts`. X posts have it at once; news articles get it at once or
-within a couple of minutes; Reddit posts and pages that state no time never do. Instant-fill ticks carry
+time and fall back to `ts`. X posts have it at once, and so do Reddit posts read from a
+subreddit's feed; news articles get it at once or within a couple of minutes; Reddit posts found
+by search and pages that state no time never do. Instant-fill ticks carry
 `backfill: true` and are drawn on the chart at `published_ts`.
 
 The frontend owns speech-to-text (microphone to sentences), the spoken call-out of

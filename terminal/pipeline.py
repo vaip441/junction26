@@ -61,7 +61,7 @@ def context(db, market: dict, now: float, history: bool) -> str:
 
 async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headline: str, url: str | None = None,
                  body: str = "", published_ts: float | None = None, backfill: bool = False,
-                 now: float | None = None) -> dict | None:
+                 now: float | None = None, likes: int | None = None, replies: int | None = None) -> dict | None:
     """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried)."""
     now = time.time() if now is None else now
     key = dedupe_key(kind, url, headline, now)
@@ -88,7 +88,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "market_id": market["id"], "ts": now, "published_ts": published_ts, "kind": kind, "source": source,
         "url": url, "headline": headline, "up": s.up, "none": s.none, "down": s.down, "strength": s.strength,
         "verdict": v, "confidence": confidence, "price_at": price, "test": kind in ("mic", "typed"),
-        "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key})
+        "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
     if made_up and latest is not None and not backfill:  # history is already in the starting price

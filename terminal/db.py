@@ -18,13 +18,14 @@ CREATE TABLE IF NOT EXISTS ticks (
     source TEXT NOT NULL, url TEXT, headline TEXT NOT NULL, up REAL NOT NULL, none REAL NOT NULL, down REAL NOT NULL,
     strength REAL NOT NULL, verdict TEXT NOT NULL, confidence REAL NOT NULL, price_at REAL,
     test INTEGER NOT NULL, backfill INTEGER NOT NULL, hidden INTEGER NOT NULL, dedupe_key TEXT NOT NULL,
-    date_checked INTEGER NOT NULL DEFAULT 0,
+    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER,
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
+POST_COLS = ("likes", "replies")  # known only for posts on X
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -36,6 +37,9 @@ def connect(path: str) -> sqlite3.Connection:
         db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
     if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
         db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
+    if "likes" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov evening
+        db.execute("ALTER TABLE ticks ADD COLUMN likes INTEGER")
+        db.execute("ALTER TABLE ticks ADD COLUMN replies INTEGER")
     return db
 
 
@@ -125,8 +129,9 @@ def has_tick(db, market_id: str, dedupe_key: str) -> bool:
 
 def add_tick(db, tick: dict) -> dict | None:
     """Store a tick; None if this market already has one with the same dedupe_key."""
-    cur = db.execute(f"INSERT OR IGNORE INTO ticks ({', '.join(TICK_COLS)}) VALUES ({', '.join('?' * len(TICK_COLS))})",
-                     [tick[c] for c in TICK_COLS])
+    cols = TICK_COLS + POST_COLS
+    cur = db.execute(f"INSERT OR IGNORE INTO ticks ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
+                     [tick[c] for c in TICK_COLS] + [tick.get(c) for c in POST_COLS])
     if not cur.rowcount:
         return None
     return _tick(db.execute("SELECT * FROM ticks WHERE id = ?", (cur.lastrowid,)).fetchone())
@@ -175,6 +180,13 @@ def sources(db, market_id: str, limit: int = 20) -> list[dict]:
     return [dict(r) for r in db.execute(
         "SELECT source, COUNT(*) AS ticks, SUM(verdict IN ('up', 'down')) AS moved FROM ticks"
         " WHERE market_id = ? AND hidden = 0 GROUP BY source ORDER BY ticks DESC, source LIMIT ?", (market_id, limit))]
+
+
+def subreddits(db, market_id: str, limit: int = 3) -> list[str]:
+    """Subreddits whose posts were shown on this market, most shown first: where to watch for new ones."""
+    return [r["source"].removeprefix("reddit.com/r/") for r in db.execute(
+        "SELECT source FROM ticks WHERE market_id = ? AND kind = 'post' AND hidden = 0 AND source LIKE 'reddit.com/r/%'"
+        " GROUP BY source ORDER BY COUNT(*) DESC, source LIMIT ?", (market_id, limit))]
 
 
 def headlines(db, market_id: str, limit: int = 20) -> list[str]:

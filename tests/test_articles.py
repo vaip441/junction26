@@ -250,6 +250,10 @@ POSTS = [{"url": "https://x.com/SomeAnalyst/status/2120971125412827486?s=20", "t
           "description": "a comment"}]
 
 
+async def unknown(url):
+    return None  # X says nothing about this post
+
+
 def test_posts_are_searched_once_per_market_and_stored_as_posts():
     db, bus, m = setup()
     calls, scraped = [], []
@@ -262,7 +266,8 @@ def test_posts_are_searched_once_per_market_and_stored_as_posts():
         scraped.append(url)
         return "full text", None
 
-    n = asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    n = asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape,
+                                          lookup=unknown))
     assert sorted(calls, key=str) == sorted([("a", None), ("b", None), ("a", poller.POST_SITES)], key=str)
     assert poller.POST_SITES == ["x.com", "twitter.com", "reddit.com"]
     by_source = {t["source"]: t for t in store.ticks(db, "m")}
@@ -402,7 +407,8 @@ def test_x_posts_are_stored_with_their_post_time_and_no_post_costs_a_page_read()
         scraped.append(url)
         return "the whole thread, not wanted", 1700000000.0
 
-    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape))
+    asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape,
+                                      lookup=unknown))
     when = {t["source"]: t["published_ts"] for t in store.ticks(db, "m")}
     # an X post's id holds its time; Reddit pages carry none, so reading them was a credit for nothing
     assert when == {"x.com/IanCutress": 1794513896.693, "reddit.com/r/hardware": None} and scraped == []
@@ -541,3 +547,83 @@ def test_a_failed_batch_leaves_the_ticks_to_be_tried_again():
     with pytest.raises(ContextError):
         asyncio.run(poller.fill_dates(db, bus, published_times=published_times))
     assert store.undated_urls(db, 10) == ["https://a.example/0"]
+
+
+X_URL = "https://x.com/i/status/2120971125412827486"  # posted at 1794513896.693
+
+
+def fetch_posts(db, bus, m, found, lookup, scorer=up, feed=None, backfill=False):
+    async def search(query, **kw):
+        return found if kw.get("include_domains") else []
+
+    async def scrape(url):
+        raise AssertionError("posts are never read")
+
+    return asyncio.run(poller.fetch_articles(db, bus, scorer, m, backfill=backfill, num_results=10, search=search,
+                                             scrape=scrape, lookup=lookup, feed=feed))
+
+
+def test_a_post_on_x_carries_its_author_likes_and_replies():
+    db, bus, m = setup()
+
+    async def lookup(url):
+        return {"handle": "KobeissiLetter", "text": "BREAKING: the board has met", "likes": 13084, "replies": 302,
+                "is_reply": False}
+
+    fetch_posts(db, bus, m, [{"url": X_URL, "title": "Post on X", "description": "cut off te"}], lookup)
+    [t] = store.ticks(db, "m")
+    assert (t["source"], t["likes"], t["replies"]) == ("x.com/KobeissiLetter", 13084, 302)  # not "x.com/i"
+    assert poller.post_source(X_URL) == "x.com"  # and without a lookup, no made-up handle
+
+
+def test_trash_is_stored_hidden_without_being_scored_so_it_is_looked_at_once():
+    db, bus, m = setup()
+    scored, looked = [], []
+
+    async def spy(context, item, gate):
+        scored.append(item)
+        return await up()
+
+    async def lookup(url):
+        looked.append(url)
+        return {"handle": "someone", "text": "@other lol", "likes": 3, "replies": 0, "is_reply": True}
+
+    found = [{"url": X_URL, "title": "a reply", "description": ""},
+             {"url": "https://www.reddit.com/r/stocks/comments/1/daily/", "title": "Daily Discussion Thread", "description": ""},
+             {"url": "https://www.reddit.com/r/stocks/comments/2/fed/", "title": "Fed hikes", "description": "it did"}]
+    assert fetch_posts(db, bus, m, found, lookup, scorer=spy) == 3
+    assert [t["headline"] for t in store.ticks(db, "m")] == ["Fed hikes"] and len(scored) == 1
+    hidden = [t for t in store.ticks(db, "m", include_hidden=True) if t["hidden"]]
+    assert {t["headline"] for t in hidden} == {"a reply", "Daily Discussion Thread"}
+    assert all(t["verdict"] == "none" and t["strength"] == 0 for t in hidden)
+    assert fetch_posts(db, bus, m, found, lookup, scorer=spy) == 0 and len(looked) == 1 and len(scored) == 1
+
+
+def test_new_posts_in_subreddits_that_were_relevant_before_are_scored_with_their_post_time():
+    db, bus, m = setup(queries=("Ian Buck Nvidia CEO",))
+    asked = []
+
+    async def feed(sub):
+        asked.append(sub)
+        return [{"url": f"https://www.reddit.com/r/{sub}/comments/9/buck/", "title": "Buck named", "description": "",
+                 "published": 1794615385.0},
+                {"url": f"https://www.reddit.com/r/{sub}/comments/8/fans/", "title": "My fans are loud", "description": "",
+                 "published": 1794615000.0},
+                {"url": f"https://www.reddit.com/r/{sub}/comments/7/daily/", "title": "Daily Discussion on the CEO",
+                 "description": "", "published": 1794615000.0}]
+
+    found = [{"url": "https://www.reddit.com/r/nvidia/comments/1/first/", "title": "CEO search begins", "description": ""}]
+    assert fetch_posts(db, bus, m, found, unknown, feed=feed) == 1 and asked == []  # no subreddit known yet
+    assert fetch_posts(db, bus, m, found, unknown, feed=feed) == 1 and asked == ["nvidia"]
+    new = store.ticks(db, "m")[0]
+    assert (new["headline"], new["source"], new["kind"]) == ("Buck named", "reddit.com/r/nvidia", "post")
+    assert new["published_ts"] == 1794615385.0
+    # the off-topic post and the recurring thread cost nothing and are not stored
+    assert len(store.ticks(db, "m", include_hidden=True)) == 2
+
+
+def test_a_link_on_x_that_is_not_a_post_is_not_judged_by_reddits_rules():
+    db, bus, m = setup()
+    fetch_posts(db, bus, m, [{"url": "https://x.com/SomeAnalyst", "title": "Some Analyst (@SomeAnalyst)", "description": "bio"}],
+                unknown)
+    assert [t["source"] for t in store.ticks(db, "m")] == ["x.com/SomeAnalyst"]  # scored and shown, as before
