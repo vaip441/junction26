@@ -70,15 +70,35 @@ key and a monitor bills until it is deleted. Made-up data must say so. A screen 
                  lead: check-all, then the report
 ```
 
-## Tried so far
+## What a first run showed
 
-See "What a first run showed" at the end of this file. It is filled in from real runs, not from how the
-pieces are meant to behave.
+Two of the agents were run once each on `main` (14 Nov), with nothing but their own briefs. Their findings
+are in `docs/agents-first-run.md`. What the runs say about the set-up:
+
+- **The contract-checker earned its place.** In under four minutes it found three things that pass on the
+  mock and go wrong on the real backend, all three confirmed by reading the code again: the picked market
+  can be one the screen has no card for, a sentence said to the demo market never shows its rules sentence,
+  and a sentence over 500 characters gets a bare "422" on screen. None would be caught by the tests or the
+  build, and all three sit on the demo's first and third beats.
+- **The judge was more useful than expected, and noisier.** It ranked as asked, and its top two points (the
+  calls crammed into the right edge of the chart; "Up 77%" read as a price) are the kind a builder stops
+  seeing. About a third of what it listed was the mock's doing, not the screen's.
+- **Both briefs were too thin about where to look**, and both agents said so. The checker needed seven
+  backend files the brief did not name; the judge was told to follow a skill that told it to read a file
+  its brief told it not to read. Both briefs are now fixed from their notes: the lesson is to ask every
+  agent, at the end of its report, what in its brief wasted its time.
+- **The picture script was the limit on the judge.** It could not click, so it could not try the one thing
+  that would have answered its own top finding. `--click` was added afterwards.
+- **Not tried yet:** the `backend`, `screen` and `market-scout` agents, and the `build-feature` skill end to
+  end. The first two write code and the third spends Context.dev credits, so they wait for a real task.
 
 ## Open questions
 
-- **Does the judge find things a person would not?** It is cheap to run, but a critique that lists twenty
-  small things is worse than none. Its brief asks for a ranking; whether that holds needs more runs.
+- **A mock that draws the same chart twice.** The mock invents a new price history on every run, so two
+  pictures cannot be compared and a pointer cannot be aimed at a call. A seed (`MOCK_SEED=1`) would make
+  before-and-after pictures mean something.
+- **Findings that are the mock's, not the product's.** The judge cannot tell them apart. Pointing the screen
+  at the deployment, read-only, would remove the question (see the last point).
 - **Is the contract check better as a test?** A pytest that starts the app with a fake scorer and compares
   what the routes send against a schema generated from `types.ts` would catch the same drift without a model
   in the loop. The agent is the quick version; the test would be the durable one.

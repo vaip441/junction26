@@ -22,7 +22,9 @@ Then open the PNG with the Read tool and say what you see.
 | A question being asked | `--ask "will the fed cut rates" --wait 2.5` (the cards), `--wait 8` (the market open, tape filling) |
 | A question nobody lists | `--ask "something made up"` |
 | A failed search / not a question | `--ask "fail now"` / `--ask "hello"` |
-| The weekend record | `--keys r --wait 2.5` |
+| The weekend record | `--keys r` |
+| The last hour of the chart, or another tab | `--click 1H`, `--click Sources` (a button, tab or link by its text; repeatable) |
+| "Why did it move?" asked now | `--click "Explain today’s move" --wait 4` |
 | The price under the pointer | `--hover 640,480` |
 | A phone | `--width 420 --height 860` |
 | A still tape | `--quiet` |
@@ -45,5 +47,8 @@ Check the picture against the rules in `ui/PLAN.md`, not against taste:
 ## Limits
 
 The mock is not the backend: its data is invented and its timing is scripted. A picture proves the layout,
-not that the real stream fills it. Needs Chrome on the machine (or `--browser chromium` after
+not that the real stream fills it. The mock also draws a different price history on every run, so two
+pictures are never the same chart: compare layout, not shapes, and a pointer aimed at one dot (`--hover`)
+will not land on it next time. The mock scores a sentence by its words: `great`, `win` score up, `bad`,
+`broken` score down, so pick the sentence for the verdict you want to see. Needs Chrome on the machine (or `--browser chromium` after
 `uv run --with playwright playwright install chromium`) and `npm ci` done in `ui/`.

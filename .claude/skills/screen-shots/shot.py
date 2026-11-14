@@ -4,6 +4,7 @@
     uv run --with playwright python .claude/skills/screen-shots/shot.py --market 1 --say "This is a great demo"
     uv run --with playwright python .claude/skills/screen-shots/shot.py --ask "will the fed cut rates" --wait 3
     uv run --with playwright python .claude/skills/screen-shots/shot.py --keys r --out /tmp/record.png
+    uv run --with playwright python .claude/skills/screen-shots/shot.py --click 1H --click Sources
     uv run --with playwright python .claude/skills/screen-shots/shot.py --width 420 --height 860   # a phone
 
 It starts the mock backend and the Vite dev server on free ports, opens the page in headless Chrome,
@@ -15,6 +16,7 @@ install chromium`, and pass `--browser chromium`.
 """
 import argparse
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -51,6 +53,8 @@ def main() -> int:
     p.add_argument("--say", help="type this sentence to the made-up market, as a judge would")
     p.add_argument("--ask", help="ask this in the question box (the mock's magic words reach error states)")
     p.add_argument("--keys", default="", help="keys to press afterwards, one after another, e.g. 'r' or 'w'")
+    p.add_argument("--click", action="append", default=[], metavar="TEXT",
+                   help="click the button, tab or link with exactly this text; may be given more than once")
     p.add_argument("--hover", help="put the pointer at 'x,y' before the picture, e.g. '640,480' over the chart")
     p.add_argument("--wait", type=float, default=2.5, help="seconds to let the screen settle before the picture")
     p.add_argument("--width", type=int, default=1440)
@@ -89,6 +93,19 @@ def main() -> int:
             for key in a.keys:
                 page.wait_for_timeout(300)
                 page.keyboard.press(key)
+            for text in a.click:
+                page.wait_for_timeout(300)
+                def named(name):
+                    return page.get_by_role("button", name=name).or_(page.get_by_role("tab", name=name)).or_(
+                        page.get_by_role("link", name=name))
+                # the exact text first; then text that starts with it, for a tab that carries a count ("Sources 8")
+                target = named(re.compile(f"^{re.escape(text)}$"))
+                if target.count() == 0:
+                    target = named(re.compile(rf"^{re.escape(text)}(?![A-Za-z])"))
+                if target.count() == 0:
+                    errors.append(f"nothing to click with the text {text!r}")
+                    continue
+                target.first.click()
             if a.hover:
                 x, y = (float(v) for v in a.hover.split(","))
                 page.mouse.move(x, y)
