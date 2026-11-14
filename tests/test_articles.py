@@ -1028,6 +1028,7 @@ def with_bluesky(db, m, found, scorer=up):
 
     async def bluesky(query, since):
         asked.append(query)
+        assert abs(since - (time.time() - 7200)) < 5  # the last two hours: older is already in the price
         if isinstance(found, Exception):
             raise found
         return found
@@ -1056,3 +1057,12 @@ def test_a_bluesky_search_that_fails_does_not_fail_the_pass():
     db = store.connect(":memory:")
     m = store.add_market(db, id="k-A", venue="kalshi", venue_ref="A", title="t", rules="r", url=None, queries=["q1"])
     assert with_bluesky(db, m, RuntimeError("down")) == (0, ["q1"])
+
+
+def test_bluesky_is_searched_by_the_two_words_each_query_opens_with():
+    # Its search wants every word in a post: on 14 Nov the 91 whole queries found 3 posts in an hour and none
+    # worth reading, where "Jensen Huang", "FAA outage" or "Ossoff" each found one or two under an hour old.
+    db = store.connect(":memory:")
+    m = store.add_market(db, id="k-A", venue="kalshi", venue_ref="A", title="t", rules="r", url=None, queries=[
+        "Erling Haaland contract extension Man City", "Erling Haaland transfer news", "Real Madrid striker signing", "Haaland"])
+    assert with_bluesky(db, m, [])[1] == ["Erling Haaland", "Real Madrid", "Haaland"]

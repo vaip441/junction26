@@ -135,6 +135,7 @@ BACKGROUND_RESERVE = 2
 
 
 FEED_WINDOW = 86400  # a feed's posts count for a day, like the searches' "last 24 hours"
+SKY_WINDOW = 7200  # Bluesky posts: the last two hours only, since the scorer takes anything older as priced
 
 
 def comment_slug(db, market: dict) -> str | None:
@@ -177,12 +178,15 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     core_coros = [*(search(q, num_results=num_results, reserve=reserve, **kw) for _, q, kw in searches),
                   *(news(c, since=time.time() - FEED_WINDOW, reserve=reserve) for c in companies),
                   *(gnews(q) for q in queries)]  # last: a story also found above keeps its own address
-    sky_coros = [(bluesky or posts.bluesky)(q, time.time() - FEED_WINDOW) for q in queries]
+    # Bluesky's search wants every word in a post, and a whole query finds next to nothing.
+    # shortcut: the two words a query opens with, usually the name; have the query writer name the topic if it matters
+    topics = list(dict.fromkeys(" ".join(q.split()[:2]) for q in queries))
+    sky_coros = [(bluesky or posts.bluesky)(q, time.time() - SKY_WINDOW) for q in topics]
     comment_coro = (comments or venue_comments)(slug) if slug else None
     gathered = await asyncio.gather(*core_coros, *sky_coros, *([comment_coro] if comment_coro else []),
                                     return_exceptions=True)
     found = gathered[:len(sources)]
-    sky_said = gathered[len(sources):len(sources) + len(queries)]
+    sky_said = gathered[len(sources):len(sources) + len(topics)]
     comment_res = gathered[-1] if comment_coro else None
     fresh, failed, stories = {}, [], set()
     for (kind, q, _), results in zip(sources, found):
@@ -231,7 +235,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 fresh[key] = ("post", {"url": f"https://polymarket.com/event/{slug}", "title": text[:280],
                                        "description": text, "published": c["published"], "comment": c, "key": key})
     # Bluesky's own search: free, and each post arrives whole. A search that fails is an extra lost, not the pass.
-    for q, found_posts in zip(queries, sky_said):
+    for q, found_posts in zip(topics, sky_said):
         if isinstance(found_posts, BaseException):
             log.warning("Bluesky search failed for %r on %s: %s: %s", q, market["id"], type(found_posts).__name__,
                         str(found_posts)[:100])
