@@ -84,7 +84,7 @@ watch it become a tick. It is also what `/` shows until the screen is built.
 | `TERMINAL_KEY` | shared secret that every write must send in an `X-Terminal-Key` header |
 | `DB_PATH` | the SQLite file |
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |
-| `GEMINI_SPEECH_MODEL` | optional: the model that writes down what the microphone hears (same key); `GEMINI_TEXT_MODEL` when unset |
+| `GEMINI_SPEECH_MODEL` | optional: the model that writes down what the microphone hears (same key), `gemini-3.5-transcribe` on the live service; `GEMINI_TEXT_MODEL` when unset |
 | `TRUTH_FEED` | optional: the file `trump-social-scraper` appends new posts to |
 | `PUBLIC_URL` | optional: the address the internet reaches this service at; turns on page watching, since Context.dev calls back `PUBLIC_URL/hooks/context/...` |
 

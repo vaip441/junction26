@@ -86,3 +86,21 @@ def test_transcribe_needs_the_terminal_key_and_reports_a_model_failure(tmp_path,
         assert c.post("/transcribe", content=b"x", headers=wav).status_code == 401
         r = c.post("/transcribe", content=b"x", headers={**wav, "X-Terminal-Key": "s"})
         assert r.status_code == 502 and r.json()["detail"] == "could not reach the speech model, try again"
+
+
+def test_a_transcription_model_is_sent_the_recording_alone_and_answers_in_its_own_shape(monkeypatch):
+    # gemini-3.5-transcribe refuses JSON mode ("JSON mode is not enabled for this model"), answers with an
+    # audioTranscription part, and with no content at all when nobody speaks (checked on 14 Nov)
+    seen, replies = [], [
+        {"candidates": [{"content": {"parts": [{"audioTranscription": {"text": " The birch canoe\n slid. "}}]}}]},
+        {"candidates": [{"finishReason": "STOP", "index": 0}]}]
+
+    def handler(request):
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=replies[len(seen) - 1])
+
+    gemini(monkeypatch, handler)
+    monkeypatch.setenv("GEMINI_SPEECH_MODEL", "gemini-3.5-transcribe")
+    assert asyncio.run(speech.transcribe(b"RIFFdata")) == "The birch canoe slid."
+    assert asyncio.run(speech.transcribe(b"RIFFdata")) == ""
+    assert "generationConfig" not in seen[0] and [list(p) for p in seen[0]["contents"][0]["parts"]] == [["inline_data"]]

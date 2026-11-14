@@ -26,17 +26,24 @@ def model() -> str:
 
 async def transcribe(audio: bytes, mime: str = "audio/wav") -> str:
     """The words said in a recording, or "" when nothing was. SpeechError if the model call fails."""
+    recording = {"inline_data": {"mime_type": mime, "data": base64.b64encode(audio).decode()}}
+    # A transcription model (gemini-3.5-transcribe) takes the recording alone and refuses JSON mode; it answers
+    # with an audioTranscription part, and with no content when nobody speaks. A general model needs telling.
+    dedicated = "transcribe" in model()
+    body = ({"contents": [{"parts": [recording]}]} if dedicated else
+            {"contents": [{"parts": [recording, {"text": PROMPT}]}],
+             "generationConfig": {"responseMimeType": "application/json", "temperature": 0}})
     try:
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model()}:generateContent",
-                             headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-                             json={"contents": [{"parts": [
-                                       {"inline_data": {"mime_type": mime, "data": base64.b64encode(audio).decode()}},
-                                       {"text": PROMPT}]}],
-                                   "generationConfig": {"responseMimeType": "application/json", "temperature": 0}})
+                             headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]}, json=body)
             r.raise_for_status()
-            answer = json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
-        text = answer.get("text") if isinstance(answer, dict) else None
+            said = r.json()["candidates"][0]
+        if dedicated:
+            text = said["content"]["parts"][0]["audioTranscription"]["text"] if "content" in said else ""
+        else:
+            answer = json.loads(said["content"]["parts"][0]["text"])
+            text = answer.get("text") if isinstance(answer, dict) else None
         if not isinstance(text, str):
             raise ValueError("no text in the answer")
     except Exception as e:
