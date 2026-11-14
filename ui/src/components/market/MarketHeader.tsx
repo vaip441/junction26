@@ -1,7 +1,7 @@
 import { pct } from '../../lib/format'
 import type { Consensus, MarketSummary } from '../../lib/types'
 import { useStore } from '../../state/store'
-import { VenueBadge } from '../common/Badge'
+import { VenueBadges } from '../common/Badge'
 import { AnimatedPrice } from '../common/AnimatedPrice'
 import { Points } from '../common/Price'
 
@@ -40,7 +40,7 @@ export function MarketHeader({ market }: { market: MarketSummary }) {
     <div className="flex flex-wrap items-end justify-between gap-4 border-b border-line p-4">
       <div className="min-w-0 flex-1">
         <div className="mb-1.5 flex items-center gap-2">
-          <VenueBadge venue={market.venue} />
+          <VenueBadges market={market} />
           {market.url && (
             <a href={market.url} target="_blank" rel="noreferrer" className="text-xs text-accent hover:underline">
               open on venue ↗
