@@ -48,7 +48,7 @@ export function TickRow({
     <li id={`tick-${tick.id}`} className={`grid ${arrived ? 'row-in' : ''}`}>
       <HoverPreview url={tick.url} headline={tick.headline} source={tick.source} passage={tick.passage}>
       <div
-        className={`flex min-h-0 flex-col gap-1 overflow-hidden border-l-2 px-3 py-2.5 ${fresh ? 'tick-flash' : ''} ${tick.backfill ? 'opacity-60' : ''} ${
+        className={`flex min-h-0 flex-col gap-1 overflow-hidden border-l-2 px-3 py-2.5 ${fresh ? 'tick-flash' : ''} ${tick.backfill ? 'opacity-70' : ''} ${
           life?.state === 'edge' ? (tick.verdict === 'up' ? 'border-l-up' : 'border-l-down') : 'border-l-transparent'
         }`}
       >

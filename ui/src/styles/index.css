@@ -14,7 +14,8 @@
   --color-line: #34312b;
   --color-text: #efe9dc;
   --color-muted: #a49d8e;
-  --color-faint: #6f6a5f;
+  /* the quietest text, still 4.8:1 on a panel: at #6f6a5f it was 3.3:1, under the 4.5:1 that small text needs */
+  --color-faint: #8a8476;
 
   --color-up: #3dcc7a;
   --color-down: #f5503f;
