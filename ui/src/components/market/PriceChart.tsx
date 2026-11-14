@@ -469,9 +469,14 @@ export function PriceChart({ marketId }: { marketId: string }) {
       const life = tickLifecycle(t, prices, madeUp, now)
       if (life?.leadSeconds != null && t.price_at != null && wantLeads.length < MAX_LEAD_LINES) {
         const reach = t.ts + life.leadSeconds
-        const from = Math.floor(t.ts) as UTCTimestamp
+        // Both ends on bars of the price line: the last price at or before the tick was seen, which is the
+        // price it is judged against. An end at the tick's own second would add a point of time the price
+        // line does not have: every bar after it then counts one further along than the prices do, the range
+        // no longer fits the bounds worked out from the prices, and holding it there undoes the fit a market
+        // opens with (it opened on its last hours, not on "All").
+        const from = snap(times, t.ts)
         const to = snap(times, reach)
-        if (to != null && to > from) {
+        if (from != null && to != null && to > from) {
           const end = data.find((d) => d.time === to)?.value ?? t.price_at
           wantLeads.push({ tick: t, from, to, start: t.price_at, end })
           out.push({
