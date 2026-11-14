@@ -237,3 +237,35 @@ def test_a_tick_for_a_market_deleted_while_it_was_being_scored_is_not_stored():
 
     assert run(db, bus, slow, m, url="https://a.example/1") is None
     assert db.execute("SELECT COUNT(*) FROM ticks").fetchone()[0] == 0 and drain(q) == []
+
+
+def test_a_headline_without_its_publisher_is_the_same_story():
+    from terminal.pipeline import title_key
+
+    same = {title_key(h) for h in (
+        "Iran's Guards say they targeted a US early-warning radar in Bahrain | World News",
+        "Iran's Guards say they targeted a US early-warning radar in Bahrain - ARMENPRESS",
+        "Iran’s Guards say they targeted a US early-warning radar in Bahrain",
+        "Iran's Guards say they targeted a US early-warning radar in Bahrain By Investing.com")}
+    assert len(same) == 1
+    assert title_key("Fed hikes - Reuters") is None and title_key("Live updates") is None  # too short to tell stories apart
+    assert title_key("Trump - Xi summit ends early") == "trump xi summit ends early"  # a dash inside a short headline stays
+    assert title_key("Fed raises rates by 25 points") != title_key("Fed raises rates by 50 points")
+
+
+def test_one_story_run_by_several_outlets_is_one_tick_and_scored_once():
+    db, bus, q, m = setup(venue="kalshi")
+    scored = []
+
+    async def spy(*_):
+        scored.append(1)
+        return UP
+
+    first = run(db, bus, spy, m, url="https://apnews.com/a", headline="Microsoft says services fully restored after outage")
+    again = run(db, bus, spy, m, url="https://local10.com/b", headline="Microsoft says services fully restored after outage - Local 10")
+    assert first is not None and again is None and len(scored) == 1
+    assert run(db, bus, spy, m, url="https://apnews.com/c", headline="Fed hikes") is not None
+    assert run(db, bus, spy, m, url="https://reuters.com/d", headline="Fed hikes") is not None  # short headlines: by address only
+    # posts are told apart by address alone: many people post the same words
+    assert run(db, bus, spy, m, kind="post", url="https://x.com/a/status/2120971125412827486",
+               headline="Microsoft says services fully restored after outage") is not None

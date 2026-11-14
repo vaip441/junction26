@@ -776,3 +776,50 @@ def test_company_names_are_cleaned_and_capped(monkeypatch):
 
     monkeypatch.setattr(watch, "ask_json", none)
     assert asyncio.run(watch.companies_for("T", "R")) == []  # a market about no company is a fine answer
+
+
+def test_google_news_adds_fresh_stories_and_one_found_twice_is_one_tick():
+    db, bus, m = setup(queries=("a",))
+    asked, scraped, posted = [], [], time.time() - 240
+
+    async def search(query, **kw):
+        return [RESULTS[0]] if not kw.get("include_domains") else []  # "Story X" from news.example.com
+
+    async def gnews(query):
+        asked.append(query)
+        return [{"url": "https://news.google.com/rss/articles/CBMi1?oc=5", "title": "Board names a new chief executive",
+                 "description": "", "text": "", "source": "reuters.com", "published": posted},
+                {"url": "https://news.google.com/rss/articles/CBMi2?oc=5", "title": "Board names a new chief executive",
+                 "description": "", "text": "", "source": "local10.com", "published": posted},  # the same wire story
+                {"url": "https://news.google.com/rss/articles/CBMi3?oc=5", "title": "Story X of the day, told again",
+                 "description": "", "text": "", "source": "other.example.com", "published": posted}]
+
+    async def scrape(url):
+        scraped.append(url)
+        return "text", None
+
+    go = lambda: asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search,
+                                                   scrape=scrape, gnews=gnews))
+    assert go() == 3 and asked == ["a"]
+    by_source = {t["source"]: t for t in store.ticks(db, "m")}
+    assert set(by_source) == {"news.example.com", "reuters.com", "other.example.com"}  # the wire story once
+    fresh = by_source["reuters.com"]
+    assert (fresh["kind"], fresh["published_ts"], fresh["headline"]) == ("article", posted, "Board names a new chief executive")
+    assert scraped == ["https://www.news.example.com/x"]  # Google states the time; its links are not read
+    assert go() == 0  # and nothing is stored twice on the next pass
+
+
+def test_google_news_being_down_does_not_fail_the_pass():
+    db, bus, m = setup(queries=("a",))
+
+    async def search(query, **kw):
+        return RESULTS if not kw.get("include_domains") else []
+
+    async def gnews(query):
+        raise RuntimeError("HTTP 503")
+
+    async def scrape(url):
+        return "", None
+
+    assert asyncio.run(poller.fetch_articles(db, bus, up, m, backfill=False, num_results=10, search=search, scrape=scrape,
+                                             gnews=gnews)) == 2

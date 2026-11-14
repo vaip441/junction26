@@ -5,9 +5,9 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from terminal import contextdev, madeup, posts, venues, watch
+from terminal import contextdev, googlenews, madeup, posts, venues, watch
 from terminal import db as store
-from terminal.pipeline import dedupe_key, ingest, public
+from terminal.pipeline import dedupe_key, ingest, public, title_key
 from terminal.scoring import Score
 
 log = logging.getLogger(__name__)
@@ -87,7 +87,7 @@ async def unscored(*_) -> Score:
 
 
 async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_results: int,
-                         search=None, scrape=None, lookup=None, feed=None, news=None) -> int:
+                         search=None, scrape=None, lookup=None, feed=None, news=None, gnews=None) -> int:
     """Search every query of a market, plus X and Reddit once, read the newest posts of the subreddits
     that were relevant to it before, and ingest what was not seen before. Returns how many ticks were stored.
 
@@ -96,6 +96,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     """
     search, scrape = search or contextdev.search, scrape or contextdev.scrape
     lookup, feed, news = lookup or posts.x_post, feed or posts.subreddit_new, news or contextdev.news
+    gnews = gnews or googlenews.search
     queries, reserve = market["queries"], 0 if backfill else BACKGROUND_RESERVE
     # X and Reddit are left to the posts search: found here too, one post would be two ticks, one unfiltered
     searches = [("article", q, {"exclude_domains": NOT_NEWS + POST_SITES}) for q in queries]
@@ -104,21 +105,28 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     companies = market.get("companies") or []
     found = await asyncio.gather(*(search(q, num_results=num_results, reserve=reserve, **kw) for _, q, kw in searches),
                                  *(news(c, since=time.time() - FEED_WINDOW, reserve=reserve) for c in companies),
+                                 *(gnews(q) for q in queries),  # last: a story also found above keeps its own address
                                  return_exceptions=True)
-    fresh, failed = {}, []
-    for (kind, q, _), results in zip(searches + [("news", c, None) for c in companies], found):
+    fresh, failed, stories = {}, [], set()
+    sources = searches + [("news", c, None) for c in companies] + [("Google News", q, None) for q in queries]
+    for (kind, q, _), results in zip(sources, found):
         if isinstance(results, BaseException):
             log.warning("%s search failed for %r on %s: %s", kind, q, market["id"], results)
             failed.append(kind)
             continue
-        kind = "article" if kind == "news" else kind
+        kind = "article" if kind in ("news", "Google News") else kind
         for r in results:
             try:
                 key = dedupe_key(kind, r["url"], r["title"], 0)
             except ValueError:  # an address that cannot be parsed
                 continue
-            if key not in fresh and not store.has_tick(db, market["id"], key):
-                fresh[key] = (kind, r)
+            story = title_key(r["title"]) if kind == "article" else None  # one story, many outlets and addresses
+            if key in fresh or store.has_tick(db, market["id"], key):
+                continue
+            if story and (story in stories or store.has_title(db, market["id"], story)):
+                continue
+            fresh[key] = (kind, r)
+            stories.add(story)
     # a failed posts search alone does not fail the pass; one whose article searches all failed does
     if failed.count("article") == len(queries) > 0:
         raise FetchFailed(f"{len(failed)} of {len(searches)} searches failed for {market['id']}")
@@ -135,7 +143,8 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     async def one(kind: str, r: dict) -> bool:
         async with limit:
             text, published, read, known, trash = "", None, None, None, False
-            source = post_source(r["url"]) if kind == "post" else urlsplit(r["url"]).netloc.lower().removeprefix("www.")
+            source = (post_source(r["url"]) if kind == "post"
+                      else r.get("source") or urlsplit(r["url"]).netloc.lower().removeprefix("www."))  # Google names the publisher
             if kind == "post" and (published := posted_at(r["url"])):  # on X: the id holds the time
                 if known := await lookup(r["url"]):
                     source, text = f"x.com/{known['handle']}", known["text"]
@@ -144,7 +153,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                 published = r.get("published")
                 trash = source.split("/")[0].endswith("reddit.com") and posts.reddit_trash(r["url"], r["title"])
             elif r.get("published"):
-                published = r["published"]  # the news index states the time: no page to read
+                published = r["published"]  # the news index and Google News state the time: no page to read
                 read = (published,)
             elif (read := store.date_known(db, r["url"])) is not None:
                 published = read[0]  # this address was read before, under this or another market

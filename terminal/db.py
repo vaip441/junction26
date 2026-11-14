@@ -18,14 +18,14 @@ CREATE TABLE IF NOT EXISTS ticks (
     source TEXT NOT NULL, url TEXT, headline TEXT NOT NULL, up REAL NOT NULL, none REAL NOT NULL, down REAL NOT NULL,
     strength REAL NOT NULL, verdict TEXT NOT NULL, confidence REAL NOT NULL, price_at REAL,
     test INTEGER NOT NULL, backfill INTEGER NOT NULL, hidden INTEGER NOT NULL, dedupe_key TEXT NOT NULL,
-    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER,
+    date_checked INTEGER NOT NULL DEFAULT 0, likes INTEGER, replies INTEGER, title_key TEXT,
     UNIQUE (market_id, dedupe_key));
 CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
-POST_COLS = ("likes", "replies")  # known only for posts on X
+OPTIONAL_COLS = ("likes", "replies", "title_key")  # likes and replies: posts on X; title_key: articles
 
 
 def connect(path: str) -> sqlite3.Connection:
@@ -37,6 +37,9 @@ def connect(path: str) -> sqlite3.Connection:
         db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
     if "companies" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov noon
         db.execute("ALTER TABLE markets ADD COLUMN companies TEXT")
+    if "title_key" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov noon
+        db.execute("ALTER TABLE ticks ADD COLUMN title_key TEXT")
+    db.execute("CREATE INDEX IF NOT EXISTS ticks_by_title ON ticks (market_id, title_key)")
     if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
         db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
     if "likes" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov evening
@@ -135,11 +138,16 @@ def has_tick(db, market_id: str, dedupe_key: str) -> bool:
                       (market_id, dedupe_key)).fetchone() is not None
 
 
+def has_title(db, market_id: str, title_key: str) -> bool:
+    """Whether this market already has an article with this headline, from any outlet or address."""
+    return db.execute("SELECT 1 FROM ticks WHERE market_id = ? AND title_key = ?", (market_id, title_key)).fetchone() is not None
+
+
 def add_tick(db, tick: dict) -> dict | None:
     """Store a tick; None if this market already has one with the same dedupe_key."""
-    cols = TICK_COLS + POST_COLS
+    cols = TICK_COLS + OPTIONAL_COLS
     cur = db.execute(f"INSERT OR IGNORE INTO ticks ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})",
-                     [tick[c] for c in TICK_COLS] + [tick.get(c) for c in POST_COLS])
+                     [tick[c] for c in TICK_COLS] + [tick.get(c) for c in OPTIONAL_COLS])
     if not cur.rowcount:
         return None
     return _tick(db.execute("SELECT * FROM ticks WHERE id = ?", (cur.lastrowid,)).fetchone())

@@ -28,6 +28,19 @@ def dedupe_key(kind: str, url: str | None, headline: str, ts: float) -> str:
     return re.sub(r"[^a-z0-9]+", " ", headline.lower()).strip()
 
 
+PUBLISHER = re.compile(r"\s+(?:[-|–—]\s+[^-|–—]{1,40}|By\s+\S+(?:\s\S+){0,2})$")  # " - Reuters", " | World News", " By Investing.com"
+
+
+def title_key(headline: str) -> str | None:
+    """A headline without its trailing publisher, case and punctuation. One wire story runs on a dozen
+    sites, and one article is found by several searches under different addresses: same key, one tick.
+    None for a headline too short to tell stories apart (under four words)."""
+    words = lambda t: re.findall(r"[^\W_]+", t.casefold())
+    cut = PUBLISHER.sub("", headline.strip())
+    kept = words(cut) if len(words(cut)) >= 4 else words(headline)
+    return " ".join(kept[:12]) if len(kept) >= 4 else None
+
+
 def clean(text: str, limit: int) -> str:
     """Web text as one capped line: no newlines or control characters to pose as part of our prompt."""
     return " ".join("".join(c if c.isprintable() else " " for c in text).split())[:limit]
@@ -69,6 +82,9 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     key = dedupe_key(kind, url, headline, now)
     if store.has_tick(db, market["id"], key):
         return None
+    story = title_key(headline) if kind == "article" else None  # posts: many people post the same words
+    if story and store.has_title(db, market["id"], story):
+        return None
     spoken = kind in ("mic", "typed")  # a judge's own sentence is new by nature: no newness check, no history
     item = (f"{clean(source, 60)}: {clean(headline, 250)}" + (f"\nPublished {day(published_ts)}." if published_ts else "")
             + (f"\n{clean(body, 2000)}" if body else ""))
@@ -92,7 +108,8 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
         "market_id": market["id"], "ts": now, "published_ts": published_ts, "kind": kind, "source": source,
         "url": url, "headline": headline, "up": s.up, "none": s.none, "down": s.down, "strength": s.strength,
         "verdict": v, "confidence": confidence, "price_at": price, "test": kind in ("mic", "typed"),
-        "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies})
+        "backfill": backfill, "hidden": is_hidden(s, kind), "dedupe_key": key, "likes": likes, "replies": replies,
+        "title_key": story})
     if tick is None:  # lost a race with a concurrent ingest of the same item
         return None
     # history is already in the starting price; and what moves the price must be on the tape, so a
@@ -108,4 +125,4 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
 
 def public(tick: dict) -> dict:
     """A tick as the frontend sees it."""
-    return {k: v for k, v in tick.items() if k not in ("dedupe_key", "hidden")}
+    return {k: v for k, v in tick.items() if k not in ("dedupe_key", "title_key", "hidden")}
