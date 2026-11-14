@@ -34,7 +34,7 @@ def test_only_the_newest_items_of_a_feed_are_kept():
     assert len(rows) == googlenews.MAX_ITEMS == 20 and rows[0]["title"] == "Story 39"
 
 
-def test_the_feed_is_asked_for_the_last_day(monkeypatch):
+def test_the_feed_is_asked_for_the_last_two_hours_and_older_or_undated_stories_are_dropped(monkeypatch):
     seen = []
 
     async def get(params):
@@ -42,5 +42,7 @@ def test_the_feed_is_asked_for_the_last_day(monkeypatch):
         return FEED
 
     monkeypatch.setattr(googlenews, "_get", get)
-    assert len(asyncio.run(googlenews.search("Fed rate decision"))) == 3
-    assert seen == [{"q": "Fed rate decision when:1d", "hl": "en-US", "gl": "US", "ceid": "US:en"}]
+    now = datetime(2026, 11, 14, 10, 0, tzinfo=UTC).timestamp()  # half an hour after the WSJ story, 13 hours after Reuters'
+    assert [r["source"] for r in asyncio.run(googlenews.search("Fed rate decision", now=now))] == ["wsj.com"]
+    # asked of Google too: on 14 Nov "when:1d" returned nothing newer than 163 minutes where "when:2h" had a 5-minute-old story
+    assert seen == [{"q": "Fed rate decision when:2h", "hl": "en-US", "gl": "US", "ceid": "US:en"}]

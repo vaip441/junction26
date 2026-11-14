@@ -16,14 +16,21 @@ Every item takes the same path: found, deduplicated, scored, stored, streamed to
 
 | Step | What happens | Where |
 | --- | --- | --- |
-| Find | News through Context.dev web search, every query of a market on every pass, for markets about a company through Context.dev's news index, and through Google News feeds; both are minutes behind the publishers. One story is one tick, whichever outlet or search it came from. Posts on X and Reddit through the same search, plus the newest posts of subreddits that were relevant before. Trump's Truth Social posts within about 30 seconds, from the scraper in `trump-social-scraper/`. | `terminal/poller.py`, `terminal/posts.py`, `terminal/truth.py` |
+| Find | News through Context.dev web search, every query of a market on every pass, for markets about a company through Context.dev's news index, and through Google News feeds (the last two hours only); both are minutes behind the publishers. One story is one tick, whichever outlet or search it came from. Posts on X and Reddit through the same search, plus the newest posts of subreddits that were relevant before. Trump's Truth Social posts within about 30 seconds, from the scraper in `trump-social-scraper/`. | `terminal/poller.py`, `terminal/posts.py`, `terminal/truth.py` |
 | Filter | An item is looked at once per market. Replies, link-only posts, posts nobody liked, recurring Reddit threads and removed posts are kept off the tape without a model call. | `terminal/posts.py` |
 | Score | Gemini Decision 1 is told the market, its rules, the current price, the rival contracts and what was already reported, then asked how far the new item should move the price and whether it is news at all. For a tick that moves the price it also picks the sentence of the rules that makes the item matter. | `terminal/scoring.py`, `terminal/pipeline.py`, `terminal/rules.py` |
 | Store and stream | SQLite, and one server-sent-events stream for the frontend. | `terminal/db.py`, `terminal/api.py` |
 
 It also works backwards, from the price to the web: when a real market's price jumps 3 points within
 10 minutes, the terminal searches for that market at once and Decision 1 names the item most likely
-behind the jump, with the sentence of the rules it touches (`terminal/moves.py`).
+behind the jump, with the sentence of the rules it touches, or says that no news explains it and which
+related contracts moved at the same time. The same can be asked of any market's last day on request
+(`terminal/moves.py`).
+
+Each market also has one page watched for it by a Context.dev monitor: the page most likely to change
+when the outcome is decided (a newsroom, a results page, a Wikipedia article), found by search and chosen
+by Decision 1. Context.dev checks it every ten minutes and calls a signed webhook; a change that bears on
+the market becomes a tick (`terminal/pages.py`). This needs an address the internet can reach (`PUBLIC_URL`).
 
 A first fill finds 100 to 200 items, and scoring one is a Decision 1 call. Measured over five fills,
 85% came back "no effect" and were never shown, so a fill scores only the `FILL_SCORED` (default 50) items
@@ -63,6 +70,7 @@ watch it become a tick. The real screen is a separate frontend that talks to the
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |
 | `FILL_SCORED` | optional: how many items a new market's first fill scores, each one a Decision 1 call (default 50) |
 | `TRUTH_FEED` | optional: the file `trump-social-scraper` appends new posts to |
+| `PUBLIC_URL` | optional: the address the internet reaches this service at; turns on page watching, since Context.dev calls back `PUBLIC_URL/hooks/context/...` |
 
 ## Interface
 
@@ -72,13 +80,15 @@ and of every stream event, is in
 
 | Request | What it does |
 | --- | --- |
-| `GET /markets`, `GET /markets/{id}` | tracked markets with price, 24-hour change and ticks today; one market with its related contracts and sources |
+| `GET /markets`, `GET /markets/{id}` | tracked markets with price, 24-hour change and ticks today; one market with its related contracts, sources and watched page |
 | `POST /markets` | track a market from a link or from plain words |
 | `DELETE /markets/{id}` | stop tracking a market |
+| `POST /markets/mu-demo/reset` | put the demo market back to its starting price with an empty tape |
 | `GET /markets/{id}/ticks`, `GET /markets/{id}/prices` | history for the tape and the chart |
-| `GET /markets/{id}/moves` | "why did it move?": the market's price jumps, each with its likely cause |
+| `GET /markets/{id}/moves` | "why did it move?": the market's price moves, each in one sentence with its likely cause |
+| `POST /markets/{id}/why` | explain the market's move over the last day, now |
 | `POST /markets/{id}/ticks` | a spoken or typed sentence, scored like any other tick |
-| `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market` |
+| `GET /stream` | server-sent events: `tick`, `tick_update`, `price`, `move`, `market`, `page_check` |
 | `GET /record` | of the ticks called up or down, how often the price then moved that way |
 | `GET /status` | Context.dev use and credits per key |
 
@@ -91,6 +101,13 @@ runs the Truth Social scraper, which needs the one-time setup in
 ```sh
 ln -s "$PWD"/deploy/*.service ~/.config/systemd/user/
 systemctl --user daemon-reload && systemctl --user enable --now terminal trump-scraper
+```
+
+Watched pages cost one Context.dev credit per page every ten minutes for as long as their monitors exist,
+whether or not the terminal is running. To stop them all:
+
+```sh
+PYTHONPATH=. uv run --env-file .env python scripts/stop_monitors.py data/terminal.db
 ```
 
 The unit files hold absolute paths for the machine they were written on; change them for another one.

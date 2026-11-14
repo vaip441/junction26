@@ -32,10 +32,11 @@ def sentences(text: str) -> list[tuple[int, int]]:
     return out
 
 
-async def deciding(market: dict, item: str, *, decide=None) -> dict | None:
+async def deciding(market: dict, item: str, closest: bool = False, *, decide=None) -> dict | None:
     """{"start", "end", "text", "confidence"} of the rules sentence that decides how the item affects the
-    market; None when the rules are one sentence, none fits, or no sentence stands out. ScoringError when
-    the model call fails or answers oddly."""
+    market; None when the rules are one sentence, none fits, or no sentence stands out. With `closest`
+    the likeliest sentence is named however weak (a person who typed a sentence is watching for it).
+    ScoringError when the model call fails or answers oddly."""
     rules = market["rules"]
     spans = sentences(rules)[:MAX_SENTENCES]
     if len(spans) < 2:
@@ -55,6 +56,6 @@ async def deciding(market: dict, item: str, *, decide=None) -> dict | None:
         a, b = spans[int(best[1:])]
     except (KeyError, TypeError, ValueError, IndexError, AttributeError) as e:
         raise scoring.ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
-    if p[best] < MIN_CONFIDENCE or p[best] <= p.get("none", 0.0):
+    if not closest and (p[best] < MIN_CONFIDENCE or p[best] <= p.get("none", 0.0)):
         return None
     return {"start": a, "end": b, "text": rules[a:b], "confidence": round(p[best], 3)}

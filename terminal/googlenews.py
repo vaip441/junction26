@@ -2,6 +2,7 @@
 published, where the web search is hours behind. It gives the headline, the publisher and the time only;
 the address is Google's link to the article, not the article's own."""
 import logging
+import time
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
@@ -10,7 +11,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 FEED = "https://news.google.com/rss/search"
-MAX_ITEMS = 20  # a feed holds up to a hundred stories of the last day; the newest are what the web search lacks
+MAX_ITEMS = 20  # a feed holds up to a hundred stories; the newest are what the web search lacks
 
 
 def parse(xml: str) -> list[dict]:
@@ -38,6 +39,12 @@ async def _get(params: dict) -> str:
         return r.text
 
 
-async def search(query: str) -> list[dict]:
-    """Stories of the last day matching a query, newest first."""
-    return parse(await _get({"q": f"{query} when:1d", "hl": "en-US", "gl": "US", "ceid": "US:en"}))
+MAX_AGE = 2 * 3600
+
+
+async def search(query: str, now: float | None = None) -> list[dict]:
+    """Stories of the last two hours matching a query, newest first. Freshness is this source's whole job:
+    asked for a day, it sent 87 stories an hour with a median age near seven hours, each one a scoring call."""
+    oldest = (time.time() if now is None else now) - MAX_AGE
+    rows = parse(await _get({"q": f"{query} when:2h", "hl": "en-US", "gl": "US", "ceid": "US:en"}))
+    return [r for r in rows if r["published"] and r["published"] >= oldest]  # Google's own filter is not exact

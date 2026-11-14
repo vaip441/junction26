@@ -5,9 +5,9 @@ After=network-online.target
 [Service]
 WorkingDirectory=/home/georg/junction26/junction26/trump-social-scraper
 # Its own FlareSolverr port (8192), so it never leans on another copy's on the default 8191.
-# 30 s between polls: Truth Social blocks an address after about 8 requests a minute, and a second
-# scraper (3 a minute) runs on this machine. Drop --interval to get the default 20 s once that one is stopped.
-ExecStart=/usr/bin/python3 -u trump_scraper.py watch --utc --no-color --jsonl data/feed.jsonl --flaresolverr http://127.0.0.1:8192 --interval 30
+# The default 20 s between polls: 3 requests a minute, where Truth Social blocks an address after about 8.
+# It must be the only scraper on this address: with a second one running, add --interval 30.
+ExecStart=/usr/bin/python3 -u trump_scraper.py watch --utc --no-color --jsonl data/feed.jsonl --flaresolverr http://127.0.0.1:8192
 Restart=always
 RestartSec=10
 TimeoutStopSec=40

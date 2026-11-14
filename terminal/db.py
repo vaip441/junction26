@@ -1,4 +1,5 @@
-"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices, moves.
+"""SQLite store: markets (related contracts are rows pointing at their lead market), ticks, prices, moves,
+watched pages.
 
 Prices are percentages 0..100 and timestamps are unix seconds, everywhere.
 """
@@ -24,8 +25,13 @@ CREATE INDEX IF NOT EXISTS ticks_by_market ON ticks (market_id, ts);
 CREATE INDEX IF NOT EXISTS ticks_by_url ON ticks (url);
 CREATE TABLE IF NOT EXISTS moves (
     id INTEGER PRIMARY KEY, market_id TEXT NOT NULL, ts REAL NOT NULL, since_ts REAL NOT NULL,
-    from_price REAL NOT NULL, to_price REAL NOT NULL, tick_id INTEGER, confidence REAL, rule TEXT);
+    from_price REAL NOT NULL, to_price REAL NOT NULL, tick_id INTEGER, confidence REAL, rule TEXT,
+    explained INTEGER NOT NULL DEFAULT 0, related TEXT NOT NULL DEFAULT '[]', asked INTEGER NOT NULL DEFAULT 0);
 CREATE INDEX IF NOT EXISTS moves_by_market ON moves (market_id, ts);
+CREATE TABLE IF NOT EXISTS pages (
+    id TEXT PRIMARY KEY, market_id TEXT NOT NULL, url TEXT, title TEXT, monitor_id TEXT, secret TEXT,
+    created_ts REAL NOT NULL, checked_ts REAL, changed_ts REAL);
+CREATE INDEX IF NOT EXISTS pages_by_market ON pages (market_id);
 """
 TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headline", "up", "none", "down", "strength",
              "verdict", "confidence", "price_at", "test", "backfill", "hidden", "dedupe_key")
@@ -46,6 +52,11 @@ def connect(path: str) -> sqlite3.Connection:
         db.execute("ALTER TABLE ticks ADD COLUMN title_key TEXT")
         db.execute("ALTER TABLE ticks ADD COLUMN rule TEXT")
     db.execute("CREATE INDEX IF NOT EXISTS ticks_by_title ON ticks (market_id, title_key)")
+    if "explained" not in {r["name"] for r in db.execute("PRAGMA table_info(moves)")}:  # stores from before 14 Nov 12:00
+        db.execute("ALTER TABLE moves ADD COLUMN explained INTEGER NOT NULL DEFAULT 0")
+        db.execute("ALTER TABLE moves ADD COLUMN related TEXT NOT NULL DEFAULT '[]'")
+        db.execute("ALTER TABLE moves ADD COLUMN asked INTEGER NOT NULL DEFAULT 0")
+        db.execute("UPDATE moves SET explained = tick_id IS NOT NULL")  # until then a tick was stored only as a cause
     if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
         db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
     if "likes" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov evening
@@ -100,8 +111,16 @@ def delete_market(db, id: str) -> None:
     for (mid,) in db.execute("SELECT id FROM markets WHERE id = ? OR lead_id = ?", (id, id)).fetchall():
         db.execute("DELETE FROM ticks WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM moves WHERE market_id = ?", (mid,))
+        db.execute("DELETE FROM pages WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM prices WHERE market_id = ?", (mid,))
         db.execute("DELETE FROM markets WHERE id = ?", (mid,))
+
+
+def reset_market(db, id: str, ts: float, price: float) -> None:
+    """Forget everything that happened on a market and start it again at a price."""
+    for table in ("ticks", "prices", "moves"):
+        db.execute(f"DELETE FROM {table} WHERE market_id = ?", (id,))
+    add_price(db, id, ts, price)
 
 
 def get_market(db, id: str) -> dict | None:
@@ -239,35 +258,69 @@ def count_shown(db, market_id: str, since: float) -> int:
                       (market_id, since)).fetchone()[0]
 
 
-def around(db, market_id: str, since: float, until: float, limit: int) -> list[dict]:
+def around(db, market_id: str, since: float, until: float, limit: int, strongest: bool = False) -> list[dict]:
     """A market's shown, live ticks from the web published in a stretch of time (found, where the publish
-    time is unknown), newest first: what could explain a price move at its end."""
+    time is unknown): what could explain a price move at its end. Newest first, or strongest first."""
+    order = "ABS(strength) DESC" if strongest else "COALESCE(published_ts, ts) DESC"
     return [_tick(r) for r in db.execute(
         "SELECT * FROM ticks WHERE market_id = ? AND hidden = 0 AND test = 0 AND backfill = 0"
-        " AND COALESCE(published_ts, ts) BETWEEN ? AND ? ORDER BY COALESCE(published_ts, ts) DESC, id DESC LIMIT ?",
+        f" AND COALESCE(published_ts, ts) BETWEEN ? AND ? ORDER BY {order}, id DESC LIMIT ?",
         (market_id, since, until, limit))]
 
 
-def add_move(db, market_id: str, ts: float, since: float, from_price: float, to_price: float,
-             tick_id: int | None, confidence: float | None, rule: str | None) -> dict:
-    """A price move and the tick named as its cause, if any."""
-    cur = db.execute("INSERT INTO moves (market_id, ts, since_ts, from_price, to_price, tick_id, confidence, rule)"
-                     " VALUES (?,?,?,?,?,?,?,?)", (market_id, ts, since, from_price, to_price, tick_id, confidence, rule))
+def add_move(db, market_id: str, ts: float, since: float, from_price: float, to_price: float, tick_id: int | None,
+             confidence: float | None, rule: str | None, explained: bool, related: list, asked: bool = False) -> dict:
+    """A price move with the tick nearest to explaining it (if any), whether that tick is taken as the cause,
+    and the related contracts that moved with it. `asked`: explained on request, not seen as a jump."""
+    cur = db.execute("INSERT INTO moves (market_id, ts, since_ts, from_price, to_price, tick_id, confidence, rule,"
+                     " explained, related, asked) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                     (market_id, ts, since, from_price, to_price, tick_id, confidence, rule, explained,
+                      json.dumps(related), asked))
     return next(m for m in moves(db, market_id, limit=1000) if m["id"] == cur.lastrowid)
 
 
 def moves(db, market_id: str, limit: int = 20) -> list[dict]:
-    """A market's price moves, newest first, each with the tick named as its cause (or None)."""
+    """A market's price moves, newest first, each with its tick (or None) under "tick"."""
     out = []
     for r in db.execute('SELECT id, market_id, ts, since_ts AS since, from_price AS "from", to_price AS "to", tick_id,'
-                        " confidence, rule FROM moves WHERE market_id = ? ORDER BY ts DESC, id DESC LIMIT ?",
-                        (market_id, limit)).fetchall():
-        cause = db.execute("SELECT * FROM ticks WHERE id = ?", (r["tick_id"],)).fetchone()
+                        " confidence, rule, explained, related, asked FROM moves WHERE market_id = ?"
+                        " ORDER BY ts DESC, id DESC LIMIT ?", (market_id, limit)).fetchall():
+        tick = db.execute("SELECT * FROM ticks WHERE id = ?", (r["tick_id"],)).fetchone()
         out.append({**{k: r[k] for k in r.keys() if k != "tick_id"}, "rule": r["rule"] and json.loads(r["rule"]),
-                    "cause": cause and _tick(cause)})
+                    "explained": bool(r["explained"]), "asked": bool(r["asked"]), "related": json.loads(r["related"]),
+                    "tick": tick and _tick(tick)})
     return out
 
 
 def last_move(db, market_id: str) -> float | None:
-    """When this market's newest move was recorded."""
-    return db.execute("SELECT MAX(ts) FROM moves WHERE market_id = ?", (market_id,)).fetchone()[0]
+    """When this market's newest jump was recorded (moves explained on request do not count)."""
+    return db.execute("SELECT MAX(ts) FROM moves WHERE market_id = ? AND asked = 0", (market_id,)).fetchone()[0]
+
+
+# A watched page: `id` is the unguessable last part of its webhook address, `secret` signs its deliveries.
+# A row without a url records that the market was looked at and has no page worth watching.
+
+def add_page(db, id: str, market_id: str, url: str | None, title: str | None, monitor_id: str | None,
+             secret: str | None, ts: float) -> dict:
+    db.execute("INSERT INTO pages (id, market_id, url, title, monitor_id, secret, created_ts) VALUES (?,?,?,?,?,?,?)",
+               (id, market_id, url, title, monitor_id, secret, ts))
+    return get_page(db, id)
+
+
+def get_page(db, id: str) -> dict | None:
+    row = db.execute("SELECT * FROM pages WHERE id = ?", (id,)).fetchone()
+    return row and dict(row)
+
+
+def pages(db, market_id: str) -> list[dict]:
+    return [dict(r) for r in db.execute("SELECT * FROM pages WHERE market_id = ? ORDER BY created_ts, id", (market_id,))]
+
+
+def forget_unwatched(db, market_id: str) -> None:
+    """Drop the record that a market had no page worth watching, before it is looked at again."""
+    db.execute("DELETE FROM pages WHERE market_id = ? AND url IS NULL", (market_id,))
+
+
+def page_checked(db, id: str, ts: float, changed: bool) -> None:
+    db.execute("UPDATE pages SET checked_ts = ?, changed_ts = CASE WHEN ? THEN ? ELSE changed_ts END WHERE id = ?",
+               (ts, changed, ts, id))

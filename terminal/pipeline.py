@@ -84,15 +84,16 @@ def context(db, market: dict, now: float, history: bool) -> str:
 async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headline: str, url: str | None = None,
                  body: str = "", published_ts: float | None = None, backfill: bool = False,
                  now: float | None = None, likes: int | None = None, replies: int | None = None,
-                 ruler=None) -> dict | None:
+                 ruler=None, key: str | None = None) -> dict | None:
     """Score and store one item. None if it is a duplicate or scoring failed (so it can be retried).
 
-    A tick that moves the price, and every spoken or typed one, also carries the sentence of the market's
-    rules that makes it matter (`ruler`, by default rules.deciding wherever the real scorer is used).
+    A tick that moves the price also carries the sentence of the market's rules that makes it matter
+    (`ruler`, by default rules.deciding wherever the real scorer is used): for an item from the web only
+    a sentence that stands out, for a spoken or typed one the closest sentence, however weak.
     """
     ruler = ruler or (rules.deciding if scorer is scoring.score else None)
     now = time.time() if now is None else now
-    key = dedupe_key(kind, url, headline, now)
+    key = key or dedupe_key(kind, url, headline, now)  # given for a watched page: its address is the same every change
     if store.has_tick(db, market["id"], key):
         return None
     story = title_key(headline) if kind == "article" else None  # posts: many people post the same words
@@ -103,7 +104,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
             + (f"\n{clean(body, 2000)}" if body else ""))
     async def rule_for() -> dict | None:
         try:
-            return await ruler(market, item)
+            return await ruler(market, item, spoken)
         except ScoringError as e:  # the tick is worth having without its rule
             log.warning("no rule found for %r on %s: %s", headline[:60], market["id"], e)
 
@@ -124,8 +125,10 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     if store.get_market(db, market["id"]) is None:
         return None  # deleted while this item was being scored
     v, confidence = verdict(s)
-    # one more model call: on history only for a strong call, on a live tick for any call
-    if ruler and not spoken and v != "none" and (not backfill or abs(s.strength) >= RULE_FOR_HISTORY):
+    if v == "none":
+        rule = None  # no movement: there is nothing for a rule to explain
+    # one more model call: for earlier coverage only where the call is strong, for a live tick always
+    elif ruler and not spoken and (not backfill or abs(s.strength) >= RULE_FOR_HISTORY):
         rule = await rule_for()
         if store.get_market(db, market["id"]) is None:
             return None

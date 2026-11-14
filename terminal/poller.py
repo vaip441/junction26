@@ -73,7 +73,10 @@ async def price_loop(db, bus, scorer, busy: set, interval: float = 60) -> None:
 
 # Reference pages and the venues' own pages are not news: an encyclopedia entry or a report of the
 # market's odds says nothing the price does not already hold.
-NOT_NEWS = ["wikipedia.org", "polymarket.com", "kalshi.com"]
+# Nor are social media pages: in one day 98 of them were shown as articles (Facebook 57, YouTube 21,
+# Instagram 16), each a post or a video with no article behind it.
+NOT_NEWS = ["wikipedia.org", "polymarket.com", "kalshi.com",
+            "facebook.com", "instagram.com", "threads.com", "threads.net", "tiktok.com", "youtube.com", "youtu.be"]
 
 
 class FetchFailed(Exception):
@@ -236,6 +239,8 @@ async def fetch_now(db, bus, scorer, market: dict, busy: set, fetch=None) -> Non
     """Search for one market right away, outside its polling interval. If an article pass is on it
     already, wait for that instead: searched twice at once, every new item would be scored twice."""
     id = market["id"]
+    if not market["queries"] or not market["filled"]:
+        return  # nothing to search with, or its first fill is still the article loop's to do (as history)
     if id in busy:
         for _ in range(120):  # a pass over one market takes well under two minutes
             if id not in busy:
@@ -287,11 +292,12 @@ def due(db, last_fetch: dict, now: float) -> list[dict]:
 
 
 MARKETS_AT_ONCE = 4
+PAGE_RETRY = 6 * 3600
 
 
 async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = None, *, queries_for=None,
                        companies_for=None, fetch=None, starting_price=None, limit: asyncio.Semaphore | None = None,
-                       busy: set | None = None, fails: dict | None = None) -> None:
+                       busy: set | None = None, fails: dict | None = None, watch_page=None) -> None:
     """One round over the due markets. This is the only place articles are fetched, so a market's first
     completed pass is its backfill and every later pass is live; the two never race.
 
@@ -323,6 +329,14 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
                         return
                 except Exception as e:
                     log.warning("could not name the companies of %s, asking again next pass: %s", id, e)
+            # once per market; one that had no page worth watching is looked at again after PAGE_RETRY, since
+            # the search and the model answer differently on another try. None without a public address.
+            if watch_page and not any(p["url"] or p["created_ts"] > started - PAGE_RETRY for p in store.pages(db, id)):
+                try:
+                    await watch_page(db, m)
+                except Exception as e:
+                    log.warning("could not set up the page watch of %s, trying again next pass: %s: %s",
+                                id, type(e).__name__, e)
             first = not m["filled"]
             if first:
                 bus.publish("market", {"market_id": m["id"], "status": "finding sources", "queries": m["queries"]})
@@ -355,7 +369,7 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
     await asyncio.gather(*(one(m) for m in markets))
 
 
-async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = None) -> None:
+async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = None, watch_page=None) -> None:
     """Run article passes forever. `wake` starts the next pass at once, for a newly added market.
     `busy` holds the markets being searched; the price loop adds one while it looks behind a move."""
     last_fetch: dict[str, float] = {}
@@ -366,7 +380,7 @@ async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = 
 
     async def one_pass() -> None:
         try:
-            await article_pass(db, bus, scorer, last_fetch, limit=limit, busy=busy, fails=fails)
+            await article_pass(db, bus, scorer, last_fetch, limit=limit, busy=busy, fails=fails, watch_page=watch_page)
         except Exception:
             log.exception("article pass failed")
 

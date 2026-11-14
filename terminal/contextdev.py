@@ -261,3 +261,36 @@ async def scrape(url: str) -> tuple[str, float | None]:
                                        "sharedParams": {"mainContentOnly": True}},
                        wait=False, reserve=limiter().per_minute // 2)
     return ("", None) if data is None else parse_scrape(data)
+
+
+MONITOR_MINUTES = 10  # the shortest interval Context.dev allows; each check costs 1 credit
+
+
+async def create_monitor(url: str, instructions: str, hook: str, name: str) -> dict:
+    """Have Context.dev watch a page and call `hook` after every check and on every change that matters
+    by the instructions. Returns {"id", "secret"}: deliveries are signed with the secret. The first
+    check only records the page as it is."""
+    data = await _call("/monitors", {
+        "name": name[:100], "tags": ["terminal"],
+        "target": {"type": "page", "url": url, "instructions": instructions},  # instructions: judged by meaning
+        "schedule": {"type": "interval", "frequency": MONITOR_MINUTES, "unit": "minutes"},
+        "webhook": {"url": hook, "events": ["change.detected", "run.completed"], "retry": {}}}, wait=True)
+    try:
+        return {"id": data["id"], "secret": data["webhook"]["secret"]}
+    except (KeyError, TypeError) as e:
+        raise ContextError(f"/monitors: unexpected answer: {str(data)[:150]}") from e
+
+
+async def delete_monitor(id: str) -> bool:
+    """Stop a monitor. It belongs to the key that made it, so each key is asked; False if none had it."""
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=60)
+    try:
+        for key in limiter().used:
+            r = await _client.delete(f"{API}/monitors/{id}", headers={"Authorization": f"Bearer {key}"})
+            if r.status_code < 300:
+                return True
+        return False
+    except httpx.HTTPError as e:
+        raise ContextError(f"/monitors/{id}: {type(e).__name__}: {str(e)[:150]}") from e

@@ -315,3 +315,36 @@ def test_company_news_is_asked_newest_first_and_comes_with_its_publish_time(monk
                        "text": "", "published": datetime(2026, 11, 14, 10, 8, tzinfo=UTC).timestamp()}
     assert [r["url"][-1] for r in rows] == ["a", "b", "c"]
     assert rows[1]["published"] is None and rows[2]["published"] is None  # a time in the far future is not believed
+
+
+def test_a_monitor_is_made_on_one_key_and_deleted_by_asking_each_key(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        key = request.headers["authorization"].removeprefix("Bearer ")
+        seen.append((request.method, request.url.path, key, json.loads(request.content or b"null")))
+        if request.method == "POST":
+            return httpx.Response(201, json={"id": "mon_1", "webhook": {"secret": "whsec_a"},
+                                             "key_metadata": {"credits_remaining": 9}})
+        return httpx.Response(200 if key == "k2" else 404, json={"deleted": key == "k2"})
+
+    cd = pool(handler, monkeypatch)
+    made = asyncio.run(cd.create_monitor("https://a.example/", "Report X.", "https://t.example/hooks/context/tok", "terminal: T"))
+    assert made == {"id": "mon_1", "secret": "whsec_a"}
+    method, path, key, body = seen[0]
+    assert (method, path) == ("POST", "/v1/monitors")
+    assert body["target"] == {"type": "page", "url": "https://a.example/", "instructions": "Report X."}
+    assert body["schedule"] == {"type": "interval", "frequency": 10, "unit": "minutes"}  # the shortest allowed
+    assert body["webhook"]["url"] == "https://t.example/hooks/context/tok"
+    assert set(body["webhook"]["events"]) == {"change.detected", "run.completed"}
+    assert asyncio.run(cd.delete_monitor("mon_1")) is True
+    assert [(m, p, k) for m, p, k, _ in seen[1:]] == [("DELETE", "/v1/monitors/mon_1", "k1"), ("DELETE", "/v1/monitors/mon_1", "k2")]
+
+    def gone(request):
+        return httpx.Response(404, json={})
+
+    assert asyncio.run(pool(gone, monkeypatch).delete_monitor("mon_1")) is False

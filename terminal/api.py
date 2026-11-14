@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from terminal import db as store
-from terminal import contextdev, madeup, match, moves, poller, scoring, truth, venues
+from terminal import contextdev, madeup, match, moves, pages, poller, scoring, truth, venues
 from terminal.bus import Bus
 from terminal.pipeline import ingest, public
 from terminal.record import record
@@ -57,7 +57,8 @@ def summary(db, m: dict, now: float) -> dict:
 
 def detail(db, m: dict, now: float) -> dict:
     return {**summary(db, m, now), "rules": m["rules"], "queries": m["queries"], "companies": m["companies"] or [],
-            "related": [summary(db, r, now) for r in store.related(db, m["id"])], "pages": [],
+            "related": [summary(db, r, now) for r in store.related(db, m["id"])],
+            "pages": [pages.public(p) for p in store.pages(db, m["id"]) if p["url"]],
             "sources": store.sources(db, m["id"])}
 
 
@@ -84,9 +85,13 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         store.set_poll_seconds(db, DEMO["id"], 0)  # it moves only by what is said to it, never by articles
         app.state.wake = asyncio.Event()
         app.state.asked = {}  # words asked -> the venue market they matched, so asking again is instant and stable
-        busy = set()  # markets being searched right now, by the article loop or behind a price move
+        busy = app.state.busy = set()  # markets being searched right now, by the article loop or behind a price move
+        # Context.dev can only call back an address the internet can reach: no PUBLIC_URL, no page watching
+        public_url = os.environ.get("PUBLIC_URL", "")
+        watch_page = (lambda db, m: pages.watch(db, m, public_url)) if public_url else None
         tasks = [asyncio.create_task(poller.price_loop(db, app.state.bus, app.state.scorer, busy)),
-                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake, busy)),
+                 asyncio.create_task(poller.article_loop(db, app.state.bus, app.state.scorer, app.state.wake, busy,
+                                                         watch_page)),
                  asyncio.create_task(poller.date_loop(db, app.state.bus))] if poll else []
         if poll and os.environ.get("TRUTH_FEED"):  # the feed file of trump-social-scraper, where one runs
             tasks.append(asyncio.create_task(truth.truth_loop(db, app.state.bus, app.state.scorer, os.environ["TRUTH_FEED"])))
@@ -123,9 +128,22 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             raise HTTPException(409, "the demo market cannot be deleted")
         if m["lead_id"] is not None:
             raise HTTPException(404, "no such market")  # a related contract goes with its lead market
+        await pages.unwatch(app.state.db, id)
         store.delete_market(app.state.db, id)
         app.state.bus.publish("market", {"market_id": id, "status": "deleted"})
         return {"deleted": id}
+
+    @app.post("/markets/{id}/reset", dependencies=[Depends(write_access)])
+    async def reset(id: str):
+        """Put the demo market back to its starting price with an empty tape, after a rehearsal."""
+        m = market_or_404(id)
+        if id != DEMO["id"]:
+            raise HTTPException(409, "only the demo market can be reset")
+        now = time.time()
+        store.reset_market(app.state.db, id, now, DEMO["start"])
+        app.state.bus.publish("market", {"market_id": id, "status": "reset"})
+        app.state.bus.publish("price", {"market_id": id, "ts": now, "price": DEMO["start"]})
+        return detail(app.state.db, m, now)
 
     @app.get("/markets/{id}/ticks")
     async def ticks(id: str, limit: int = Query(100, ge=1, le=500)):
@@ -142,6 +160,15 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         """The market's price jumps, newest first, each with the tick named as its cause (or null)."""
         market_or_404(id)
         return [moves.public_move(m) for m in store.moves(app.state.db, id, limit)]
+
+    @app.post("/markets/{id}/why", dependencies=[Depends(write_access)])
+    async def why(id: str):
+        """Why did this market move over the last day? Searches the web now and answers with a move."""
+        m, st = market_or_404(id), app.state
+        move = await moves.why(st.db, st.bus, m, fetch=lambda mk: poller.fetch_now(st.db, st.bus, st.scorer, mk, st.busy))
+        if move is None:
+            raise HTTPException(409, "the price has not moved a point in the last day")
+        return move
 
     @app.post("/markets/{id}/ticks", dependencies=[Depends(write_access)])
     async def add_tick(id: str, body: TickIn):
@@ -251,6 +278,21 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         app.state.wake.set()  # the article loop writes the queries and does the instant fill
         db = app.state.db
         return {**detail(db, store.get_market(db, lead_id), time.time()), "matched": matched}
+
+    @app.post("/hooks/context/{page_id}", include_in_schema=False)
+    async def context_hook(page_id: str, request: Request):
+        """Context.dev calls this after each check of a watched page. Nothing is believed, or even parsed,
+        before the signature made with that page's secret checks out."""
+        raw, page = await request.body(), store.get_page(app.state.db, page_id)
+        if page is None or not pages.verify(raw, request.headers.get("x-context-signature", ""), page["secret"] or ""):
+            raise HTTPException(401, "bad signature")  # the same answer for an unknown page: nothing to probe
+        try:
+            event = json.loads(raw)
+        except ValueError:
+            raise HTTPException(400, "not JSON")
+        if not await pages.delivered(app.state.db, app.state.bus, app.state.scorer, page, event):
+            raise HTTPException(503, "could not score the change, deliver it again")
+        return {"ok": True}
 
     @app.get("/status")
     async def status():
