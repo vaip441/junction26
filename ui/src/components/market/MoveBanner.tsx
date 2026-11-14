@@ -55,15 +55,15 @@ function Banner({ move }: { move: Move }) {
         open()
       }}
       title="Show it under the chart"
-      className={`${leaving ? 'soft-out' : 'slide-in'} absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-2rem))] -translate-x-1/2 cursor-pointer flex-col gap-1 rounded border border-line bg-panel-2/95 px-4 py-2.5 text-left shadow-xl`}
+      className={`${leaving ? 'soft-out' : 'slide-in'} absolute left-1/2 top-3 z-20 flex w-[min(34rem,calc(100%-2rem))] -translate-x-1/2 cursor-pointer flex-col gap-1 rounded-xs border border-muted bg-panel-2 px-4 py-2.5 text-left`}
     >
       <span className="flex items-baseline gap-3">
-        <span className="text-[11px] font-semibold uppercase tracking-wider text-muted">Why did it move?</span>
+        <span className="text-xs font-semibold text-muted">Why did it move?</span>
         <MoveSpan move={move} className="text-lg" />
       </span>
       {!answered ? (
-        <span className="relative h-4 overflow-hidden rounded bg-line/60">
-          <span className="scan absolute inset-y-0 w-1/3 bg-accent/40" />
+        <span className="relative h-4 overflow-hidden rounded-xs bg-line/60">
+          <span className="scan absolute inset-y-0 w-1/3 bg-text/40" />
         </span>
       ) : (
         <span className="fade-in text-sm">

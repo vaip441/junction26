@@ -29,27 +29,27 @@ export function KeyPrompt() {
         aria-label="Terminal key"
         onSubmit={save}
         onClick={(e) => e.stopPropagation()}
-        className="pop-in flex w-full max-w-sm flex-col gap-3 rounded border border-line bg-panel p-5 shadow-2xl"
+        className="pop-in flex w-full max-w-sm flex-col gap-3 rounded-xs border border-line bg-panel p-5"
       >
-        <h2 className="text-sm font-semibold text-text">Terminal key</h2>
+        <h2 className="text-base font-semibold text-text">Terminal key</h2>
         <p className="text-xs text-muted">
-          Adding markets and scoring sentences need the team's shared key. It is kept in this browser only.
+          Adding a market or scoring a sentence needs the team's shared key. It is kept in this browser only.
         </p>
         <input
           autoFocus
           type="password"
           value={key}
           onChange={(e) => setKey(e.target.value)}
-          className="h-9 rounded border border-line bg-bg px-3 text-sm text-text transition-colors focus:border-accent focus:outline-none"
+          className="field h-9 px-3 text-sm"
         />
         <div className="flex justify-end gap-2">
-          <button type="button" onClick={() => close(false)} className="press rounded px-3 py-1.5 text-xs text-muted hover:text-text">
+          <button type="button" onClick={() => close(false)} className="press btn border-transparent!">
             Cancel
           </button>
           <button
             type="submit"
             disabled={!key.trim()}
-            className="press rounded border border-accent/60 px-3 py-1.5 text-xs font-semibold text-text hover:bg-accent/10 disabled:opacity-40"
+            className="press btn btn-solid"
           >
             Save
           </button>

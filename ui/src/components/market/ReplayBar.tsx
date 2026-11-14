@@ -27,10 +27,10 @@ export function ReplayResult({ market, replay }: { market: MarketSummary; replay
       type="button"
       onClick={() => useStore.setState({ replayDone: null })}
       title="Dismiss"
-      className="pop-in absolute left-1/2 top-1/2 z-20 w-[min(26rem,90%)] -translate-x-1/2 -translate-y-1/2 rounded-lg border border-line bg-panel/95 p-5 text-center shadow-2xl"
+      className="pop-in absolute left-1/2 top-1/2 z-20 w-[min(26rem,90%)] -translate-x-1/2 -translate-y-1/2 rounded-xs border border-line bg-panel/95 p-5 text-center shadow-2xl"
     >
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-muted">Resolved</p>
-      <p className="mt-0.5 text-4xl font-bold leading-none text-text">{replay.outcome === 'yes' ? 'Yes' : 'No'}</p>
+      <p className="label">Resolved</p>
+      <p className="board mt-1 text-5xl text-text">{replay.outcome === 'yes' ? 'Yes' : 'No'}</p>
       <p className="num mt-3 text-sm text-muted">
         {pct(prices[0].price)} → {pct(prices[prices.length - 1].price)} in {Math.round((replay.end - replay.start) / 3600)} hours
       </p>
@@ -50,7 +50,7 @@ function when(seconds: number): string {
 function Count({ n, label, title }: { n: number; label: string; title?: string }) {
   return (
     <span title={title} className="whitespace-nowrap">
-      <span className="num text-sm font-semibold text-text">{n}</span> {label}
+      <span className="num font-semibold text-text">{n}</span> {label}
     </span>
   )
 }
@@ -75,13 +75,13 @@ export function ReplayBar({ market, replay }: { market: MarketSummary; replay: R
   const rule = `A call is judged by the price ${WINDOW_SECONDS / 60} minutes after it, like every call on the tape.`
 
   return (
-    <div className="border-b border-line bg-panel-2/60 px-4 py-2.5">
+    <div className="border-b border-line bg-panel-2/60 px-5 py-2.5">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <button
           type="button"
           onClick={() => (playing ? stopReplay() : void playReplay(market.id))}
           title={playing ? 'Stop and show the whole of it (Space)' : 'Play it back from the start (Space)'}
-          className="press num rounded border border-accent/60 px-3 py-1 text-xs font-semibold uppercase tracking-wider text-accent hover:bg-accent/10"
+          className={`press btn ${playing ? '' : 'btn-solid'}`}
         >
           {playing ? '■ Stop' : '▶ Replay'}
         </button>
@@ -96,15 +96,15 @@ export function ReplayBar({ market, replay }: { market: MarketSummary; replay: R
           {score.open > 0 && <Count n={score.open} label="still open" title="Inside their 15 minutes" />}
         </span>
         {!playing && (
-          <span className="pop-in num ml-auto rounded border border-line px-2 py-0.5 text-xs font-semibold uppercase tracking-wider text-text">
+          <span className="pop-in ml-auto rounded-xs bg-text px-1.5 text-xs font-semibold leading-5 text-bg">
             Resolved {replay.outcome === 'yes' ? 'Yes' : 'No'}
           </span>
         )}
       </div>
       <div className="mt-2 h-0.5 overflow-hidden rounded bg-line" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(done * 100)}>
-        <div className="h-full origin-left bg-accent transition-transform duration-100 ease-linear" style={{ transform: `scaleX(${done})` }} />
+        <div className="h-full origin-left bg-text transition-transform duration-100 ease-linear" style={{ transform: `scaleX(${done})` }} />
       </div>
-      <p className="mt-1.5 text-[11px] leading-snug text-faint">
+      <p className="mt-1.5 text-xs leading-snug text-faint">
         {playing
           ? 'Each post lands when it was posted. The model sees only what was known at that minute.'
           : `The last ${hours} hours of a finished market: its real prices, and what people posted as it happened. Each post was scored knowing only what was known at that minute.`}

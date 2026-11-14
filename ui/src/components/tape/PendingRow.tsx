@@ -5,14 +5,14 @@ import { Badge } from '../common/Badge'
 export function PendingRow({ p }: { p: PendingTick }) {
   return (
     <li className="slide-in flex flex-col gap-1 bg-panel-2 px-3 py-2.5">
-      <div className="flex items-center gap-2">
-        <span className="num animate-pulse text-xs font-bold text-accent">⋯ SCORING</span>
+      <div className="flex items-baseline gap-3">
+        <span className="animate-pulse text-[0.8125rem] font-bold text-text">Scoring…</span>
         <Badge tone="madeup">{p.kind === 'mic' ? 'Spoken' : 'Typed'}</Badge>
-        <span className="ml-auto text-[11px] text-faint">just now</span>
+        <span className="ml-auto text-xs text-faint">just now</span>
       </div>
-      <p className="text-sm leading-snug text-text">{p.text}</p>
-      <div className="h-1 w-full overflow-hidden rounded-full bg-line">
-        <span className="scan block h-full w-1/3 rounded-full bg-accent/60" />
+      <p className="text-[0.9375rem] font-medium leading-snug text-text">{p.text}</p>
+      <div className="h-[3px] w-full overflow-hidden bg-line">
+        <span className="scan block h-full w-1/3 bg-text/70" />
       </div>
     </li>
   )

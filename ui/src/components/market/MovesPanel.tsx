@@ -11,7 +11,7 @@ import { SourceIcon } from '../common/SourceIcon'
 /** "24% → 20%" in the move's colour: a move is an up or a down, so it takes the verdict colours. */
 export function MoveSpan({ move, className = '' }: { move: Move; className?: string }) {
   return (
-    <span className={`num font-bold ${move.to >= move.from ? 'text-up' : 'text-down'} ${className}`}>
+    <span className={`num whitespace-nowrap font-bold ${move.to >= move.from ? 'text-up' : 'text-down'} ${className}`}>
       {pct(move.from)} → {pct(move.to)}
     </span>
   )
@@ -42,7 +42,7 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
           title="Find it on the tape"
           className="flex min-w-0 items-baseline gap-1.5 text-left hover:underline"
         >
-          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-muted">
+          <span className="shrink-0 text-[11px] font-semibold text-muted">
             {label}
             {percent != null && <span className="num"> {percent}%</span>}
           </span>
@@ -93,7 +93,7 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
           title="Find it on the tape"
           className="flex min-w-0 items-center gap-1.5 text-left text-[11px] text-faint hover:text-text"
         >
-          <span className="shrink-0 font-semibold uppercase tracking-wider">Closest news</span>
+          <span className="shrink-0 font-semibold">Closest news</span>
           <SourceIcon source={closest.source} className="h-3 w-3" />
           <span className="truncate">
             {shortSource(closest.source)}: {closest.headline}
@@ -124,7 +124,7 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
         <button
           onClick={ask}
           disabled={state.busy}
-          className="press shrink-0 rounded border border-line px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-muted hover:border-accent hover:text-text disabled:opacity-50"
+          className="press btn shrink-0"
         >
           {state.busy ? 'Working out why it moved…' : 'Explain today’s move'}
         </button>
@@ -145,8 +145,8 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
             <li key={m.id} id={`move-${m.id}`} className="grid grid-cols-[7.5rem_1fr] gap-x-3 px-3 py-2 text-xs">
               <div className="flex flex-col gap-0.5">
                 <MoveSpan move={m} className="text-sm" />
-                <span className="text-[10px] text-faint" title={`${absoluteTime(m.since)} to ${absoluteTime(m.ts)}`}>
-                  {m.asked ? 'over the last day' : `in ${minutes(m.ts - m.since)}`} · {timeAgo(m.ts)}
+                <span className="text-[11px] text-faint" title={`${absoluteTime(m.since)} to ${absoluteTime(m.ts)}`}>
+                  {m.asked ? 'over the last day' : `in ${minutes(m.ts - m.since)}`}, {timeAgo(m.ts)}
                 </span>
               </div>
               <MoveStory move={m} onRule={() => m.rule && showRule(m.rule)} />

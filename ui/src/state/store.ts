@@ -67,7 +67,6 @@ interface State {
   pending: Record<string, PendingTick[]>
   /** Stage controls. */
   micOn: boolean
-  presentation: boolean
   /** A write was refused for want of the key: the key prompt is open. */
   needKey: boolean
   record: WeekendRecord | null
@@ -101,7 +100,6 @@ interface State {
   addPending: (marketId: string, text: string, kind: 'mic' | 'typed') => number
   removePending: (marketId: string, key: number) => void
   setMic: (on: boolean) => void
-  togglePresentation: (on?: boolean) => void
   setNeedKey: (on: boolean) => void
   setRecord: (r: WeekendRecord) => void
   toggleRecord: (open?: boolean) => void
@@ -129,7 +127,6 @@ export const useStore = create<State>((set) => ({
   meter: null,
   pending: {},
   micOn: false,
-  presentation: false,
   needKey: false,
   record: null,
   otherPrices: {},
@@ -196,7 +193,6 @@ export const useStore = create<State>((set) => ({
   removePending: (marketId, key) =>
     set((s) => ({ pending: { ...s.pending, [marketId]: (s.pending[marketId] ?? []).filter((p) => p.key !== key) } })),
   setMic: (micOn) => set({ micOn }),
-  togglePresentation: (on) => set((s) => ({ presentation: on ?? !s.presentation })),
   setNeedKey: (needKey) => set({ needKey }),
   setRecord: (record) => set({ record }),
   toggleRecord: (open) => set((s) => ({ recordOpen: open ?? !s.recordOpen })),

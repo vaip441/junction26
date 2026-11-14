@@ -26,15 +26,25 @@ export function AskBar() {
   }
 
   return (
-    <form onSubmit={submit} className="relative min-w-0 flex-1">
+    // a cell of the top bar, not a box inside it: the whole cell is the field, and it darkens while typed in
+    <form
+      onSubmit={submit}
+      className="group flex min-w-0 flex-1 items-center gap-3 border-l border-line px-4 transition-colors focus-within:bg-bg focus-within:shadow-[inset_0_-2px_0_var(--color-text)]"
+    >
+      <label htmlFor={ASK_INPUT_ID} className="shrink-0 text-xs font-semibold text-muted group-focus-within:text-text">
+        Ask
+      </label>
       <input
         id={ASK_INPUT_ID}
         value={text}
         onChange={(e) => setText(e.target.value)}
         disabled={working}
-        placeholder="Paste a link or ask anything: “will Jensen step down this year?”   ( / )"
-        className="h-8 w-full rounded border border-line bg-bg px-3 text-sm text-text placeholder:text-faint transition-colors focus:border-accent focus:outline-none disabled:opacity-60"
+        placeholder="will Jensen step down this year? Or paste a Kalshi or Polymarket link"
+        className="h-full min-w-0 flex-1 bg-transparent text-sm text-text placeholder:text-faint focus:outline-none disabled:opacity-60"
       />
+      <span className="hidden shrink-0 text-xs text-faint group-focus-within:hidden md:inline" aria-hidden="true">
+        press /
+      </span>
     </form>
   )
 }

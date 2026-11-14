@@ -4,8 +4,8 @@ import { playReplay, stopReplay } from '../lib/replay'
 import { useStore } from '../state/store'
 
 /**
- * Stage control from the keyboard: / ask, R record, W why-did-it-move tab, P presentation, Space mic (made-up markets)
- * or play/stop (replays), 1-9 jump to a market, Esc leaves presentation. Ignored while typing in a field, except Esc, which leaves the field.
+ * Stage control from the keyboard: / ask, R record, W why-did-it-move tab, Space mic (made-up markets)
+ * or play/stop (replays), 1-9 jump to a market, Esc closes the record or the question. Ignored while typing in a field, except Esc, which leaves the field.
  */
 export function useHotkeys(): void {
   useEffect(() => {
@@ -17,7 +17,6 @@ export function useHotkeys(): void {
         if (typing) (target as HTMLElement).blur()
         else if (s.recordOpen) s.toggleRecord(false)
         else if (s.ask) s.clearAsk()
-        else s.togglePresentation(false)
         return
       }
       if (typing || e.metaKey || e.ctrlKey || e.altKey) return
@@ -29,8 +28,7 @@ export function useHotkeys(): void {
           e.preventDefault()
           input.focus()
         }
-      } else if (e.key === 'p' || e.key === 'P') s.togglePresentation()
-      else if (e.key === 'r' || e.key === 'R') s.toggleRecord()
+      } else if (e.key === 'r' || e.key === 'R') s.toggleRecord()
       else if (e.key === 'w' || e.key === 'W') s.setTab('moves')
       else if (e.key === ' ') {
         const m = s.selectedId ? s.markets[s.selectedId] : undefined

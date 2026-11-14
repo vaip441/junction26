@@ -2,22 +2,14 @@ import type { ReactNode } from 'react'
 import type { MarketSummary } from '../../lib/types'
 
 const TONES = {
-  neutral: 'border-line text-muted',
-  madeup: 'border-madeup/50 text-madeup',
-  up: 'border-up/50 text-up',
-  down: 'border-down/50 text-down',
-  none: 'border-none/50 text-none',
-  accent: 'border-accent/50 text-accent',
+  neutral: 'text-muted',
+  // made-up data is never passed off as real: its tag is the one that is filled in
+  madeup: 'rounded-xs bg-madeup/15 px-1.5 text-madeup',
 } as const
 
+/** A word that says what kind of thing this is. Plain text; only the made-up tag is filled. */
 export function Badge({ tone = 'neutral', children }: { tone?: keyof typeof TONES; children: ReactNode }) {
-  return (
-    <span
-      className={`inline-flex items-center rounded border px-1.5 py-px text-[10px] font-semibold uppercase tracking-wider ${TONES[tone]}`}
-    >
-      {children}
-    </span>
-  )
+  return <span className={`inline-flex shrink-0 items-center whitespace-nowrap text-xs font-medium ${TONES[tone]}`}>{children}</span>
 }
 
 export function VenueBadge({ venue }: { venue: 'kalshi' | 'polymarket' | 'made_up' }) {
@@ -33,7 +25,7 @@ export function VenueBadges({ market }: { market: Pick<MarketSummary, 'venue' | 
       <VenueBadge venue={market.venue} />
       {twin && (
         <>
-          <span className="text-[10px] text-faint">+</span>
+          <span className="text-xs text-faint">+</span>
           <VenueBadge venue={twin.venue} />
         </>
       )}

@@ -59,7 +59,7 @@ export function RulesPanel({ marketId, rules, queries }: { marketId: string; rul
         key={c.start}
         ref={isFocus ? focused : undefined}
         title={`${c.count} ${c.count === 1 ? 'item points' : 'items point'} at this sentence`}
-        className={`rounded-sm px-0.5 text-text ${c.count >= 3 ? 'bg-accent/35' : c.count === 2 ? 'bg-accent/25' : 'bg-accent/15'}`}
+        className={`rounded-sm px-0.5 text-text ${c.count >= 3 ? 'bg-text/30' : c.count === 2 ? 'bg-text/20' : 'bg-text/12'}`}
       >
         {rules.slice(c.start, c.end)}
       </mark>,
@@ -71,13 +71,13 @@ export function RulesPanel({ marketId, rules, queries }: { marketId: string; rul
   return (
     <div className="flex flex-col gap-3 p-3">
       {rules && <p className="whitespace-pre-line text-xs leading-relaxed text-muted">{parts}</p>}
-      {cited.length > 0 && <p className="text-[10px] text-faint">Highlighted: the sentences that made an item on the tape matter.</p>}
+      {cited.length > 0 && <p className="text-[11px] text-faint">Highlighted: the sentences that made an item on the tape matter.</p>}
       {queries && queries.length > 0 && (
         <div className="flex flex-col gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-faint">What it searches the web for</span>
+          <span className="text-[11px] font-semibold text-faint">What it searches the web for</span>
           <div className="flex flex-wrap gap-1.5">
             {queries.map((q) => (
-              <span key={q} className="rounded border border-line bg-bg px-2 py-0.5 text-xs text-text">
+              <span key={q} className="rounded-xs border border-line bg-bg px-2 py-0.5 text-xs text-text">
                 {q}
               </span>
             ))}

@@ -89,7 +89,9 @@ export class TickMarkers implements ISeriesPrimitive<Time> {
         this.height = mediaSize.height
         ctx.save()
         const s = this.scale
-        for (const b of this.placedBands) {
+        // jumps that follow each other closely would stack their "?" into a smudge: one for the group
+        let lastMark = -Infinity
+        for (const b of [...this.placedBands].sort((p, q) => p.x0 - q.x0)) {
           const w = b.x1 - b.x0
           ctx.fillStyle = b.color
           ctx.globalAlpha = 0.1
@@ -98,6 +100,8 @@ export class TickMarkers implements ISeriesPrimitive<Time> {
           ctx.fillRect(b.x0, 0, w, 2 * s)
           // the "?" that says this stretch has an answer
           const cx = b.x0 + w / 2
+          if (cx - lastMark < 18 * s) continue
+          lastMark = cx
           ctx.globalAlpha = 1
           ctx.beginPath()
           ctx.arc(cx, 11 * s, 7 * s, 0, Math.PI * 2)
@@ -157,7 +161,7 @@ export class TickMarkers implements ISeriesPrimitive<Time> {
     this.requestUpdate = null
   }
 
-  /** `scale` enlarges the dots with the rest of the screen (presentation mode). */
+  /** `scale` sizes the dots: 1 is their normal size. */
   set(marks: TickMark[], bands: MoveBand[], scale: number, halo: string): void {
     this.marks = marks
     this.bands = bands

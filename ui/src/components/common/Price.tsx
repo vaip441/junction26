@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { pct, pts } from '../../lib/format'
 
 /**
- * A price. With `flash`, a change that shows (the rounded figure differs) tints it the colour of the
+ * A price. With `flash`, a change that shows (the rounded-xs figure differs) tints it the colour of the
  * direction for a moment, so a list of markets says which one just moved.
  */
 export function Price({ value, className = '', flash = false }: { value: number | null | undefined; className?: string; flash?: boolean }) {
