@@ -115,10 +115,7 @@ export function ReadingStrip() {
 
   return (
     <div className="flex h-8 shrink-0 items-center border-b border-line bg-panel text-xs" aria-label="What is being read from the web">
-      <span className="label flex shrink-0 items-center gap-2 pl-4 pr-3">
-        <span className="live-dot" aria-hidden="true" />
-        Reading
-      </span>
+      <span className="label shrink-0 pl-4 pr-3">Reading</span>
       <div
         className="strip-fade min-w-0 flex-1 overflow-hidden"
         onPointerEnter={(e) => {

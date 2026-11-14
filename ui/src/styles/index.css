@@ -169,20 +169,7 @@ body {
   background: var(--color-down);
 }
 
-/* The reading strip: a dot that breathes while the service reads, items that fade in as they arrive, and
-   a soft right edge where the oldest leave. */
-@keyframes live-dot {
-  50% {
-    opacity: 0.35;
-  }
-}
-.live-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--color-text);
-  animation: live-dot 2.4s ease-in-out infinite;
-}
+/* The reading strip: items that fade in as they arrive, and a soft right edge where the oldest leave. */
 @keyframes read-in {
   from {
     opacity: 0;
@@ -394,7 +381,6 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .live-dot,
   .read-in,
   .tape-focus,
   .pop-in,
