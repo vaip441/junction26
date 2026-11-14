@@ -33,6 +33,37 @@ const MAX_LEAD_LABELS = 3
 /** The price axis never spans less than this many points, so a flat price is a flat line with distinct labels. */
 const MIN_SPAN = 6
 
+/** How much of the history the chart shows, counted back from the newest price. */
+const RANGES = [
+  { id: '1h', label: '1H', seconds: 3600 },
+  { id: '6h', label: '6H', seconds: 6 * 3600 },
+  { id: '1d', label: '1D', seconds: 24 * 3600 },
+  { id: '1w', label: '1W', seconds: 7 * 24 * 3600 },
+  { id: 'all', label: 'All', seconds: Infinity },
+] as const
+type RangeId = (typeof RANGES)[number]['id']
+/** Empty bars kept to the right of the newest price, as in the chart's own `rightOffset`. */
+const RIGHT_OFFSET = 4
+
+/** Seconds of price history on the chart. */
+function historySpan(data: { time: UTCTimestamp }[]): number {
+  return data.length > 1 ? data[data.length - 1].time - data[0].time : 0
+}
+
+/** Show the last `id` of the history; a range longer than the history, like "All", shows everything. */
+function showRange(c: IChartApi, data: { time: UTCTimestamp }[], id: RangeId): void {
+  const seconds = RANGES.find((r) => r.id === id)?.seconds ?? Infinity
+  if (data.length < 2 || seconds >= historySpan(data)) {
+    c.timeScale().fitContent()
+    return
+  }
+  const start = data[data.length - 1].time - seconds
+  let from = data.findIndex((d) => d.time >= start)
+  // the bar just before the range starts, so the line enters from the left edge; never fewer than two bars
+  from = Math.max(0, Math.min(from - 1, data.length - 2))
+  c.timeScale().setVisibleLogicalRange({ from, to: data.length - 1 + RIGHT_OFFSET })
+}
+
 function cssVar(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
@@ -102,6 +133,9 @@ export function PriceChart({ marketId }: { marketId: string }) {
   const byBand = useRef(new Map<string, Move>())
   const fitted = useRef<string | null>(null)
   const [hover, setHover] = useState<Hover | null>(null)
+  const [range, setRange] = useState<RangeId>('all')
+  // the latest range and data, for the resize observer made once below
+  const view = useRef<{ range: RangeId; data: { time: UTCTimestamp }[] }>({ range: 'all', data: [] })
 
   const prices = useStore((s) => s.prices[marketId])
   const ticks = useStore((s) => s.ticks[marketId])
@@ -123,7 +157,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
       layout: { background: { color: 'transparent' }, textColor: text, fontFamily: cssVar('--font-mono'), attributionLogo: false },
       grid: { vertLines: { color: withAlpha(line, 0.5) }, horzLines: { color: withAlpha(line, 0.5) } },
       rightPriceScale: { borderColor: line, scaleMargins: { top: 0.2, bottom: 0.15 } },
-      timeScale: { borderColor: line, timeVisible: true, secondsVisible: false, rightOffset: 4 },
+      timeScale: { borderColor: line, timeVisible: true, secondsVisible: false, rightOffset: RIGHT_OFFSET },
       crosshair: { vertLine: { color: text, labelBackgroundColor: line }, horzLine: { color: text, labelBackgroundColor: line } },
       localization: { priceFormatter: (p: number) => pct(p) },
     })
@@ -174,13 +208,13 @@ export function PriceChart({ marketId }: { marketId: string }) {
     })
 
     // The chart has no width until its box is laid out, and a fit made then squeezes a short history into a
-    // sliver. Fit again whenever the box changes width (first layout, window resize, presentation mode).
+    // sliver. Show the range again whenever the box changes width (first layout, window resize, presentation mode).
     let width = 0
     const resized = new ResizeObserver(([entry]) => {
       const w = Math.round(entry.contentRect.width)
       if (w === width) return
       width = w
-      if (w > 0 && fitted.current) c.timeScale().fitContent()
+      if (w > 0 && fitted.current) showRange(c, view.current.data, view.current.range)
     })
     resized.observe(box.current)
 
@@ -211,11 +245,22 @@ export function PriceChart({ marketId }: { marketId: string }) {
   useEffect(() => {
     if (!area.current || !chart.current) return
     area.current.setData(data)
+    view.current.data = data
     if (data.length > 1 && fitted.current !== marketId) {
-      chart.current.timeScale().fitContent()
+      showRange(chart.current, data, view.current.range)
       fitted.current = marketId
     }
   }, [data, marketId])
+
+  const pickRange = (id: RangeId) => {
+    setRange(id)
+    view.current.range = id
+    if (chart.current) showRange(chart.current, data, id)
+  }
+  // a range longer than this market's history would show the same as "All": it cannot be picked, and when
+  // it was picked on another market, "All" is what is shown
+  const span = historySpan(data)
+  const shown: RangeId = RANGES.some((r) => r.id === range && r.seconds < span) ? range : 'all'
 
   // markers and lead-time lines
   useEffect(() => {
@@ -341,6 +386,34 @@ export function PriceChart({ marketId }: { marketId: string }) {
         // smooth however busy or throttled the page is); the price axis on the right stays put
         <div className="pointer-events-none absolute inset-y-0 left-0 right-14 overflow-hidden">
           <div className="chart-wipe absolute inset-0" />
+        </div>
+      )}
+      {!empty && data.length > 1 && (
+        <div role="group" aria-label="Chart range" className="absolute left-2 top-2 z-10 flex gap-0.5 rounded border border-line bg-panel/90 p-0.5">
+          {RANGES.map((r) => {
+            const available = r.id === 'all' || r.seconds < span
+            return (
+              <button
+                key={r.id}
+                type="button"
+                aria-pressed={shown === r.id}
+                disabled={!available}
+                title={available ? undefined : 'The price history is shorter than this'}
+                onClick={() => pickRange(r.id)}
+                className={`num rounded px-1.5 py-0.5 font-semibold uppercase tracking-wider transition-colors ${
+                  presentation ? 'text-sm' : 'text-[11px]'
+                } ${
+                  shown === r.id
+                    ? 'bg-panel-2 text-text'
+                    : available
+                      ? 'text-muted hover:text-text'
+                      : 'cursor-not-allowed text-faint opacity-50'
+                }`}
+              >
+                {r.label}
+              </button>
+            )
+          })}
         </div>
       )}
       {empty && (
