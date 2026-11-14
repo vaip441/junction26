@@ -1,6 +1,7 @@
 """Background loops: price sampling, article polling, instant fill."""
 import asyncio
 import logging
+import os
 import re
 import time
 from urllib.parse import urlsplit
@@ -362,19 +363,30 @@ def retry_delay(fails: int) -> float:
     return min(RETRY_SECONDS * 2 ** min(fails - 1, 10), 3600)
 
 
+NIGHT = (21, 7)  # UTC hours: 23:00 to 09:00 in Tallinn
+
+
+def interval(market: dict, now: float) -> float:
+    """Seconds between two searches of a market. With NIGHT_POLL_SECONDS set, no market is searched more
+    often than that at night: nobody is watching, and every search costs credits."""
+    night = int(os.environ.get("NIGHT_POLL_SECONDS") or 0)
+    hour = time.gmtime(now).tm_hour
+    return max(market["poll_seconds"], night) if hour >= NIGHT[0] or hour < NIGHT[1] else market["poll_seconds"]
+
+
 def spread(db, now: float) -> dict[str, float]:
     """Last-fetch times that make the markets already filled come due one after another over their interval.
     Starting empty, every market was due at the first pass and so together at every pass after it: the whole
     list was searched at once every three minutes, and the screen got its reading in bursts."""
     filled = [m for m in store.list_markets(db) if m["filled"] and m["poll_seconds"] > 0]
-    return {m["id"]: now - m["poll_seconds"] * (1 - i / len(filled)) for i, m in enumerate(filled)}
+    return {m["id"]: now - interval(m, now) * (1 - i / len(filled)) for i, m in enumerate(filled)}
 
 
 def due(db, last_fetch: dict, now: float) -> list[dict]:
     """Lead markets whose polling interval has passed: not-yet-filled ones first, then the fastest.
     A poll interval of 0 means never (the demo market moves only by what is said to it)."""
     ms = [m for m in store.list_markets(db)
-          if m["poll_seconds"] > 0 and now - last_fetch.get(m["id"], 0) >= m["poll_seconds"]]
+          if m["poll_seconds"] > 0 and now - last_fetch.get(m["id"], 0) >= interval(m, now)]
     return sorted(ms, key=lambda m: (m["filled"], m["poll_seconds"]))
 
 
@@ -404,7 +416,7 @@ async def article_pass(db, bus, scorer, last_fetch: dict, now: float | None = No
     busy.update(m["id"] for m in markets)
 
     async def work(m: dict) -> None:
-        id, poll = m["id"], m["poll_seconds"]
+        id, poll = m["id"], interval(m, started)
         try:
             if not m["queries"]:
                 store.set_queries(db, id, await queries_for(m["title"], m["rules"]))

@@ -83,6 +83,7 @@ watch it become a tick. It is also what `/` shows until the screen is built.
 | --- | --- |
 | `GEMINI_API_KEY` | Google AI key with access to `gemini-decision-1` and the text model |
 | `CONTEXT_DEV_API_KEY` | one Context.dev key, or several separated by commas; each adds `CONTEXT_DEV_CONCURRENCY` (default 500) concurrent requests |
+| `NIGHT_POLL_SECONDS` | optional: between 21:00 and 07:00 UTC no market is searched more often than this many seconds, to save credits while nobody watches |
 | `TERMINAL_KEY` | shared secret that every write must send in an `X-Terminal-Key` header |
 | `DB_PATH` | the SQLite file |
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |

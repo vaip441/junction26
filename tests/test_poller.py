@@ -120,3 +120,18 @@ def test_after_a_restart_the_markets_come_due_one_after_another_not_all_at_once(
     assert [m["id"] for m in poller.due(db, last, 1000)] == ["new", "a"]  # one not yet filled never waits
     assert [m["id"] for m in poller.due(db, {**last, "new": 1000, "a": 1000}, 1060)] == ["b"]
     assert [m["id"] for m in poller.due(db, {**last, "new": 1000, "a": 1000, "b": 1060}, 1120)] == ["c"]
+
+
+def test_at_night_the_markets_are_searched_less_often_when_asked_to(monkeypatch):
+    db = store.connect(":memory:")
+    store.add_market(db, id="a", venue="kalshi", venue_ref="a", title="a", rules="r", url=None, queries=["q"], poll_seconds=180)
+    store.set_filled(db, "a")
+    store.add_market(db, id="slow", venue="kalshi", venue_ref="slow", title="slow", rules="r", url=None, poll_seconds=3600)
+    night, day = 1794700800.0, 1794736800.0  # 15 Nov 2026, 00:00 and 10:00 UTC
+    ids = lambda last, now: [m["id"] for m in poller.due(db, last, now)]
+    assert ids({"a": night - 200, "slow": night}, night) == ["a"]  # not asked to: night is like day
+    monkeypatch.setenv("NIGHT_POLL_SECONDS", "900")
+    assert ids({"a": night - 200, "slow": night}, night) == [] and ids({"a": night - 900, "slow": night}, night) == ["a"]
+    assert ids({"a": day - 200, "slow": day}, day) == ["a"]
+    assert ids({"a": night, "slow": night - 3600}, night) == ["slow"]  # one already slower keeps its own interval
+    assert poller.spread(db, night) == {"a": night - 900}
