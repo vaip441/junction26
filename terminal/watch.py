@@ -1,4 +1,5 @@
 """What to search for: queries written from a market's title and rules by an ordinary Gemini model."""
+import asyncio
 import json
 import logging
 import os
@@ -6,6 +7,16 @@ import os
 import httpx
 
 log = logging.getLogger(__name__)
+_client: tuple[httpx.AsyncClient, asyncio.AbstractEventLoop] | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    global _client
+    loop = asyncio.get_running_loop()
+    if _client is None or _client[1] is not loop or _client[0].is_closed:
+        _client = (httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)),
+                   loop)
+    return _client[0]
 PROMPT = """You help track news that could move a prediction market.
 
 Market: {title}
@@ -21,13 +32,12 @@ class QueryError(Exception):
 
 async def ask_json(prompt: str):
     model = os.environ.get("GEMINI_TEXT_MODEL", "gemini-3.8-flash")
-    async with httpx.AsyncClient(timeout=30) as c:
-        r = await c.post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                         headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
-                         json={"contents": [{"parts": [{"text": prompt}]}],
-                               "generationConfig": {"responseMimeType": "application/json"}})
-        r.raise_for_status()
-        return json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
+    r = await _http().post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                           headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
+                           json={"contents": [{"parts": [{"text": prompt}]}],
+                                 "generationConfig": {"responseMimeType": "application/json"}})
+    r.raise_for_status()
+    return json.loads(r.json()["candidates"][0]["content"]["parts"][0]["text"])
 
 
 async def queries_for(title: str, rules: str) -> list[str]:

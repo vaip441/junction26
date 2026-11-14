@@ -80,7 +80,7 @@ watch it become a tick. It is also what `/` shows until the screen is built.
 | Variable | Meaning |
 | --- | --- |
 | `GEMINI_API_KEY` | Google AI key with access to `gemini-decision-1` and the text model |
-| `CONTEXT_DEV_API_KEY` | one Context.dev key, or several separated by commas; each adds 10 requests a minute |
+| `CONTEXT_DEV_API_KEY` | one Context.dev key, or several separated by commas; each adds `CONTEXT_DEV_CONCURRENCY` (default 500) concurrent requests |
 | `TERMINAL_KEY` | shared secret that every write must send in an `X-Terminal-Key` header |
 | `DB_PATH` | the SQLite file |
 | `GEMINI_TEXT_MODEL` | the model that writes search queries and made-up questions |

@@ -172,12 +172,19 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
     searches.append(("post", queries[0], {"include_domains": POST_SITES}))  # posts: the first query only
     # the news index is minutes behind the publishers where the web search is hours, but knows companies only
     companies = market.get("companies") or []
-    found = await asyncio.gather(*(search(q, num_results=num_results, reserve=reserve, **kw) for _, q, kw in searches),
-                                 *(news(c, since=time.time() - FEED_WINDOW, reserve=reserve) for c in companies),
-                                 *(gnews(q) for q in queries),  # last: a story also found above keeps its own address
-                                 return_exceptions=True)
-    fresh, failed, stories = {}, [], set()
+    slug = comment_slug(db, market)
     sources = searches + [("news", c, None) for c in companies] + [("Google News", q, None) for q in queries]
+    core_coros = [*(search(q, num_results=num_results, reserve=reserve, **kw) for _, q, kw in searches),
+                  *(news(c, since=time.time() - FEED_WINDOW, reserve=reserve) for c in companies),
+                  *(gnews(q) for q in queries)]  # last: a story also found above keeps its own address
+    sky_coros = [(bluesky or posts.bluesky)(q, time.time() - FEED_WINDOW) for q in queries]
+    comment_coro = (comments or venue_comments)(slug) if slug else None
+    gathered = await asyncio.gather(*core_coros, *sky_coros, *([comment_coro] if comment_coro else []),
+                                    return_exceptions=True)
+    found = gathered[:len(sources)]
+    sky_said = gathered[len(sources):len(sources) + len(queries)]
+    comment_res = gathered[-1] if comment_coro else None
+    fresh, failed, stories = {}, [], set()
     for (kind, q, _), results in zip(sources, found):
         if isinstance(results, BaseException):
             log.warning("%s search failed for %r on %s: %s", kind, q, market["id"], results)
@@ -211,21 +218,20 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
             key = dedupe_key("post", r["url"], r["title"], 0)
             if key not in fresh and not store.has_tick(db, market["id"], key):
                 fresh[key] = ("post", r)
-    if slug := comment_slug(db, market):
-        try:
-            said = await (comments or venue_comments)(slug)
-        except Exception as e:  # the comments are an extra: the pass goes on without them
-            log.warning("could not read the comments under %s: %s: %s", slug, type(e).__name__, str(e)[:100])
+    if slug:
+        if isinstance(comment_res, BaseException):  # the comments are an extra: the pass goes on without them
+            log.warning("could not read the comments under %s: %s: %s", slug, type(comment_res).__name__,
+                        str(comment_res)[:100])
             said = []
+        else:
+            said = comment_res
         for c in said:
             key, text = f"pm-comment:{c['id']}", " ".join(c["text"].split())  # its page's address is every comment's
             if c["published"] >= time.time() - FEED_WINDOW and key not in fresh and not store.has_tick(db, market["id"], key):
                 fresh[key] = ("post", {"url": f"https://polymarket.com/event/{slug}", "title": text[:280],
                                        "description": text, "published": c["published"], "comment": c, "key": key})
     # Bluesky's own search: free, and each post arrives whole. A search that fails is an extra lost, not the pass.
-    said = await asyncio.gather(*((bluesky or posts.bluesky)(q, time.time() - FEED_WINDOW) for q in queries),
-                                return_exceptions=True)
-    for q, found_posts in zip(queries, said):
+    for q, found_posts in zip(queries, sky_said):
         if isinstance(found_posts, BaseException):
             log.warning("Bluesky search failed for %r on %s: %s: %s", q, market["id"], type(found_posts).__name__,
                         str(found_posts)[:100])
@@ -237,7 +243,7 @@ async def fetch_articles(db, bus, scorer, market: dict, *, backfill: bool, num_r
                                        "published": p["published"], "bluesky": p})
     if backfill:  # for the frontend: how much the first fill found, before the scoring that takes most of its time
         bus.publish("market", {"market_id": market["id"], "status": "scoring", "found": len(fresh)})
-    limit = asyncio.Semaphore(10)
+    limit = asyncio.Semaphore(ITEM_CONCURRENCY)
 
     async def one(kind: str, r: dict) -> bool:
         async with limit:
@@ -321,7 +327,7 @@ async def fill_dates(db, bus, *, published_times=None) -> int:
     return len(urls)
 
 
-async def date_loop(db, bus, interval: float = 60) -> None:
+async def date_loop(db, bus, interval: float = 30) -> None:
     await forever("dates", interval, lambda: fill_dates(db, bus))
 
 
@@ -342,7 +348,8 @@ def due(db, last_fetch: dict, now: float) -> list[dict]:
     return sorted(ms, key=lambda m: (m["filled"], m["poll_seconds"]))
 
 
-MARKETS_AT_ONCE = 4
+ITEM_CONCURRENCY = 40
+MARKETS_AT_ONCE = 24
 PAGE_RETRY = 6 * 3600
 
 
@@ -442,7 +449,7 @@ async def article_loop(db, bus, scorer, wake: asyncio.Event, busy: set | None = 
             running.add(task)
             task.add_done_callback(running.discard)
             try:
-                await asyncio.wait_for(wake.wait(), 15)
+                await asyncio.wait_for(wake.wait(), 5)
             except asyncio.TimeoutError:
                 pass
             wake.clear()

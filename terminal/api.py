@@ -58,7 +58,7 @@ class TickIn(BaseModel):
 
 class MarketIn(BaseModel):
     query: str = Field(min_length=1, max_length=500)
-    poll_seconds: int = Field(900, ge=30, le=86400)
+    poll_seconds: int = Field(180, ge=30, le=86400)
 
 
 def consensus(db, m: dict, price: float | None, now: float) -> dict | None:

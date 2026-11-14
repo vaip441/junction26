@@ -1,8 +1,9 @@
 """Context.dev: web search and page scrape over a pool of API keys.
 
-Each key (account) is limited to a number of requests a minute, so capacity is added by adding keys:
-CONTEXT_DEV_API_KEY=key1,key2,key3. Requests are spread evenly, a key the server refuses is rested and
-the request goes out on the next one. Failures raise ContextError; callers decide what to do.
+Each key (account) has its own concurrency limit (500 in-flight requests by default; optional per-minute
+limit via CONTEXT_DEV_RPM), so capacity is added by adding keys: CONTEXT_DEV_API_KEY=key1,key2,key3.
+Requests are spread evenly, a key the server refuses is rested and the request goes out on the next one.
+Failures raise ContextError; callers decide what to do.
 """
 import asyncio
 import logging
@@ -29,43 +30,74 @@ class Refused(ContextError):
 
 
 REST_SECONDS = 600  # a key that is invalid or out of credits is left alone this long before it is tried again
+DEFAULT_CONCURRENCY = 500  # Context.dev concurrency limit per org/key on current plans
+
+
+def _http() -> httpx.AsyncClient:
+    global _client
+    if _client is None:
+        _client = httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_connections=500, max_keepalive_connections=100))
+    return _client
 
 
 class Limiter:
-    """Sliding one-minute window per API key. Context.dev refuses more than `per_minute` requests a key."""
+    """Concurrency and optional per-minute window per API key."""
 
-    def __init__(self, keys: list[str], per_minute: int):
+    def __init__(self, keys: list[str], per_minute: int | None = None, max_concurrent: int = DEFAULT_CONCURRENCY):
         keys = list(dict.fromkeys(keys))             # the same key twice is still one allowance
-        self.per_minute = per_minute
+        self.per_minute = per_minute if per_minute and per_minute > 0 else None
+        self.max_concurrent = max_concurrent
+        self.in_flight = {k: 0 for k in keys}        # requests currently in flight per key
         self.used = {k: deque() for k in keys}       # request times within the last minute
         self.blocked = {k: 0.0 for k in keys}        # do not use a key before this time
         self.credits = {k: None for k in keys}       # credits left, as last reported by the server
+        self._freed: asyncio.Event | None = None
 
     def _free(self, key: str, now: float, reserve: int = 0) -> bool:
         used = self.used[key]
         while used and used[0] <= now - 60:
             used.popleft()
-        return now >= self.blocked[key] and len(used) < max(1, self.per_minute - reserve)
+        if now < self.blocked[key]:
+            return False
+        if self.in_flight[key] >= max(1, self.max_concurrent - reserve):
+            return False
+        if self.per_minute is not None and len(used) >= max(1, self.per_minute - reserve):
+            return False
+        return True
 
     def try_take(self, now: float | None = None, reserve: int = 0) -> str | None:
         """A key with capacity right now (and count the request against it), else None.
 
-        `reserve` leaves that many requests a minute untouched, for callers that must not starve others.
+        `reserve` leaves that many slots untouched, for callers that must not starve others.
         """
         now = time.monotonic() if now is None else now
         free = [k for k in self.used if self._free(k, now, reserve)]
         if not free:
             return None
-        key = min(free, key=lambda k: len(self.used[k]))  # least used this minute: accounts drain evenly
+        key = min(free, key=lambda k: (self.in_flight[k], len(self.used[k])))  # spread load evenly across keys
         self.used[key].append(now)
+        self.in_flight[key] += 1
         return key
 
+    def release(self, key: str) -> None:
+        """Release an in-flight slot when a request finishes and wake any waiter."""
+        if key in self.in_flight and self.in_flight[key] > 0:
+            self.in_flight[key] -= 1
+        if self._freed is not None:
+            self._freed.set()
+
     def wait_time(self, now: float | None = None, reserve: int = 0) -> float:
-        """Seconds until some key has capacity beyond the reserve."""
+        """Seconds until some key has capacity beyond the reserve (0 if only waiting on an in-flight slot)."""
         now = time.monotonic() if now is None else now
-        cap = max(1, self.per_minute - reserve)
-        return max(0.0, min(max(self.blocked[k], u[len(u) - cap] + 60 if len(u) >= cap else now) - now
-                            for k, u in self.used.items()))
+        waits = []
+        for k, u in self.used.items():
+            w = self.blocked[k]
+            if self.per_minute is not None:
+                cap = max(1, self.per_minute - reserve)
+                if len(u) >= cap:
+                    w = max(w, u[len(u) - cap] + 60)
+            waits.append(w - now)
+        return max(0.0, min(waits))
 
     def refused(self, key: str, retry_after: float, now: float | None = None) -> None:
         self.blocked[key] = (time.monotonic() if now is None else now) + retry_after
@@ -76,35 +108,47 @@ class Limiter:
         out = []
         for i, key in enumerate(self.used, 1):
             self._free(key, now)  # drops requests older than a minute
-            out.append({"key": i, "used_last_minute": len(self.used[key]), "per_minute": self.per_minute,
+            out.append({"key": i, "in_flight": self.in_flight[key], "max_concurrent": self.max_concurrent,
+                        "used_last_minute": len(self.used[key]), "per_minute": self.per_minute,
                         "resting_seconds": round(max(0.0, self.blocked[key] - now)),
                         "credits_remaining": self.credits[key]})
         return out
 
     async def take(self, reserve: int = 0) -> str:
         while (key := self.try_take(reserve=reserve)) is None:
-            await asyncio.sleep(self.wait_time(reserve=reserve) + 0.05)
+            if self._freed is None:
+                self._freed = asyncio.Event()
+            self._freed.clear()
+            if (key := self.try_take(reserve=reserve)) is not None:
+                return key
+            wait = self.wait_time(reserve=reserve)
+            try:
+                await asyncio.wait_for(self._freed.wait(), 0.25 if wait == 0 else wait + 0.05)
+            except asyncio.TimeoutError:
+                pass
         return key
 
 
 def limiter() -> Limiter:
-    """CONTEXT_DEV_API_KEY may hold several comma-separated keys; each has its own per-minute allowance."""
+    """CONTEXT_DEV_API_KEY may hold several comma-separated keys; each has its own concurrency/rate allowance."""
     global _limiter
     if _limiter is None:
         keys = [k.strip() for k in os.environ["CONTEXT_DEV_API_KEY"].split(",") if k.strip()]
-        _limiter = Limiter(keys, int(os.environ.get("CONTEXT_DEV_RPM", "10")))
+        rpm_raw = os.environ.get("CONTEXT_DEV_RPM", "")
+        rpm = int(rpm_raw) if rpm_raw.strip() else None
+        conc = int(os.environ.get("CONTEXT_DEV_CONCURRENCY", str(DEFAULT_CONCURRENCY)))
+        _limiter = Limiter(keys, per_minute=rpm, max_concurrent=conc)
     return _limiter
 
 
 async def _post(path: str, body: dict, key: str) -> dict:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=60)
+    client = _http()
     lim = limiter()
     try:
-        r = await _client.post(API + path, json=body, headers={"Authorization": f"Bearer {key}"})
+        r = await client.post(API + path, json=body, headers={"Authorization": f"Bearer {key}"})
         if r.status_code in (401, 402, 403, 429):
-            rest = float(r.headers.get("retry-after", 30)) if r.status_code == 429 else REST_SECONDS
+            default_rest = 1 if r.headers.get("x-ratelimit-mode") == "concurrency" else 30
+            rest = float(r.headers.get("retry-after", default_rest)) if r.status_code == 429 else REST_SECONDS
             lim.refused(key, rest)
             number = list(lim.used).index(key) + 1
             log.warning("Context.dev key %d refused with HTTP %d; resting it %.0fs", number, r.status_code, rest)
@@ -131,6 +175,8 @@ async def _call(path: str, body: dict, *, wait: bool, reserve: int = 0) -> dict 
             return await _post(path, body, key)
         except Refused as e:
             last = e
+        finally:
+            lim.release(key)
     raise last
 
 
@@ -140,7 +186,10 @@ def status() -> dict:
         keys = limiter().status()
     except KeyError:  # no key configured
         keys = []
-    return {"keys": keys, "per_minute": sum(k["per_minute"] for k in keys),
+    per_min = sum(k["per_minute"] for k in keys if k["per_minute"] is not None) if any(
+        k["per_minute"] is not None for k in keys) else None
+    return {"keys": keys, "max_concurrent": sum(k["max_concurrent"] for k in keys),
+            "in_flight": sum(k["in_flight"] for k in keys), "per_minute": per_min,
             "used_last_minute": sum(k["used_last_minute"] for k in keys)}
 
 
@@ -191,7 +240,7 @@ def parse_scrape(response: dict) -> tuple[str, float | None]:
     return (response.get("markdown") or {}).get("data") or "", _published(response.get("metadata"))
 
 
-BATCH_POLL_SECONDS, BATCH_WAIT_SECONDS = 5, 600
+BATCH_POLL_SECONDS, BATCH_WAIT_SECONDS = 2, 600
 _batch_turn = 0
 
 
@@ -201,19 +250,18 @@ async def published_times(urls: list[str]) -> dict[str, float | None]:
     A batch takes about a minute, costs 1 credit per page read, and has its own rate limit, so it takes
     nothing from the searches. Keys take turns.
     """
-    global _client, _batch_turn
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=60)
+    global _batch_turn
+    client = _http()
     keys = list(limiter().used)
     headers = {"Authorization": f"Bearer {keys[_batch_turn % len(keys)]}"}
     _batch_turn += 1
     try:
-        r = await _client.post(API + "/batch/submit", headers=headers, json={
+        r = await client.post(API + "/batch/submit", headers=headers, json={
             "input": {"mode": "scrape", "data": {"format": "markdown", "urls": [{"url": u} for u in urls]}}})
         r.raise_for_status()
         id, deadline = r.json()["id"], time.monotonic() + BATCH_WAIT_SECONDS
         while True:
-            r = await _client.get(f"{API}/batch/{id}", headers=headers)
+            r = await client.get(f"{API}/batch/{id}", headers=headers)
             r.raise_for_status()
             status = r.json().get("status")
             if status not in ("pending", "queued", "running"):
@@ -225,8 +273,8 @@ async def published_times(urls: list[str]) -> dict[str, float | None]:
             raise ContextError(f"batch {id} ended as {status}")
         out, cursor = {}, None
         while True:
-            r = await _client.get(f"{API}/batch/{id}/results", headers=headers,
-                                  params={"limit": 100, **({"cursor": cursor} if cursor else {})})
+            r = await client.get(f"{API}/batch/{id}/results", headers=headers,
+                                 params={"limit": 100, **({"cursor": cursor} if cursor else {})})
             r.raise_for_status()
             page = r.json()
             for d in page.get("data") or []:
@@ -281,9 +329,12 @@ async def news(company: str, *, since: float, limit: int = 25, reserve: int = 0)
 
 async def scrape(url: str) -> tuple[str, float | None]:
     """Text and publish time of a page, or nothing when there is no spare capacity: searches come first."""
+    lim = limiter()
+    reserve = (lim.per_minute // 2) if lim.per_minute else min(50, lim.max_concurrent // 2)
     data = await _call("/web/scrape", {"url": url, "formats": {"markdown": True},
-                                       "sharedParams": {"mainContentOnly": True}},
-                       wait=False, reserve=limiter().per_minute // 2)
+                                       "sharedParams": {"mainContentOnly": True},
+                                       "timeoutOpts": {"milliseconds": 20000, "behavior": "fail"}},
+                       wait=False, reserve=reserve)
     return ("", None) if data is None else parse_scrape(data)
 
 
@@ -307,12 +358,10 @@ async def create_monitor(url: str, instructions: str, hook: str, name: str) -> d
 
 async def delete_monitor(id: str) -> bool:
     """Stop a monitor. It belongs to the key that made it, so each key is asked; False if none had it."""
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=60)
+    client = _http()
     try:
         for key in limiter().used:
-            r = await _client.delete(f"{API}/monitors/{id}", headers={"Authorization": f"Bearer {key}"})
+            r = await client.delete(f"{API}/monitors/{id}", headers={"Authorization": f"Bearer {key}"})
             if r.status_code < 300:
                 return True
         return False

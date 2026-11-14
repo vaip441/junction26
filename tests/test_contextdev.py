@@ -107,10 +107,24 @@ def test_scrape_without_spare_capacity_is_skipped_not_an_error(monkeypatch):
     import httpx
 
     calls = []
+    monkeypatch.setenv("CONTEXT_DEV_CONCURRENCY", "10")
     cd = client_with(lambda r: calls.append(r) or httpx.Response(200, json={}), monkeypatch)
     for _ in range(5):
         cd.limiter().try_take()
     assert asyncio.run(cd.scrape("https://a.example/x")) == ("", None) and calls == []
+
+
+def test_scrape_runs_when_concurrency_capacity_is_available(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    calls = []
+    cd = client_with(lambda r: calls.append(r) or httpx.Response(
+        200, json={"markdown": {"data": "body"}, "metadata": {"publishedTime": "2026-11-12T23:06:04+00:00"}}),
+        monkeypatch)
+    text, ts = asyncio.run(cd.scrape("https://a.example/x"))
+    assert text == "body" and ts is not None and len(calls) == 1 and cd.status()["in_flight"] == 0
 
 
 def test_search_results_carry_the_passages_as_text():
@@ -173,7 +187,8 @@ def test_a_refused_key_rests_and_the_request_goes_out_on_the_next_key(monkeypatc
     assert len(asyncio.run(cd.search("q"))) == 1 and used == ["k1", "k2"]
     assert len(asyncio.run(cd.search("q"))) == 1 and used == ["k1", "k2", "k2"]  # k1 is resting
     status = cd.status()
-    assert status["per_minute"] == 20 and status["used_last_minute"] == 3
+    assert status["max_concurrent"] == 1000 and status["in_flight"] == 0
+    assert status["per_minute"] is None and status["used_last_minute"] == 3
     assert [k["key"] for k in status["keys"]] == [1, 2]
     assert status["keys"][0]["resting_seconds"] > 590 and status["keys"][0]["credits_remaining"] is None
     assert status["keys"][1]["resting_seconds"] == 0 and status["keys"][1]["credits_remaining"] == 4321
@@ -196,7 +211,8 @@ def test_status_without_any_key_configured_is_empty_not_an_error(monkeypatch):
 
     monkeypatch.delenv("CONTEXT_DEV_API_KEY", raising=False)
     monkeypatch.setattr(contextdev, "_limiter", None)
-    assert contextdev.status() == {"keys": [], "per_minute": 0, "used_last_minute": 0}
+    assert contextdev.status() == {"keys": [], "max_concurrent": 0, "in_flight": 0, "per_minute": None,
+                                   "used_last_minute": 0}
 
 
 def test_search_can_leave_freshness_out(monkeypatch):
@@ -221,6 +237,7 @@ def test_background_searches_leave_room_for_a_person_asking(monkeypatch):
 
     import httpx
 
+    monkeypatch.setenv("CONTEXT_DEV_RPM", "10")
     cd = client_with(lambda request: httpx.Response(200, json={"results": []}), monkeypatch)
 
     async def go():
@@ -234,6 +251,40 @@ def test_background_searches_leave_room_for_a_person_asking(monkeypatch):
         return waiting
 
     assert asyncio.run(go()) is True
+
+
+def test_concurrency_limiter_releases_slots_and_wakes_waiters(monkeypatch):
+    import asyncio
+
+    import httpx
+
+    monkeypatch.setenv("CONTEXT_DEV_CONCURRENCY", "2")
+    monkeypatch.delenv("CONTEXT_DEV_RPM", raising=False)
+    entered, release = asyncio.Event(), asyncio.Event()
+    started = []
+
+    async def handler(request):
+        q = json.loads(request.content)["query"]
+        started.append(q)
+        if q == "hold":
+            entered.set()
+            await release.wait()
+        return httpx.Response(200, json={"results": []})
+
+    cd = client_with(handler, monkeypatch)
+
+    async def go():
+        t1 = asyncio.create_task(cd.search("hold"))
+        await entered.wait()
+        t2 = asyncio.create_task(cd.search("bg", reserve=1))  # reserve=1 leaves only 1 bg slot, which t1 holds
+        await asyncio.sleep(0.05)
+        assert not t2.done()
+        await cd.search("user")  # user call (reserve=0) uses the reserved slot immediately
+        release.set()
+        await asyncio.gather(t1, t2)
+        return started
+
+    assert asyncio.run(go()) == ["hold", "user", "bg"] and cd.status()["in_flight"] == 0
 
 
 def test_wait_time_counts_the_reserve():

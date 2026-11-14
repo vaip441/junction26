@@ -95,7 +95,7 @@ async def decide(input: str, questions: dict) -> dict:
     """One Decision 1 call: the answers to `questions` about `input`, keyed like the questions."""
     global _client
     if _client is None:
-        _client = httpx.AsyncClient(timeout=20)
+        _client = httpx.AsyncClient(timeout=20, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))
     try:
         r = await _client.post(URL, headers={"x-goog-api-key": os.environ["GEMINI_API_KEY"]},
                                json={"model": "gemini-decision-1", "input": input, "questions": questions})

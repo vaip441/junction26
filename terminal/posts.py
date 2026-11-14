@@ -9,8 +9,20 @@ from xml.etree import ElementTree
 
 import httpx
 
+import asyncio
+
 log = logging.getLogger(__name__)
 UA = "Mozilla/5.0 (X11; Linux x86_64) terminal/0.1"
+_client: tuple[httpx.AsyncClient, asyncio.AbstractEventLoop] | None = None
+
+
+def _http() -> httpx.AsyncClient:
+    global _client
+    loop = asyncio.get_running_loop()
+    if _client is None or _client[1] is not loop or _client[0].is_closed:
+        _client = (httpx.AsyncClient(timeout=10, headers={"User-Agent": UA}, follow_redirects=True,
+                                     limits=httpx.Limits(max_connections=100, max_keepalive_connections=30)), loop)
+    return _client[0]
 
 
 def parse_x(data: dict) -> dict | None:
@@ -32,10 +44,9 @@ async def x_post(url: str) -> dict | None:
     if not m:
         return None
     try:
-        async with httpx.AsyncClient(timeout=10, headers={"User-Agent": UA}) as c:
-            r = await c.get("https://cdn.syndication.twimg.com/tweet-result", params={"id": m[1], "token": "a"})
-            r.raise_for_status()
-            return parse_x(r.json())
+        r = await _http().get("https://cdn.syndication.twimg.com/tweet-result", params={"id": m[1], "token": "a"})
+        r.raise_for_status()
+        return parse_x(r.json())
     except Exception as e:
         log.warning("X lookup failed for %s: %s: %s", url, type(e).__name__, str(e)[:100])
         return None
@@ -116,10 +127,9 @@ async def bluesky(query: str, since: float, until: float | None = None, limit: i
     params = {"q": query[:200], "since": iso(since), "sort": "top", "limit": limit, "lang": "en"}
     if until is not None:
         params["until"] = iso(until)
-    async with httpx.AsyncClient(timeout=10, headers={"User-Agent": UA}) as c:
-        r = await c.get(BLUESKY, params=params)
-        r.raise_for_status()
-        return parse_bluesky(r.json())
+    r = await _http().get(BLUESKY, params=params)
+    r.raise_for_status()
+    return parse_bluesky(r.json())
 
 
 ATOM = {"a": "http://www.w3.org/2005/Atom"}
@@ -139,10 +149,9 @@ def parse_feed(xml: str) -> list[dict]:
 
 
 async def _get_feed(sub: str) -> str:
-    async with httpx.AsyncClient(timeout=10, headers={"User-Agent": UA}, follow_redirects=True) as c:
-        r = await c.get(f"https://www.reddit.com/r/{sub}/new/.rss", params={"limit": 25})
-        r.raise_for_status()
-        return r.text
+    r = await _http().get(f"https://www.reddit.com/r/{sub}/new/.rss", params={"limit": 25})
+    r.raise_for_status()
+    return r.text
 
 
 # Measured on 14 Nov: Reddit answers a client that is not logged in once every 30 seconds or so and

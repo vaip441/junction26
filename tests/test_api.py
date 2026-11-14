@@ -259,10 +259,13 @@ def test_status_reports_context_dev_capacity(path, monkeypatch):
     from terminal import contextdev
 
     monkeypatch.setenv("CONTEXT_DEV_API_KEY", "k1, k2 ,k3")
+    monkeypatch.delenv("CONTEXT_DEV_RPM", raising=False)
+    monkeypatch.delenv("CONTEXT_DEV_CONCURRENCY", raising=False)
     monkeypatch.setattr(contextdev, "_limiter", None)
     with client(path) as c:
         s = c.get("/status").json()["context_dev"]
-    assert s["per_minute"] == 30 and len(s["keys"]) == 3 and s["used_last_minute"] == 0
+    assert s["max_concurrent"] == 1500 and s["in_flight"] == 0 and s["per_minute"] is None
+    assert len(s["keys"]) == 3 and s["used_last_minute"] == 0
 
 
 def test_status_and_the_api_pages_are_not_public(path):
