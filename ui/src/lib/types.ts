@@ -74,6 +74,8 @@ export interface Tick {
   /** The rules sentence that makes this tick matter: only on ticks called up or down. For a spoken or typed
    * one it is the closest sentence, however weak, so its confidence is not shown. */
   rule?: RuleRef | null
+  /** The excerpt of an article that the search found relevant: the evidence shown beside a call. Articles from the web search only. */
+  passage?: string | null
 }
 
 /** A related contract that moved over the same stretch as a move: often the whole story when no news explains it. */

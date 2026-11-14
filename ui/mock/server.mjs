@@ -154,6 +154,8 @@ function makeTick(marketId, f) {
     // the rules sentence that makes it matter: only on a tick that moves the price; for a spoken or typed one
     // the closest sentence, however weak
     rule: (f.kind === 'mic' || f.kind === 'typed') && verdict !== 'none' ? ruleOf(markets.get(marketId), rand(0.15, 0.9)) : null,
+    // the excerpt of the page the search found relevant: articles only (posts are their own text)
+    passage: (f.kind ?? 'article') === 'article' && Math.random() < 0.8 ? pick(PASSAGES[verdict]) : null,
   }
 }
 
@@ -197,6 +199,14 @@ const LIVE_HEADLINES = {
   down: ['Company denies any leadership change is planned', 'Key candidate signs multi-year retention deal', 'Regulator opens a review that could delay the move',
     'Spokesperson: "nothing to announce"', 'Earnings call says leadership is staying put'],
   none: ['Shares flat in early trading', 'Conference schedule published', 'Analyst note repeats earlier view', 'Weekly roundup of chip news'],
+}
+const PASSAGES = {
+  up: ['People familiar with the matter said the board met twice this week and has narrowed its list to two internal candidates, with an announcement expected before the end of the month.',
+    'The filing shows a new compensation package approved on Tuesday, a step the company has in the past taken shortly before naming a senior appointment.'],
+  down: ['"There is no change planned and no search under way," a spokesperson said on Thursday, adding that the current leadership has the full support of the board.',
+    'The regulator said its review would take at least ninety days, which would push any decision past the date the market resolves on.'],
+  none: ['Shares were little changed in early trading as investors waited for the company to report results next week.',
+    'The note repeats the bank\'s earlier view and makes no change to its estimates.'],
 }
 const TRUTH = 'truthsocial.com/@realDonaldTrump'
 const SOURCES = ['reuters.com', 'bloomberg.com', 'ft.com', 'cnbc.com', 'theinformation.com', 'x.com/marketsdesk', 'reddit.com/r/stocks', 'sec.gov']

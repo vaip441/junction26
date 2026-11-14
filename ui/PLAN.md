@@ -184,6 +184,14 @@ ticks called up or down, never on "no effect". For a spoken or typed sentence it
 however weak (a person who typed it is watching for it); for an item from the web only a sentence that
 stands out. Shown as a one-line `§` quote on the tape and highlighted in place in the Rules tab.
 
+### The passage behind a call (`tick.passage`)
+
+For an article found by the web search, the backend keeps the excerpt of the page that Context.dev found
+relevant to the query. On an up or down call it is shown under the headline as a two-line quote, with the
+rules sentence under it: "this, in the article" against "this, in the rules". It costs no extra credits
+(the search already returns it) and it is the evidence for the call. Posts have none (a post is its own
+text), nor do articles from the news index or Google News, which bring no page text.
+
 ### The watched page (`detail.pages`, `page_check` event, `page` ticks)
 
 Each market has one page a Context.dev monitor checks every ten minutes: the page most likely to change

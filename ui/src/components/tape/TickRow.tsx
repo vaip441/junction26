@@ -67,6 +67,16 @@ export function TickRow({
         )}
       </p>
       <DecisionBar up={tick.up} none={tick.none} down={tick.down} fresh={fresh} />
+      {tick.passage && !quiet && (
+        // the line in the article that the search found relevant: the evidence for the call. With the rules
+        // sentence under it, the row reads "this, in the article" against "this, in the rules".
+        <blockquote
+          title={tick.passage}
+          className="line-clamp-2 border-l-2 border-line pl-2 text-xs leading-snug text-muted"
+        >
+          {tick.passage}
+        </blockquote>
+      )}
       {tick.rule && (
         <button
           onClick={() => showRule(tick.rule!)}
