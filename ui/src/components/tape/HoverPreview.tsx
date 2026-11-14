@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../../lib/api'
+import { touchOnly } from '../../lib/device'
 import { shortSource } from '../../lib/sources'
 import type { Preview } from '../../lib/types'
 import { SourceIcon } from '../common/SourceIcon'
@@ -66,7 +67,8 @@ export function HoverPreview({
   }, [anchor])
 
   const open = (e: MouseEvent<HTMLDivElement>) => {
-    if (!url) return
+    // a tap also reports the pointer "entering": the card would open over the row just tapped and stay there
+    if (!url || touchOnly()) return
     const row = e.currentTarget.getBoundingClientRect()
     stop()
     timer.current = window.setTimeout(() => {

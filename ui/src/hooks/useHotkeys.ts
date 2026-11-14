@@ -29,7 +29,7 @@ export function useHotkeys(): void {
           input.focus()
         }
       } else if (e.key === 'r' || e.key === 'R') s.toggleRecord()
-      else if (e.key === 'w' || e.key === 'W') s.setTab('moves')
+      else if (e.key === 'w' || e.key === 'W') s.openTab('moves')
       else if (e.key === ' ') {
         const m = s.selectedId ? s.markets[s.selectedId] : undefined
         if (m?.replay) {

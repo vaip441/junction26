@@ -121,6 +121,12 @@ body {
 .btn:disabled {
   opacity: 0.4;
 }
+/* Under a finger a small button is easy to miss: more height, the same look. */
+@media (pointer: coarse) {
+  .btn {
+    padding-block: 0.45rem;
+  }
+}
 /* The one button a form is for: reversed out, the way a terminal marks what matters. */
 .btn-solid {
   border-color: var(--color-text);

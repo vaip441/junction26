@@ -40,7 +40,7 @@ export function KeyPrompt() {
           type="password"
           value={key}
           onChange={(e) => setKey(e.target.value)}
-          className="field h-9 px-3 text-sm"
+          className="field h-9 px-3 text-sm max-lg:h-11 max-lg:text-base"
         />
         <div className="flex justify-end gap-2">
           <button type="button" onClick={() => close(false)} className="press btn border-transparent!">

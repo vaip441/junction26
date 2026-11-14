@@ -40,8 +40,19 @@ scripted ticks. Details at the top of `mock/server.mjs`.
 
 `npm run build` typechecks and builds into `dist/`; `npm run lint` runs oxlint.
 
+### Narrow screens
+
+Under 1024px wide (a phone, a tablet upright) the three columns do not fit side by side, and stacked they
+were three boxes that each scrolled inside a page that scrolled too. There the screen is one view at a
+time, picked from a bar at the bottom (`components/layout/BottomNav.tsx`): **Markets** (the list and the
+weekend record), **Live** (the chart with the tape under it) and **Details** (why it moved, sources,
+related contracts, rules). The question and its price stay above the page, and the page is the only thing
+that scrolls. Each view is found where it was left; picking a market, asking a question, or tapping a call,
+a cause or a rules sentence opens the view that holds it (`view` in the store). `App.tsx` holds both
+layouts (`Columns`, `OneView`), drawn from the same components.
+
 Done so far: build steps 1-7 (scaffold and stream; the weekend record as a card and full screen on R;
-sources / related / rules tabs under the chart, with a Track button on related contracts; stacking on small screens; the price chart with every call pinned on it, range buttons, a readout of the price under the pointer and of the change over the stretch on screen, in local time; the
+sources / related / rules tabs under the chart, with a Track button on related contracts; the price chart with every call pinned on it, range buttons, a readout of the price under the pointer and of the change over the stretch on screen, in local time; the
 AskBar, which turns a link or a plain question into a tracked market and narrates each step; typing or speaking moves the demo market; hotkeys) plus these differentiators from PLAN.md:
 the tick lifecycle ("not priced in"), the decision bar, the pending scoring row, the judge prompt and the
 big-move flash, lead-time lines on the chart, site logos on the tape. Step 8 is built too: "why did it move?" (price jumps as bands on the chart, a tab listing each with its likely cause, a live banner when one arrives), the rules sentence behind a tick quoted on the tape and highlighted in the Rules tab, and Truth Social posts. Next: step 9, rehearsing against the deployed backend on the demo laptop and projector.

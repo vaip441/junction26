@@ -4,6 +4,8 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- the browser's own bars take the panel colour, so the app does not sit in a white frame on a phone -->
+    <meta name="theme-color" content="#181714" />
     <title>Priced In: prediction markets against the live web</title>
     <!-- the name's font, asked for early so the splash does not show it in a stand-in font first -->
     <link rel="preload" as="font" type="font/woff2" crossorigin
@@ -14,11 +16,13 @@
     <style>
       #splash {
         position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center;
-        gap: 1.1rem; background: #0f0e0c; color: #efe9dc;
-        font: 800 3.4rem/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
+        gap: 0.32em; background: #0f0e0c; color: #efe9dc;
+        /* sized to the window, so the name stays on one line beside the mark on a phone */
+        font: 800 clamp(1.9rem, 9.5vw, 3.4rem)/1 'Archivo Variable', ui-sans-serif, system-ui, sans-serif;
+        white-space: nowrap;
         animation: splash-out 0.35s ease-out 1.5s forwards;
       }
-      #splash svg { height: 4.6rem; width: auto; overflow: visible; }
+      #splash svg { height: 1.35em; width: auto; overflow: visible; }
       #splash path { fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
       #splash .run { stroke-dasharray: 12; stroke-dashoffset: 12; animation: splash-draw 0.22s ease-out 0.1s forwards; }
       #splash .jump { stroke-dasharray: 32; stroke-dashoffset: 32; animation: splash-draw 0.45s cubic-bezier(0.23, 1, 0.32, 1) 0.5s forwards; }

@@ -40,7 +40,8 @@ export function MoveStory({ move, onRule }: { move: Move; onRule?: () => void })
             focusTick(cause.id)
           }}
           title="Find it on the tape"
-          className="flex min-w-0 items-baseline gap-1.5 text-left hover:underline"
+          // on a narrow screen the label goes above the headline, which then has the whole width
+          className="flex min-w-0 items-baseline gap-1.5 text-left hover:underline max-lg:flex-col max-lg:gap-0"
         >
           <span className="shrink-0 text-[11px] font-semibold text-muted">
             {label}
@@ -142,7 +143,7 @@ export function MovesPanel({ marketId, moves }: { marketId: string; moves: Move[
       ) : (
         <ul className="divide-y divide-line">
           {moves.map((m) => (
-            <li key={m.id} id={`move-${m.id}`} className="grid grid-cols-[7.5rem_1fr] gap-x-3 px-3 py-2 text-xs">
+            <li key={m.id} id={`move-${m.id}`} className="grid grid-cols-[7.5rem_1fr] gap-x-3 px-3 py-2 text-xs max-lg:grid-cols-[6.5rem_1fr] max-lg:py-3">
               <div className="flex flex-col gap-0.5">
                 <MoveSpan move={m} className="text-sm" />
                 <span className="text-[11px] text-faint" title={`${absoluteTime(m.since)} to ${absoluteTime(m.ts)}`}>

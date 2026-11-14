@@ -35,7 +35,7 @@ export function TickRow({
   playing?: boolean
 }) {
   const showRule = useStore((s) => s.showRule)
-  const setTab = useStore((s) => s.setTab)
+  const openTab = useStore((s) => s.openTab)
   const at = tickTime(tick)
   const quiet = tick.verdict === 'none'
   const quick = caught(tick)
@@ -105,7 +105,7 @@ export function TickRow({
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           {move && (
             <button
-              onClick={() => setTab('moves')}
+              onClick={() => openTab('moves')}
               title="The terminal names this as the likely cause of a price jump"
               className={`inv num text-xs ${move.to >= move.from ? 'inv-up' : 'inv-down'}`}
             >

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useMedia } from '../../hooks/useMedia'
 import { speechInputAvailable, useSpeechInput } from '../../hooks/useSpeechInput'
 import { askFor } from '../../lib/actions'
+import { NARROW } from '../../lib/device'
 import { useStore } from '../../state/store'
 
 export const ASK_INPUT_ID = 'ask-input'
@@ -14,6 +16,7 @@ export const ASK_INPUT_ID = 'ask-input'
  */
 export function AskBar() {
   const [text, setText] = useState('')
+  const narrow = useMedia(NARROW)
   const ask = useStore((s) => s.ask)
   const working = Boolean(ask && !ask.marketId && !ask.error)
   const [wanted, setListening] = useState(false)
@@ -93,7 +96,7 @@ export function AskBar() {
     // a cell of the top bar, not a box inside it: the whole cell is the field, and it darkens while typed in
     <form
       onSubmit={submit}
-      className="group flex min-w-0 flex-1 items-center gap-3 border-l border-line px-4 transition-colors focus-within:bg-bg focus-within:shadow-[inset_0_-2px_0_var(--color-text)]"
+      className="group flex min-w-0 flex-1 items-center gap-3 border-l border-line px-4 transition-colors max-sm:gap-2 max-sm:px-3 focus-within:bg-bg focus-within:shadow-[inset_0_-2px_0_var(--color-text)]"
     >
       <label htmlFor={ASK_INPUT_ID} className="shrink-0 text-xs font-semibold text-muted group-focus-within:text-text">
         Ask
@@ -104,8 +107,13 @@ export function AskBar() {
         onChange={(e) => setText(e.target.value)}
         disabled={working}
         readOnly={heard}
-        placeholder={status ?? 'will Jensen step down this year? Or paste a Kalshi or Polymarket link'}
-        className="h-full min-w-0 flex-1 bg-transparent text-sm text-text placeholder:text-faint focus:outline-none disabled:opacity-60"
+        // the whole example does not fit beside the Speak button on a phone
+        placeholder={status ?? (narrow ? 'a question, or a market link' : 'will Jensen step down this year? Or paste a Kalshi or Polymarket link')}
+        enterKeyHint="go"
+        autoCapitalize="none"
+        autoCorrect="off"
+        // 16px on a narrow screen: a phone's browser zooms the whole page into any field with smaller text
+        className="h-full min-w-0 flex-1 bg-transparent text-sm text-text placeholder:text-faint focus:outline-none disabled:opacity-60 max-lg:text-base"
       />
       {shown ? (
         <span className="hidden shrink-0 text-xs text-down md:inline">{shown}</span>

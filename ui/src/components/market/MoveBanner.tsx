@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { narrow } from '../../lib/device'
 import { focusTick } from '../../lib/focus'
 import type { Move } from '../../lib/types'
 import { useStore } from '../../state/store'
@@ -21,7 +22,7 @@ export function MoveBanner({ marketId }: { marketId: string }) {
 
 function Banner({ move }: { move: Move }) {
   const clear = useStore((s) => s.clearLiveMove)
-  const setTab = useStore((s) => s.setTab)
+  const openTab = useStore((s) => s.openTab)
   const [answered, setAnswered] = useState(false)
   const [leaving, setLeaving] = useState(false)
 
@@ -37,9 +38,10 @@ function Banner({ move }: { move: Move }) {
   }, [clear])
 
   const open = () => {
-    setTab('moves')
+    openTab('moves')
+    // side by side, the item behind the move is found on the tape too; one view at a time, the answer is enough
     const item = move.cause ?? move.closest
-    if (item) focusTick(item.id)
+    if (item && !narrow()) focusTick(item.id)
     clear()
   }
 

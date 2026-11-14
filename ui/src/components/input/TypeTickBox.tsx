@@ -26,12 +26,14 @@ export function TypeTickBox({ marketId }: { marketId: string }) {
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="Or type what you would say"
-          className="field h-9 min-w-0 flex-1 px-3 text-sm"
+          enterKeyHint="send"
+          // 16px and a taller field on a narrow screen: smaller text makes a phone zoom the page into the field
+          className="field h-9 min-w-0 flex-1 px-3 text-sm max-lg:h-11 max-lg:text-base"
         />
         <button
           type="submit"
           disabled={!text.trim()}
-          className="press btn btn-solid h-9 shrink-0 px-3!"
+          className="press btn btn-solid h-9 shrink-0 px-3! max-lg:h-11 max-lg:px-4!"
         >
           Score it
         </button>

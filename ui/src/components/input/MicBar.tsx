@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useSpeechInput, type MicState } from '../../hooks/useSpeechInput'
 import { sendTick } from '../../lib/actions'
+import { touchOnly } from '../../lib/device'
 import { useStore } from '../../state/store'
 
 const LABEL: Record<MicState, string> = {
@@ -45,7 +46,7 @@ export function MicBar({ marketId }: { marketId: string }) {
           disabled={!usable}
           title="Space"
           aria-pressed={micOn}
-          className={`press btn flex h-9 shrink-0 items-center gap-2 px-3! ${micOn ? 'border-text! text-text!' : ''}`}
+          className={`press btn flex h-9 shrink-0 items-center gap-2 px-3! max-lg:h-11 max-lg:px-4! ${micOn ? 'border-text! text-text!' : ''}`}
         >
           <span className={`h-2 w-2 ${live ? 'animate-pulse bg-down' : micOn ? 'bg-madeup' : 'bg-faint'}`} />
           {micOn ? 'Mic on' : 'Mic off'}
@@ -57,6 +58,8 @@ export function MicBar({ marketId }: { marketId: string }) {
             <span className="italic text-text">Hearing you…</span>
           ) : writing ? (
             <span className="italic text-text">Writing down what was said…</span>
+          ) : state === 'off' && touchOnly() ? (
+            'Tap to turn the mic on' // no Space key under a finger
           ) : (
             LABEL[state]
           )}

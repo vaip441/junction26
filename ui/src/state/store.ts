@@ -8,6 +8,13 @@ const MAX_MOVES = 100
 /** The tabs under the chart. */
 export type Tab = 'moves' | 'sources' | 'related' | 'rules'
 
+/**
+ * On a narrow screen one view is shown at a time: the list of markets, the picked market live (its chart
+ * with the tape under it), or the details behind it (why it moved, sources, related contracts, rules).
+ * A wide screen shows all of it at once and ignores this.
+ */
+export type View = 'markets' | 'live' | 'details'
+
 /** A spoken or typed sentence sent for scoring, shown on the tape until its scored tick arrives. */
 export interface PendingTick {
   key: number
@@ -57,6 +64,7 @@ interface State {
   /** A move that arrived on the stream just now, for the banner over the chart. */
   liveMove: Move | null
   tab: Tab
+  view: View
   /** A rules sentence to scroll to and flash in the Rules tab; `n` makes a repeat click count. */
   focusRule: { start: number; end: number; n: number } | null
   selectedId: string | null
@@ -85,6 +93,9 @@ interface State {
   setMoves: (id: string, moves: Move[]) => void
   clearLiveMove: () => void
   setTab: (tab: Tab) => void
+  /** Pick a tab from somewhere else on the screen: on a narrow screen the details view opens with it. */
+  openTab: (tab: Tab) => void
+  setView: (view: View) => void
   showRule: (rule: RuleRef) => void
   select: (id: string | null) => void
   setStream: (s: StreamStatus) => void
@@ -120,6 +131,7 @@ export const useStore = create<State>((set) => ({
   moves: {},
   liveMove: null,
   tab: 'moves',
+  view: 'live',
   focusRule: null,
   selectedId: null,
   stream: 'connecting',
@@ -151,13 +163,16 @@ export const useStore = create<State>((set) => ({
   setMoves: (id, moves) => set((s) => ({ moves: { ...s.moves, [id]: moves.slice(0, MAX_MOVES) } })),
   clearLiveMove: () => set({ liveMove: null }),
   setTab: (tab) => set({ tab }),
-  showRule: (rule) => set((s) => ({ tab: 'rules', focusRule: { start: rule.start, end: rule.end, n: (s.focusRule?.n ?? 0) + 1 } })),
-  select: (id) => set({ selectedId: id }),
+  openTab: (tab) => set({ tab, view: 'details' }),
+  setView: (view) => set({ view }),
+  showRule: (rule) => set((s) => ({ tab: 'rules', view: 'details', focusRule: { start: rule.start, end: rule.end, n: (s.focusRule?.n ?? 0) + 1 } })),
+  select: (id) => set({ selectedId: id, view: 'live' }), // a picked market is opened
   setStream: (stream) => set({ stream }),
   startAsk: (query) =>
     set({
       ask: { query, steps: [], marketId: null, matched: null, error: null, started: Date.now() / 1000, finished: null, opened: false, uncovered: false, early: [] },
       meter: null,
+      view: 'live', // the question is shown where the market will open
     }),
   askDone: (d) =>
     set((s) => {
@@ -177,6 +192,7 @@ export const useStore = create<State>((set) => ({
       details: { ...s.details, [d.id]: d },
       order: s.order.includes(d.id) ? s.order : [...s.order, d.id],
       selectedId: d.id,
+      view: 'live',
       }
     }),
   askFailed: (error) => set((s) => ({ ask: s.ask ? { ...s.ask, error } : s.ask })),

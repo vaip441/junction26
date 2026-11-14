@@ -10,8 +10,21 @@ import { SourcesPanel } from './SourcesPanel'
  * Under the chart: why the price moved, where the ticks came from, the related contracts, and the rules.
  * A made-up market has no jumps of its own, but why it moved over the last day can still be asked, so
  * it has the tab too; it opens on its sources.
+ *
+ * `flow`: on a narrow screen the panel is a view of its own. It takes the height of what it holds and
+ * scrolls with the page, under tabs that stay at the top, instead of being a short box that scrolls inside.
  */
-export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; madeUp: boolean; detail: MarketDetail | undefined }) {
+export function MarketTabs({
+  marketId,
+  madeUp,
+  detail,
+  flow = false,
+}: {
+  marketId: string
+  madeUp: boolean
+  detail: MarketDetail | undefined
+  flow?: boolean
+}) {
   const wanted = useStore((s) => s.tab)
   const setTab = useStore((s) => s.setTab)
   const moves = useStore((s) => s.moves[marketId])
@@ -25,8 +38,11 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
     { id: 'rules', label: 'Rules' },
   ]
   return (
-    <div className="flex h-44 shrink-0 flex-col border-t border-line">
-      <div role="tablist" className="flex shrink-0 gap-5 border-b border-line px-3">
+    <div className={flow ? 'flex flex-col' : 'flex h-44 shrink-0 flex-col border-t border-line'}>
+      <div
+        role="tablist"
+        className={`flex shrink-0 border-b border-line px-3 ${flow ? 'sticky top-0 z-10 gap-4 overflow-x-auto bg-panel [scrollbar-width:none]' : 'gap-5'}`}
+      >
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -36,7 +52,7 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
               setPicked(true)
               setTab(t.id)
             }}
-            className={`-mb-px border-b-2 py-2 text-xs font-semibold transition-colors ${
+            className={`-mb-px shrink-0 whitespace-nowrap border-b-2 text-xs font-semibold transition-colors ${flow ? 'py-3' : 'py-2'} ${
               tab === t.id ? 'border-text text-text' : 'border-transparent text-muted hover:text-text'
             }`}
           >
@@ -45,7 +61,7 @@ export function MarketTabs({ marketId, madeUp, detail }: { marketId: string; mad
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className={flow ? '' : 'min-h-0 flex-1 overflow-y-auto'}>
         {tab === 'moves' ? (
           <MovesPanel marketId={marketId} moves={moves} />
         ) : !detail ? (

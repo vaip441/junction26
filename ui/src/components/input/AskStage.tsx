@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { touchOnly } from '../../lib/device'
 import { pct } from '../../lib/format'
 import type { FoundMarket, MarketEvent } from '../../lib/types'
 import { useStore, type Ask, type Meter } from '../../state/store'
@@ -157,7 +158,7 @@ function Takeover({ ask }: { ask: Ask }) {
   }
 
   return (
-    <div className={`absolute inset-0 z-30 flex flex-col justify-center gap-6 bg-panel p-8 lg:p-12 ${ask.opened ? 'soft-out' : 'soft-in'}`}>
+    <div className={`absolute inset-0 z-30 flex flex-col justify-center gap-6 bg-panel p-8 max-lg:justify-center-safe max-lg:gap-4 max-lg:overflow-y-auto max-lg:p-5 lg:p-12 ${ask.opened ? 'soft-out' : 'soft-in'}`}>
       <div className="flex items-baseline justify-between gap-4">
         <span className="text-sm font-semibold text-muted">{isLink ? 'Reading a link' : 'Asking'}</span>
         <Clock seconds={seconds} className="board text-4xl" />
@@ -166,11 +167,11 @@ function Takeover({ ask }: { ask: Ask }) {
         {isLink ? ask.query : `“${ask.query}”`}
       </p>
       {/* keyed by its text, so each new line fades in over the last */}
-      <p key={ask.error ? 'error' : `${Boolean(found)}${Boolean(picked)}${tracked}`} className="soft-in flex items-center gap-2.5 text-lg text-muted">
+      <p key={ask.error ? 'error' : `${Boolean(found)}${Boolean(picked)}${tracked}`} className="soft-in flex items-center gap-2.5 text-lg text-muted max-lg:block max-lg:text-base">
         {line}
         {ask.error && (
           <button onClick={clear} className="ml-2 text-sm text-muted underline hover:text-text">
-            close (Esc)
+            {touchOnly() ? 'close' : 'close (Esc)'}
           </button>
         )}
       </p>
@@ -260,9 +261,10 @@ function Strip({ ask, marketId }: { ask: Ask; marketId: string }) {
 
   const queries = sourcing?.queries ?? []
   return (
-    <div className="rise-in absolute left-4 right-4 top-3 z-20 overflow-hidden rounded-xs border border-line bg-panel-2">
+    <div className="rise-in absolute left-4 right-4 top-3 z-20 overflow-hidden rounded-xs border border-line bg-panel-2 max-lg:left-2 max-lg:right-2 max-lg:top-2">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-4 py-2.5">
-        <div key={phase} className="soft-in min-w-0 flex-1">
+        {/* on a narrow screen the sentence takes the whole line; the clock and the meter go under it */}
+        <div key={phase} className="soft-in min-w-0 flex-1 max-lg:basis-full">
           {body}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-4">

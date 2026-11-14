@@ -43,10 +43,10 @@ function BothVenues({ consensus }: { consensus: Consensus }) {
 }
 
 /** The demo market is the one the backend never lets go of. */
-const DEMO_ID = 'mu-demo'
+export const DEMO_ID = 'mu-demo'
 
 /** Stop tracking this market. Two clicks, so a stray one on stage does nothing. */
-function Remove({ marketId }: { marketId: string }) {
+export function Remove({ marketId }: { marketId: string }) {
   const [note, setNote] = useState<string | null>(null)
   if (marketId === DEMO_ID) return null
   return (
@@ -83,9 +83,44 @@ function Venue({ market }: { market: MarketSummary }) {
 /**
  * The question on the left, its price on the right in board figures: the largest thing on the screen.
  * Under the price, what it did today.
+ *
+ * `compact`: on a narrow screen the header stays above whatever scrolls, so the question and its price are
+ * always in sight: the title in two lines at most, the price beside it, one line of facts under them.
  */
-export function MarketHeader({ market }: { market: MarketSummary }) {
+export function MarketHeader({ market, compact = false }: { market: MarketSummary; compact?: boolean }) {
   const playing = useStore((s) => s.replay?.id === market.id)
+  const ticks = (
+    <span>
+      <span className="num font-semibold text-text">{market.ticks_today}</span> {market.ticks_today === 1 ? 'tick' : 'ticks'}{' '}
+      {market.replay ? (playing ? 'so far' : 'in its last day') : 'today'}
+    </span>
+  )
+  if (compact) {
+    return (
+      <div className="flex shrink-0 flex-col gap-1.5 border-b border-line bg-panel px-3 py-2">
+        <div className="flex items-center gap-3">
+          <h1 className="line-clamp-2 min-w-0 flex-1 text-balance text-[0.95rem] font-semibold leading-snug text-text">{market.title}</h1>
+          {market.price == null ? (
+            <p className="max-w-28 shrink-0 text-right text-xs text-muted">Setting the starting odds…</p>
+          ) : (
+            <AnimatedPrice key={market.id} value={market.price} className="board shrink-0 text-[2.75rem]" />
+          )}
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+          <Venue market={market} />
+          {market.replay && <Badge>Replay</Badge>}
+          <span className="ml-auto flex items-center gap-x-3">
+            {market.change_24h != null && (
+              <span>
+                <Points value={market.change_24h} className="font-semibold" /> in 24 h
+              </span>
+            )}
+            {ticks}
+          </span>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-6 gap-y-2 border-b border-line px-5 py-4">
       <div className="flex min-w-0 flex-col gap-2">
@@ -108,10 +143,7 @@ export function MarketHeader({ market }: { market: MarketSummary }) {
               <Points value={market.change_24h} className="font-semibold" /> in 24 h
             </span>
           )}
-          <span>
-            <span className="num font-semibold text-text">{market.ticks_today}</span> {market.ticks_today === 1 ? 'tick' : 'ticks'}{' '}
-            {market.replay ? (playing ? 'so far' : 'in its last day') : 'today'}
-          </span>
+          {ticks}
         </p>
       </div>
     </div>

@@ -16,6 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
 import { useNow } from '../../hooks/useNow'
 import { pct, tickTime, timeAgo } from '../../lib/format'
+import { narrow, touchOnly } from '../../lib/device'
 import { focusTick } from '../../lib/focus'
 import { tickLifecycle } from '../../lib/lifecycle'
 import { causeLabel } from '../../lib/moves'
@@ -330,10 +331,13 @@ export function PriceChart({ marketId }: { marketId: string }) {
       if (tick) focusTick(tick.id)
       else if (move) {
         // the answer is in the tab under the chart, and its cause is on the tape
-        useStore.getState().setTab('moves')
-        requestAnimationFrame(() => document.getElementById(`move-${move.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }))
+        useStore.getState().openTab('moves')
+        const show = () => document.getElementById(`move-${move.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+        // on a narrow screen the tab is drawn only now, so its row is not there within the same frame
+        if (narrow()) setTimeout(show, 80)
+        else requestAnimationFrame(show)
         const item = move.cause ?? move.closest
-        if (item) focusTick(item.id)
+        if (item && !narrow()) focusTick(item.id)
       }
     })
 
@@ -573,7 +577,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
                   disabled={!available}
                   title={available ? undefined : 'The price history is shorter than this'}
                   onClick={() => pickRange(r.id)}
-                  className={`num rounded-xs px-1.5 py-0.5 text-xs font-semibold transition-colors ${
+                  // under a finger the buttons are taller and wider; under a mouse they stay as small as the readout beside them
+                  className={`num rounded-xs px-1.5 py-0.5 text-xs font-semibold transition-colors [@media(pointer:coarse)]:px-2.5 [@media(pointer:coarse)]:py-1.5 ${
                     shown === r.id
                       ? 'bg-text text-bg'
                       : available
@@ -615,7 +620,8 @@ export function PriceChart({ marketId }: { marketId: string }) {
         </div>
       )}
       {!empty && before > 0 && first != null && (
-        <p className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[70%] rounded-xs bg-panel/90 px-2 py-1 text-[11px] leading-snug text-muted">
+        // not on a narrow screen: there the chart is short, and the note would cover a third of the line
+        <p className="pointer-events-none absolute bottom-8 left-2 z-10 max-w-[70%] rounded-xs bg-panel/90 px-2 py-1 text-[11px] leading-snug text-muted max-lg:hidden">
           Price history starts {when(first)}.{' '}
           <span className="num text-text">{before}</span> earlier {before === 1 ? 'call is' : 'calls are'} on the tape, from before this chart starts.
         </p>
@@ -647,7 +653,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
               )}
             </p>
           )}
-          <p className="mt-0.5 text-[11px] text-faint">click for the answer under the chart</p>
+          <p className="mt-0.5 text-[11px] text-faint">{touchOnly() ? 'tap' : 'click'} for the answer{narrow() ? '' : ' under the chart'}</p>
         </div>
       )}
       {hover && tick && tick.market_id === marketId && (
@@ -668,7 +674,7 @@ export function PriceChart({ marketId }: { marketId: string }) {
               <LifecycleBadge life={life} verdict={tick.verdict} />
             </p>
           )}
-          <p className="mt-0.5 text-[11px] text-faint">click to find it on the tape</p>
+          <p className="mt-0.5 text-[11px] text-faint">{touchOnly() ? 'tap' : 'click'} to find it on the tape</p>
         </div>
       )}
       </div>
