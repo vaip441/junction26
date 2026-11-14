@@ -134,8 +134,29 @@ def test_scorer_is_told_the_date_price_rivals_and_what_was_already_reported():
     assert "Will the rival win? (9%)" in context
     assert "Already reported" in context and '- "Board backs the CEO"' in context
     assert "Second story" not in context
-    assert item.startswith("apnews.com: Second story") and "Full passage." in item and "Published 13 November 2026" in item
+    assert item.startswith("apnews.com: Second story") and "Full passage." in item and "Published 3 hours ago." in item
     assert "Already reported" not in seen[0][0]
+
+
+def test_scorer_is_told_how_old_an_item_is_and_that_a_venues_traders_have_seen_old_news():
+    # Checked on 58 stored calls on 14 Nov: with these two lines none of the 44 on news over two hours old stayed
+    # a call, and the three on news under half an hour old all did.
+    seen = []
+
+    async def spy(context, item, gate):
+        seen.append((context, item))
+        return UP
+
+    for venue in ("polymarket", "made_up"):
+        db, bus, q, m = setup(venue=venue)
+        for i, age in enumerate((40, 60, 5400, 3 * 86400, -600)):  # the last: a publish time ahead of our clock
+            run(db, bus, spy, m, headline=f"story {i}", url=f"https://a.example/{i}", published_ts=1794600000 - age, now=1794600000)
+    assert [item.splitlines()[1] for _, item in seen[:5]] == [
+        "Published 1 minute ago.", "Published 1 minute ago.", "Published 2 hours ago.", "Published 3 days ago.",
+        "Published 1 minute ago."]
+    assert "anything published more than an hour or two ago is already in that price" in seen[0][0]
+    # nobody trades a made-up market, so its price has only seen what we showed it
+    assert "more than an hour or two ago" not in seen[5][0] and "reported before today" in seen[5][0]
 
 
 def test_spoken_and_typed_ticks_are_scored_without_the_newness_check_or_history():

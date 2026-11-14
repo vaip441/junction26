@@ -56,6 +56,12 @@ def day(ts: float) -> str:
     return datetime.fromtimestamp(ts, UTC).strftime("%d %B %Y").lstrip("0")
 
 
+def ago(seconds: float) -> str:
+    m = max(1, round(seconds / 60))  # a publish time ahead of our clock reads as just now
+    n, unit = (m, "minute") if m < 90 else (round(m / 60), "hour") if m < 2880 else (round(m / 1440), "day")
+    return f"{n} {unit}{'' if n == 1 else 's'}"
+
+
 def context(db, market: dict, now: float, history: bool) -> str:
     """What the scorer is told about the market before it sees an item.
 
@@ -66,9 +72,12 @@ def context(db, market: dict, now: float, history: bool) -> str:
     lines = [f"Today is {day(now)}.", f"Market: {market['title']}", f"Rules: {market['rules'][:1500]}"]
     latest = store.latest_price(db, market["id"])
     if latest is not None:
-        lines.append(f"The market currently prices YES at {latest[1]:.0f}%."
-                     + (" Traders already know everything reported before today, and that price reflects it."
-                        if history else ""))
+        # A venue's traders had priced most of what we called by the time we saw it (half of it 9 hours old),
+        # and nobody trades a made-up market: its price has only seen what we showed it.
+        known = ("Traders already know everything reported before today, and that price reflects it."
+                 if market["venue"] == "made_up" else
+                 "Traders act within minutes: anything published more than an hour or two ago is already in that price.")
+        lines.append(f"The market currently prices YES at {latest[1]:.0f}%." + (f" {known}" if history else ""))
     rivals = [(r["title"], store.latest_price(db, r["id"])) for r in store.related(db, market["id"])]
     rivals = [f"{title} ({p[1]:.0f}%)" for title, p in rivals if p is not None]
     if rivals:
@@ -100,7 +109,7 @@ async def ingest(db, bus, scorer, market: dict, *, kind: str, source: str, headl
     if story and store.has_title(db, market["id"], story, now - STORY_SECONDS):
         return None
     spoken = kind in ("mic", "typed")  # a judge's own sentence is new by nature: no newness check, no history
-    item = (f"{clean(source, 60)}: {clean(headline, 250)}" + (f"\nPublished {day(published_ts)}." if published_ts else "")
+    item = (f"{clean(source, 60)}: {clean(headline, 250)}" + (f"\nPublished {ago(now - published_ts)} ago." if published_ts else "")
             + (f"\n{clean(body, 2000)}" if body else ""))
     async def rule_for() -> dict | None:
         try:
