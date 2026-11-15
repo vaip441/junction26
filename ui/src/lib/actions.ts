@@ -3,6 +3,14 @@ import { announceTick } from './bus'
 import { loadMarket } from '../hooks/useStream'
 import { useStore } from '../state/store'
 
+/** The text to show for a failed request: the backend's own words, or, on a 401, a request for the key, whose prompt opens unless `quiet`. */
+function failed(e: unknown, verb: string, quiet = false): string {
+  if (!(e instanceof ApiError)) return 'something went wrong, try again'
+  if (e.status !== 401) return e.detail
+  if (!quiet) useStore.getState().setNeedKey(true)
+  return `needs the Priced In key: enter it, then ${verb} again`
+}
+
 /**
  * Send a spoken or typed sentence to be scored. Shows a pending "scoring…" row at once, and returns the
  * error text to show if it failed (the backend's own words), or null when it was scored.
@@ -15,12 +23,7 @@ export async function sendTick(marketId: string, text: string, kind: 'mic' | 'ty
     announceTick(tick)
     return null
   } catch (e) {
-    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
-    if (err.status === 401) {
-      useStore.getState().setNeedKey(true)
-      return 'needs the Priced In key: enter it, then send again'
-    }
-    return err.detail
+    return failed(e, 'send')
   } finally {
     useStore.getState().removePending(marketId, key)
   }
@@ -34,12 +37,7 @@ export async function transcribe(audio: Blob, quiet = false): Promise<{ text: st
   try {
     return { text: (await api.transcribe(audio)).text.trim() }
   } catch (e) {
-    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
-    if (err.status === 401) {
-      if (!quiet) useStore.getState().setNeedKey(true)
-      return { error: 'needs the Priced In key: enter it, then say it again' }
-    }
-    return { error: err.detail }
+    return { error: failed(e, 'say it', quiet) }
   }
 }
 
@@ -57,9 +55,7 @@ export async function askFor(query: string): Promise<boolean> {
     void loadMarket(market.id)
     return true
   } catch (e) {
-    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
-    if (err.status === 401) useStore.getState().setNeedKey(true)
-    useStore.getState().askFailed(err.status === 401 ? 'needs the Priced In key: enter it, then ask again' : err.detail)
+    useStore.getState().askFailed(failed(e, 'ask'))
     return false
   }
 }
@@ -73,12 +69,7 @@ export async function askWhy(marketId: string): Promise<string | null> {
     useStore.getState().apply({ type: 'move', data: await api.why(marketId) })
     return null
   } catch (e) {
-    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
-    if (err.status === 401) {
-      useStore.getState().setNeedKey(true)
-      return 'needs the Priced In key: enter it, then ask again'
-    }
-    return err.detail
+    return failed(e, 'ask')
   }
 }
 
@@ -89,12 +80,7 @@ export async function resetDemo(marketId: string): Promise<string | null> {
     void loadMarket(marketId)
     return null
   } catch (e) {
-    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
-    if (err.status === 401) {
-      useStore.getState().setNeedKey(true)
-      return 'needs the Priced In key: enter it, then reset again'
-    }
-    return err.detail
+    return failed(e, 'reset')
   }
 }
 
@@ -105,11 +91,6 @@ export async function removeMarket(marketId: string): Promise<string | null> {
     useStore.getState().apply({ type: 'market', data: { market_id: marketId, status: 'deleted' } }) // the stream says so too
     return null
   } catch (e) {
-    const err = e instanceof ApiError ? e : new ApiError(0, 'something went wrong, try again')
-    if (err.status === 401) {
-      useStore.getState().setNeedKey(true)
-      return 'needs the Priced In key: enter it, then remove again'
-    }
-    return err.detail
+    return failed(e, 'remove')
   }
 }

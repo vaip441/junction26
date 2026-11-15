@@ -2,6 +2,7 @@
 import asyncio
 import hmac
 import json
+import logging
 import os
 import time
 from contextlib import asynccontextmanager
@@ -11,8 +12,9 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi.datastructures import Headers
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
@@ -24,7 +26,6 @@ from terminal.pipeline import ingest, public
 from terminal.record import record
 from terminal.seed import DEMO
 
-STATIC = Path(__file__).parent / "static"
 UI = Path(__file__).parent.parent / "ui" / "dist"  # the real screen, once built (see README)
 REPLAYS = Path(__file__).parent.parent / "replays"  # finished markets to play back (see replay.py)
 DAY = 86400
@@ -32,6 +33,28 @@ MAX_RELATED = 5  # an event can hold over a hundred contracts; each one costs a 
 MAX_SHOWN = 6  # markets found for a question that are named to the frontend
 HISTORY_WAIT = 8  # seconds a new market's answer may wait for the venue's price history; past that it goes without
 OTHER_VENUE_ABOVE = 0.2  # how likely the other venue's market must be the same question to be shown beside the match
+MAX_BODY = 2_000_000  # the largest body any route takes is a recording, at most speech.MAX_BYTES
+
+
+def body_cap(app):
+    """Refuse a request whose body is over MAX_BODY: by its Content-Length before anything reads it, or, sent
+    without one, as soon as more than that has come in."""
+    async def capped(scope, receive, send):
+        if scope["type"] != "http":
+            return await app(scope, receive, send)
+        if int(Headers(scope=scope).get("content-length") or 0) > MAX_BODY:
+            return await JSONResponse({"detail": "request body too large"}, 413)(scope, receive, send)
+        read = 0
+
+        async def counted():
+            nonlocal read
+            message = await receive()
+            read += len(message.get("body", b""))
+            if read > MAX_BODY:  # FastAPI reads a body before the key is checked, so this is open to anyone
+                raise HTTPException(413, "request body too large")
+            return message
+        await app(scope, counted, send)
+    return capped
 
 
 class Screen(StaticFiles):
@@ -147,6 +170,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     # no /docs: the address is public, and the README lists the interface
     app = FastAPI(title="Priced In", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+    app.add_middleware(body_cap)
 
     def market_or_404(id: str) -> dict:
         m = store.get_market(app.state.db, id)
@@ -182,7 +206,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         app.state.bus.publish("market", {"market_id": id, "status": "deleted"})
         # Its monitors are stopped afterwards: Context.dev is asked key by key, which takes seconds, long
         # enough for someone to click away with the market still listed and think nothing happened.
-        task = asyncio.create_task(pages.stop(watched, id))
+        task = asyncio.create_task(pages.stop(app.state.db, watched, id))
         stopping.add(task)  # held until done: a task nothing refers to can be collected mid-flight
         task.add_done_callback(stopping.discard)
         return {"deleted": id}
@@ -221,6 +245,8 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.netloc:
             raise HTTPException(400, "url must be an http(s) address")
+        if not store.has_url(app.state.db, url):  # open to anyone: never a fetch of an address of their choosing
+            raise HTTPException(404, "no tick has this address")
         return await previews.preview(app.state.db, url)
 
     @app.post("/markets/{id}/why", dependencies=[Depends(write_access)])
@@ -405,8 +431,9 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
     async def context_hook(page_id: str, request: Request):
         """Context.dev calls this after each check of a watched page. Nothing is believed, or even parsed,
         before the signature made with that page's secret checks out."""
-        raw, page = await request.body(), store.get_page(app.state.db, page_id)
-        if page is None or not pages.verify(raw, request.headers.get("x-context-signature", ""), page["secret"] or ""):
+        page = store.get_page(app.state.db, page_id)  # first: a body posted to an unknown id is never read
+        if page is None or not pages.verify(raw := await request.body(), request.headers.get("x-context-signature", ""),
+                                            page["secret"] or ""):
             raise HTTPException(401, "bad signature")  # the same answer for an unknown page: nothing to probe
         try:
             event = json.loads(raw)
@@ -450,16 +477,12 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
         return StreamingResponse(events(), media_type="text/event-stream",
                                  headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-    @app.get("/debug", include_in_schema=False)
-    async def debug_page():
-        return FileResponse(STATIC / "debug.html")
-
-    if ui is not None and (ui / "index.html").is_file():
+    if ui is not None and (ui / "index.html").is_file():  # unbuilt on this machine: the interface alone
         app.mount("/", Screen(directory=ui, html=True))  # last, so every route above answers first
-    else:  # the screen has not been built on this machine
-        app.get("/", include_in_schema=False)(debug_page)
 
     return app
 
 
+logging.basicConfig(level=logging.INFO)  # nothing else configures logging, so every log.info was dropped
+logging.getLogger("httpx").setLevel(logging.WARNING)  # it logs every request, address and all, at INFO
 app = create_app(ui=UI, replays=REPLAYS)

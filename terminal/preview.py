@@ -15,7 +15,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
-from terminal import posts
+from terminal import http, posts
 from terminal import db as store
 
 log = logging.getLogger(__name__)
@@ -33,19 +33,11 @@ LINK = re.compile(r"<link\b[^>]*>", re.I | re.S)
 TITLE = re.compile(r"<title[^>]*>(.*?)</title>", re.I | re.S)
 ATTR = re.compile(r"""([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+))""", re.S)
 
-_client: httpx.AsyncClient | None = None
+_http = http.client(TIMEOUT, follow_redirects=False, limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
 
 
 class PreviewError(Exception):
     pass
-
-
-def _http() -> httpx.AsyncClient:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False,
-                                    limits=httpx.Limits(max_connections=20, max_keepalive_connections=10))
-    return _client
 
 
 def _attrs(tag: str) -> dict[str, str]:

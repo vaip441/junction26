@@ -127,3 +127,14 @@ def test_bluesky_replies_short_posts_and_ones_few_people_liked_are_not_worth_rea
     assert not posts.bluesky_worth({**good, "is_reply": True})
     assert not posts.bluesky_worth({**good, "likes": 19})
     assert not posts.bluesky_worth({**good, "text": "Lula rn https://example.com/a-very-long-link @someone.bsky.social wow"})
+
+
+def test_one_client_is_shared_on_a_loop_and_made_again_on_the_next_or_once_closed():
+    async def twice():
+        first = posts._http()
+        assert posts._http() is first and first.headers["user-agent"] == posts.UA and first.follow_redirects
+        await first.aclose()
+        assert posts._http() is not first
+        return posts._http()
+
+    assert asyncio.run(twice()) is not asyncio.run(twice())

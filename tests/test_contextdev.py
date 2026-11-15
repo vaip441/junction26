@@ -25,19 +25,10 @@ def test_parse_scrape_returns_text_and_publish_time():
     assert parse_scrape({}) == ("", None)
 
 
-def test_limiter_allows_ten_a_minute_per_key():
-    from terminal.contextdev import Limiter
-
-    lim = Limiter(["k1"], per_minute=10)
-    assert [lim.try_take(now=0) for _ in range(10)] == ["k1"] * 10
-    assert lim.try_take(now=30) is None and lim.wait_time(now=30) == 30
-    assert lim.try_take(now=60) == "k1"
-
-
 def test_limiter_spreads_over_several_keys():
     from terminal.contextdev import Limiter
 
-    lim = Limiter(["k1", "k2"], per_minute=10)
+    lim = Limiter(["k1", "k2"], max_concurrent=10)
     taken = [lim.try_take(now=0) for _ in range(21)]
     assert taken.count("k1") == 10 and taken.count("k2") == 10 and taken[-1] is None
 
@@ -45,7 +36,7 @@ def test_limiter_spreads_over_several_keys():
 def test_limiter_backs_off_a_key_the_server_refused():
     from terminal.contextdev import Limiter
 
-    lim = Limiter(["k1"], per_minute=10)
+    lim = Limiter(["k1"])
     lim.refused("k1", retry_after=31, now=5)
     assert lim.try_take(now=35) is None and lim.try_take(now=36) == "k1"
 
@@ -53,7 +44,7 @@ def test_limiter_backs_off_a_key_the_server_refused():
 def test_limiter_reserve_keeps_capacity_back_for_searches():
     from terminal.contextdev import Limiter
 
-    lim = Limiter(["k1"], per_minute=10)
+    lim = Limiter(["k1"], max_concurrent=10)
     assert [lim.try_take(now=0, reserve=5) for _ in range(6)] == ["k1"] * 5 + [None]
     assert [lim.try_take(now=0) for _ in range(6)] == ["k1"] * 5 + [None]
 
@@ -65,7 +56,8 @@ def client_with(handler, monkeypatch):
 
     monkeypatch.setenv("CONTEXT_DEV_API_KEY", "k1")
     monkeypatch.setattr(contextdev, "_limiter", None)
-    monkeypatch.setattr(contextdev, "_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    fake = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(contextdev, "_http", lambda: fake)
     return contextdev
 
 
@@ -157,9 +149,9 @@ def test_absurd_publish_times_are_ignored():
 def test_load_is_spread_evenly_over_the_keys_and_duplicates_count_once():
     from terminal.contextdev import Limiter
 
-    lim = Limiter(["k1", "k2", "k1", "k3"], per_minute=10)
+    lim = Limiter(["k1", "k2", "k1", "k3"], max_concurrent=10)
     assert [lim.try_take(now=0) for _ in range(6)] == ["k1", "k2", "k3", "k1", "k2", "k3"]
-    assert sum(lim.try_take(now=0) is not None for _ in range(30)) == 24  # 3 keys x 10 a minute, 6 already used
+    assert sum(lim.try_take(now=0) is not None for _ in range(30)) == 24  # 3 keys x 10 at once, 6 already in flight
 
 
 def pool(handler, monkeypatch, keys="k1,k2"):
@@ -232,34 +224,12 @@ def test_search_can_leave_freshness_out(monkeypatch):
     assert "freshness" not in seen[0] and seen[1]["freshness"] == "last_24_hours"
 
 
-def test_background_searches_leave_room_for_a_person_asking(monkeypatch):
-    import asyncio
-
-    import httpx
-
-    monkeypatch.setenv("CONTEXT_DEV_RPM", "10")
-    cd = client_with(lambda request: httpx.Response(200, json={"results": []}), monkeypatch)
-
-    async def go():
-        for _ in range(8):
-            await cd.search("background", reserve=2)
-        late = asyncio.create_task(cd.search("background", reserve=2))
-        await cd.search("a person asking")          # goes straight out
-        await asyncio.sleep(0.2)
-        waiting = not late.done()                   # the ninth background search is held back
-        late.cancel()
-        return waiting
-
-    assert asyncio.run(go()) is True
-
-
 def test_concurrency_limiter_releases_slots_and_wakes_waiters(monkeypatch):
     import asyncio
 
     import httpx
 
     monkeypatch.setenv("CONTEXT_DEV_CONCURRENCY", "2")
-    monkeypatch.delenv("CONTEXT_DEV_RPM", raising=False)
     entered, release = asyncio.Event(), asyncio.Event()
     started = []
 
@@ -285,15 +255,6 @@ def test_concurrency_limiter_releases_slots_and_wakes_waiters(monkeypatch):
         return started
 
     assert asyncio.run(go()) == ["hold", "user", "bg"] and cd.status()["in_flight"] == 0
-
-
-def test_wait_time_counts_the_reserve():
-    from terminal.contextdev import Limiter
-
-    lim = Limiter(["k"], per_minute=10)
-    for t in range(8):
-        lim.try_take(now=t)
-    assert lim.wait_time(now=10) == 0 and lim.wait_time(now=10, reserve=2) == 50  # the first request ages out at 60
 
 
 def test_published_times_come_from_one_batch_read_page_by_page(monkeypatch):

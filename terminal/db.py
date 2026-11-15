@@ -41,37 +41,20 @@ TICK_COLS = ("market_id", "ts", "published_ts", "kind", "source", "url", "headli
 # likes and replies: posts on X; title_key: articles; rule: the rules sentence behind a tick that moves the price;
 # passage: the excerpt of an article that the search found relevant, shown beside the tick
 OPTIONAL_COLS = ("likes", "replies", "title_key", "rule", "passage")
+COUNTS_FOR = 2  # seconds the reading strip's two counts are kept: every open screen asks for them every 2 seconds
+
+
+class Store(sqlite3.Connection):
+    counted = (float("-inf"), (0, 0))  # (time.monotonic() when counted, (read, shown)): see reading()
 
 
 def connect(path: str) -> sqlite3.Connection:
-    db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)  # autocommit: every write is durable
+    # autocommit: every write is durable
+    db = sqlite3.connect(path, check_same_thread=False, isolation_level=None, factory=Store)
     db.row_factory = sqlite3.Row
     db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
-    if "filled" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores created before 13 Nov
-        db.execute("ALTER TABLE markets ADD COLUMN filled INTEGER NOT NULL DEFAULT 0")
-    if "companies" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov noon
-        db.execute("ALTER TABLE markets ADD COLUMN companies TEXT")
-    if "twin_id" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov 13:00
-        db.execute("ALTER TABLE markets ADD COLUMN twin_id TEXT")
-    if "replay" not in {r["name"] for r in db.execute("PRAGMA table_info(markets)")}:  # stores from before 14 Nov 17:00
-        db.execute("ALTER TABLE markets ADD COLUMN replay TEXT")
-    if "title_key" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov noon
-        db.execute("ALTER TABLE ticks ADD COLUMN title_key TEXT")
-        db.execute("ALTER TABLE ticks ADD COLUMN rule TEXT")
     db.execute("CREATE INDEX IF NOT EXISTS ticks_by_title ON ticks (market_id, title_key)")
-    if "explained" not in {r["name"] for r in db.execute("PRAGMA table_info(moves)")}:  # stores from before 14 Nov 12:00
-        db.execute("ALTER TABLE moves ADD COLUMN explained INTEGER NOT NULL DEFAULT 0")
-        db.execute("ALTER TABLE moves ADD COLUMN related TEXT NOT NULL DEFAULT '[]'")
-        db.execute("ALTER TABLE moves ADD COLUMN asked INTEGER NOT NULL DEFAULT 0")
-        db.execute("UPDATE moves SET explained = tick_id IS NOT NULL")  # until then a tick was stored only as a cause
-    if "date_checked" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov
-        db.execute("ALTER TABLE ticks ADD COLUMN date_checked INTEGER NOT NULL DEFAULT 0")
-    if "likes" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov evening
-        db.execute("ALTER TABLE ticks ADD COLUMN likes INTEGER")
-        db.execute("ALTER TABLE ticks ADD COLUMN replies INTEGER")
-    if "passage" not in {r["name"] for r in db.execute("PRAGMA table_info(ticks)")}:  # stores from before 14 Nov afternoon
-        db.execute("ALTER TABLE ticks ADD COLUMN passage TEXT")
     return db
 
 
@@ -127,13 +110,16 @@ def pair(db, a: str, b: str) -> None:
 
 
 def delete_market(db, id: str) -> None:
-    """Remove a market, its related contracts, and all their ticks, prices and moves."""
-    for (mid,) in db.execute("SELECT id FROM markets WHERE id = ? OR lead_id = ?", (id, id)).fetchall():
-        db.execute("DELETE FROM ticks WHERE market_id = ?", (mid,))
-        db.execute("DELETE FROM moves WHERE market_id = ?", (mid,))
-        db.execute("DELETE FROM pages WHERE market_id = ?", (mid,))
-        db.execute("DELETE FROM prices WHERE market_id = ?", (mid,))
-        db.execute("DELETE FROM markets WHERE id = ?", (mid,))
+    """Remove a market, its related contracts, and all their ticks, prices and moves. A page with a monitor
+    stays until pages.stop has stopped it, so one that could not be stopped is left for scripts/stop_monitors.py."""
+    with db:  # commits the transaction begun below, or rolls it back on any error: never half a market
+        db.execute("BEGIN")
+        for (mid,) in db.execute("SELECT id FROM markets WHERE id = ? OR lead_id = ?", (id, id)).fetchall():
+            db.execute("DELETE FROM ticks WHERE market_id = ?", (mid,))
+            db.execute("DELETE FROM moves WHERE market_id = ?", (mid,))
+            db.execute("DELETE FROM pages WHERE market_id = ? AND monitor_id IS NULL", (mid,))
+            db.execute("DELETE FROM prices WHERE market_id = ?", (mid,))
+            db.execute("DELETE FROM markets WHERE id = ?", (mid,))
 
 
 def reset_market(db, id: str, ts: float, price: float) -> None:
@@ -222,6 +208,11 @@ def has_tick(db, market_id: str, dedupe_key: str) -> bool:
                       (market_id, dedupe_key)).fetchone() is not None
 
 
+def has_url(db, url: str) -> bool:
+    """Whether any tick has this address."""
+    return db.execute("SELECT 1 FROM ticks WHERE url = ?", (url,)).fetchone() is not None
+
+
 def has_title(db, market_id: str, title_key: str, since: float) -> bool:
     """Whether this market got an article with this headline, from any outlet or address, since a time."""
     return db.execute("SELECT 1 FROM ticks WHERE market_id = ? AND title_key = ? AND ts >= ?",
@@ -246,11 +237,17 @@ def ticks(db, market_id: str, limit: int = 100, include_hidden: bool = False) ->
 
 def reading(db, after: int = 0, limit: int = 40, window: float = 86400, now: float | None = None) -> dict:
     """What the service has read from the web lately, shown on the tape or not: how many items in the last
-    day, how many of them were shown, and the newest ones stored after tick `after`, newest first."""
+    day, how many of them were shown, and the newest ones stored after tick `after`, newest first.
+    shortcut: the two counts are kept COUNTS_FOR seconds whatever `window` and `now` are asked; key them on those
+    if a second caller ever asks for others."""
     now = time.time() if now is None else now
     web = ("FROM ticks t JOIN markets m ON m.id = t.market_id "
            "WHERE m.replay IS NULL AND t.kind NOT IN ('mic', 'typed')")
-    read, shown = db.execute(f"SELECT COUNT(*), COALESCE(SUM(t.hidden = 0), 0) {web} AND t.ts > ?", (now - window,)).fetchone()
+    at, (read, shown) = db.counted
+    if time.monotonic() - at >= COUNTS_FOR:
+        read, shown = db.execute(f"SELECT COUNT(*), COALESCE(SUM(t.hidden = 0), 0) {web} AND t.test = 0 AND t.ts > ?",
+                                 (now - window,)).fetchone()
+        db.counted = (time.monotonic(), (read, shown))
     recent = db.execute(f"SELECT t.id, t.market_id, m.title AS market, t.ts, t.published_ts, t.source, t.headline, "
                         f"t.verdict, t.hidden {web} AND t.id > ? ORDER BY t.id DESC LIMIT ?", (after, limit))
     return {"read": read, "shown": shown, "window_seconds": int(window),
@@ -336,15 +333,16 @@ def add_move(db, market_id: str, ts: float, since: float, from_price: float, to_
                      " explained, related, asked) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                      (market_id, ts, since, from_price, to_price, tick_id, confidence, rule, explained,
                       json.dumps(related), asked))
-    return next(m for m in moves(db, market_id, limit=1000) if m["id"] == cur.lastrowid)
+    return moves(db, market_id, id=cur.lastrowid)[0]
 
 
-def moves(db, market_id: str, limit: int = 20) -> list[dict]:
-    """A market's price moves, newest first, each with its tick (or None) under "tick"."""
+def moves(db, market_id: str, limit: int = 20, id: int | None = None) -> list[dict]:
+    """A market's price moves, newest first, each with its tick (or None) under "tick". `id`: only that move."""
     out = []
     for r in db.execute('SELECT id, market_id, ts, since_ts AS since, from_price AS "from", to_price AS "to", tick_id,'
                         " confidence, rule, explained, related, asked FROM moves WHERE market_id = ?"
-                        " ORDER BY ts DESC, id DESC LIMIT ?", (market_id, limit)).fetchall():
+                        " AND (? IS NULL OR id = ?) ORDER BY ts DESC, id DESC LIMIT ?",
+                        (market_id, id, id, limit)).fetchall():
         tick = db.execute("SELECT * FROM ticks WHERE id = ?", (r["tick_id"],)).fetchone()
         out.append({**{k: r[k] for k in r.keys() if k != "tick_id"}, "rule": r["rule"] and json.loads(r["rule"]),
                     "explained": bool(r["explained"]), "asked": bool(r["asked"]), "related": json.loads(r["related"]),
@@ -374,6 +372,15 @@ def get_page(db, id: str) -> dict | None:
 
 def pages(db, market_id: str) -> list[dict]:
     return [dict(r) for r in db.execute("SELECT * FROM pages WHERE market_id = ? ORDER BY created_ts, id", (market_id,))]
+
+
+def delete_page(db, id: str) -> None:
+    db.execute("DELETE FROM pages WHERE id = ?", (id,))
+
+
+def detach_page(db, id: str) -> None:
+    """Keep a page only for its monitor to be stopped: it belongs to no market any more."""
+    db.execute("UPDATE pages SET market_id = '' WHERE id = ?", (id,))
 
 
 def forget_unwatched(db, market_id: str) -> None:

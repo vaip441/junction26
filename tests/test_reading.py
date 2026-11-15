@@ -36,6 +36,31 @@ def test_reading_counts_the_last_day_and_lists_the_newest_items_shown_or_not():
     assert store.reading(db, limit=1, now=6000)["recent"][0]["id"] == ids[2]
 
 
+def test_staged_articles_from_our_own_newsroom_are_listed_but_not_counted():
+    db = store.connect(":memory:")
+    build(db)
+    staged = store.add_tick(db, tick("m", 5040, "up", hidden=False, test=True))["id"]
+    r = store.reading(db, now=5000 + 86000)
+    assert (r["read"], r["shown"]) == (2, 1) and r["recent"][0]["id"] == staged
+
+
+def test_the_counts_are_kept_for_two_seconds_while_the_list_stays_live(monkeypatch):
+    import time
+    from types import SimpleNamespace
+
+    clock = [1000.0]
+    monkeypatch.setattr(store, "time", SimpleNamespace(time=time.time, monotonic=lambda: clock[0]))
+    db = store.connect(":memory:")
+    build(db)
+    assert store.reading(db, now=5000 + 86000)["read"] == 2
+    late = store.add_tick(db, tick("m", 5040))["id"]
+    clock[0] += 1.9  # every open screen asks every 2 seconds: the counts are not worked out again for each
+    r = store.reading(db, now=5000 + 86000)
+    assert r["read"] == 2 and r["recent"][0]["id"] == late
+    clock[0] += 0.1
+    assert store.reading(db, now=5000 + 86000)["read"] == 3
+
+
 def test_the_api_serves_the_reading(tmp_path):
     with TestClient(create_app(db_path=str(tmp_path / "t.db"), poll=False)) as c:
         r = c.get("/reading").json()

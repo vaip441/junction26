@@ -91,6 +91,20 @@ def parse_decision1(response: dict) -> Score:
         raise ScoringError(f"unexpected Decision 1 response: {str(response)[:200]}") from e
 
 
+def choice(answers: dict, question: str, options: list, none: str = "none") -> tuple[int, list[float], float]:
+    """(the index of the likeliest of `options`, each option's probability, the probability of `none`) from the
+    Decision 1 answer to a choice whose criteria were keyed by a letter and the option's index ("p0", "p1", ...).
+    ScoringError when the answer is missing or not a number, or names no option or one that was not offered."""
+    try:
+        p = {k: float(v) for k, v in answers[question]["probabilities"].items()}
+        named = {int(k[1:]): v for k, v in p.items() if k != none}
+        if not named or not all(math.isfinite(v) for v in p.values()) or not all(0 <= i < len(options) for i in named):
+            raise ValueError("not one of the options")
+    except (KeyError, TypeError, ValueError, AttributeError) as e:
+        raise ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
+    return max(named, key=named.get), [named.get(i, 0.0) for i in range(len(options))], p.get(none, 0.0)
+
+
 async def decide(input: str, questions: dict) -> dict:
     """One Decision 1 call: the answers to `questions` about `input`, keyed like the questions."""
     global _client

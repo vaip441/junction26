@@ -1,22 +1,14 @@
 """What to search for: queries written from a market's title and rules by an ordinary Gemini model."""
-import asyncio
 import json
 import logging
 import os
 
 import httpx
 
+from terminal import http
+
 log = logging.getLogger(__name__)
-_client: tuple[httpx.AsyncClient, asyncio.AbstractEventLoop] | None = None
-
-
-def _http() -> httpx.AsyncClient:
-    global _client
-    loop = asyncio.get_running_loop()
-    if _client is None or _client[1] is not loop or _client[0].is_closed:
-        _client = (httpx.AsyncClient(timeout=30, limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)),
-                   loop)
-    return _client[0]
+_http = http.client(30, limits=httpx.Limits(max_connections=50, max_keepalive_connections=20))
 PROMPT = """You help track news that could move a prediction market.
 
 Market: {title}

@@ -9,20 +9,12 @@ from xml.etree import ElementTree
 
 import httpx
 
-import asyncio
+from terminal import http
 
 log = logging.getLogger(__name__)
 UA = "Mozilla/5.0 (X11; Linux x86_64) terminal/0.1"
-_client: tuple[httpx.AsyncClient, asyncio.AbstractEventLoop] | None = None
-
-
-def _http() -> httpx.AsyncClient:
-    global _client
-    loop = asyncio.get_running_loop()
-    if _client is None or _client[1] is not loop or _client[0].is_closed:
-        _client = (httpx.AsyncClient(timeout=10, headers={"User-Agent": UA}, follow_redirects=True,
-                                     limits=httpx.Limits(max_connections=100, max_keepalive_connections=30)), loop)
-    return _client[0]
+_http = http.client(10, headers={"User-Agent": UA}, follow_redirects=True,
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=30))
 
 
 def parse_x(data: dict) -> dict | None:

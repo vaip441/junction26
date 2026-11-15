@@ -3,7 +3,6 @@
 The rules are cut into sentences in code and Decision 1 chooses among them, so what is highlighted is
 always an exact stretch of the rules text, never a paraphrase, and it comes with a probability.
 """
-import math
 import re
 
 from terminal import scoring
@@ -48,14 +47,8 @@ async def deciding(market: dict, item: str, closest: bool = False, *, decide=Non
                   "instructions": "Which sentence of this market's rules decides how the new item affects the market?",
                   "criteria": {**{f"s{i}": rules[a:b][:400] for i, (a, b) in enumerate(spans)},
                                "none": "No single sentence of the rules bears on this item"}}})
-    try:
-        p = {k: float(v) for k, v in answers["rule"]["probabilities"].items()}
-        if not all(math.isfinite(v) for v in p.values()):
-            raise ValueError("not a number")
-        best = max((k for k in p if k != "none"), key=p.get)
-        a, b = spans[int(best[1:])]
-    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as e:
-        raise scoring.ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
-    if not closest and (p[best] < MIN_CONFIDENCE or p[best] <= p.get("none", 0.0)):
+    best, p, none = scoring.choice(answers, "rule", spans)
+    a, b = spans[best]
+    if not closest and (p[best] < MIN_CONFIDENCE or p[best] <= none):
         return None
     return {"start": a, "end": b, "text": rules[a:b], "confidence": round(p[best], 3)}

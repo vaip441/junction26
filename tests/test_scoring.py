@@ -178,3 +178,18 @@ def test_a_request_the_model_rejects_is_told_apart_from_an_outage(monkeypatch):
     with pytest.raises(scoring.ScoringError) as e:
         ask(503)
     assert not isinstance(e.value, scoring.Rejected)
+
+
+def test_choice_reads_the_likeliest_option_and_none_and_refuses_odd_answers():
+    import pytest
+
+    from terminal.scoring import ScoringError, choice
+
+    answers = lambda **p: {"q": {"type": "choice", "probabilities": p}}
+    assert choice(answers(p0=0.2, p2=0.5, none=0.3), "q", ["a", "b", "c"]) == (2, [0.2, 0.0, 0.5], 0.3)
+    assert choice(answers(k1="0.6", any=0.4), "q", ["a", "b"], none="any") == (1, [0.0, 0.6], 0.4)
+    assert choice(answers(p0=0.9), "q", ["a"]) == (0, [0.9], 0.0)
+    for odd in ({}, {"r": {}}, answers(none=1.0), answers(p3=0.9), answers(**{"p-1": 0.9}), answers(px=0.9),
+                answers(p0="high"), answers(p0=float("nan")), answers(p0=0.5, none=float("inf"))):
+        with pytest.raises(ScoringError):
+            choice(odd, "q", ["a", "b"])

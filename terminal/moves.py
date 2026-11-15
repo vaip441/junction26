@@ -6,7 +6,6 @@ other way, from the price back to the web.
 """
 import json
 import logging
-import math
 import time
 from datetime import UTC, datetime
 
@@ -69,15 +68,8 @@ async def cause(market: dict, move: dict, ticks: list[dict], now: float, decide,
                                    "An item that would push the price the other way is not the cause.",
                    "criteria": {**{f"t{i}": choice(t) for i, t in enumerate(ticks)},
                                 "none": "None of these items explains a move of this size and direction"}}})
-    try:
-        p = {k: float(v) for k, v in answers["cause"]["probabilities"].items()}
-        if not all(math.isfinite(v) for v in p.values()):
-            raise ValueError("not a number")
-        best = max((k for k in p if k != "none"), key=p.get)
-        tick = ticks[int(best[1:])]
-    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as e:
-        raise scoring.ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
-    return tick, round(p[best], 3), p[best] > p.get("none", 0.0)
+    best, p, none = scoring.choice(answers, "cause", ticks)
+    return ticks[best], round(p[best], 3), p[best] > none
 
 
 def moved_with(db, market: dict, since: float, now: float) -> list[dict]:

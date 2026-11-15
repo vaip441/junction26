@@ -1,6 +1,7 @@
 """Kalshi and Polymarket behind one interface. The clients block, so they run in worker threads."""
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
 from terminal.venues import kalshi, polymarket
 from terminal.venues.errors import MarketNotFound, NotAVenueLink, VenueError
@@ -8,6 +9,13 @@ from terminal.venues.errors import MarketNotFound, NotAVenueLink, VenueError
 __all__ = ["MarketNotFound", "NotAVenueLink", "VenueError", "current_price", "history", "market_id", "resolve", "resolved"]
 
 log = logging.getLogger(__name__)
+# A slow venue retries for minutes: on threads of its own it cannot hold up everything else run in threads.
+POOL = ThreadPoolExecutor(16, thread_name_prefix="venue")
+
+
+async def run(fn, *args):
+    """fn(*args) on the venues' own threads."""
+    return await asyncio.get_running_loop().run_in_executor(POOL, fn, *args)
 
 
 async def resolve(link: str) -> list[dict]:
@@ -17,9 +25,9 @@ async def resolve(link: str) -> list[dict]:
     """
     try:
         if (ticker := kalshi.parse_link(link)) is not None:
-            contracts = await asyncio.to_thread(kalshi.lookup, ticker, kalshi.canonical(link))
+            contracts = await run(kalshi.lookup, ticker, kalshi.canonical(link))
         elif (slugs := polymarket.parse_link(link)) is not None:
-            contracts = await asyncio.to_thread(polymarket.lookup, *slugs)
+            contracts = await run(polymarket.lookup, *slugs)
         else:
             raise NotAVenueLink("not a Kalshi or Polymarket market link")
     except (NotAVenueLink, MarketNotFound):
@@ -38,13 +46,13 @@ def market_id(contract: dict) -> str:
 async def current_price(market: dict) -> float | None:
     """Latest price in percent; None when the venue has no usable price. Raises on a venue failure."""
     client = polymarket if market["venue"] == "polymarket" else kalshi
-    return await asyncio.to_thread(client.current_price, market["venue_ref"])
+    return await run(client.current_price, market["venue_ref"])
 
 
 async def resolved(market: dict) -> bool:
     """Whether the venue has resolved the market. Raises on a venue failure: not knowing is not a yes."""
     client = polymarket if market["venue"] == "polymarket" else kalshi
-    return await asyncio.to_thread(client.resolved, market["venue_ref"])
+    return await run(client.resolved, market["venue_ref"])
 
 
 async def history(market: dict) -> list[tuple[float, float]]:
@@ -52,7 +60,7 @@ async def history(market: dict) -> list[tuple[float, float]]:
     history only fills in the chart, so a market is tracked with or without it."""
     client = polymarket if market["venue"] == "polymarket" else kalshi
     try:
-        return await asyncio.to_thread(client.history, market["venue_ref"])
+        return await run(client.history, market["venue_ref"])
     except Exception as e:
         log.warning("no price history for %s: %s: %s", market.get("id"), type(e).__name__, str(e)[:150])
         return []

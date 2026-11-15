@@ -1,7 +1,7 @@
 """Context.dev: web search and page scrape over a pool of API keys.
 
-Each key (account) has its own concurrency limit (500 in-flight requests by default; optional per-minute
-limit via CONTEXT_DEV_RPM), so capacity is added by adding keys: CONTEXT_DEV_API_KEY=key1,key2,key3.
+Each key (account) has its own concurrency limit (500 in-flight requests by default), so capacity is added
+by adding keys: CONTEXT_DEV_API_KEY=key1,key2,key3.
 Requests are spread evenly, a key the server refuses is rested and the request goes out on the next one.
 Failures raise ContextError; callers decide what to do.
 """
@@ -15,9 +15,10 @@ from datetime import UTC, datetime
 
 import httpx
 
+from terminal import http
+
 API = "https://api.context.dev/v1"
 log = logging.getLogger(__name__)
-_client: httpx.AsyncClient | None = None
 _limiter = None
 
 
@@ -31,21 +32,14 @@ class Refused(ContextError):
 
 REST_SECONDS = 600  # a key that is invalid or out of credits is left alone this long before it is tried again
 DEFAULT_CONCURRENCY = 500  # Context.dev concurrency limit per org/key on current plans
-
-
-def _http() -> httpx.AsyncClient:
-    global _client
-    if _client is None:
-        _client = httpx.AsyncClient(timeout=60, limits=httpx.Limits(max_connections=500, max_keepalive_connections=100))
-    return _client
+_http = http.client(60, limits=httpx.Limits(max_connections=500, max_keepalive_connections=100))
 
 
 class Limiter:
-    """Concurrency and optional per-minute window per API key."""
+    """Concurrency per API key, and the requests each sent in the last minute."""
 
-    def __init__(self, keys: list[str], per_minute: int | None = None, max_concurrent: int = DEFAULT_CONCURRENCY):
+    def __init__(self, keys: list[str], max_concurrent: int = DEFAULT_CONCURRENCY):
         keys = list(dict.fromkeys(keys))             # the same key twice is still one allowance
-        self.per_minute = per_minute if per_minute and per_minute > 0 else None
         self.max_concurrent = max_concurrent
         self.in_flight = {k: 0 for k in keys}        # requests currently in flight per key
         self.used = {k: deque() for k in keys}       # request times within the last minute
@@ -59,11 +53,7 @@ class Limiter:
             used.popleft()
         if now < self.blocked[key]:
             return False
-        if self.in_flight[key] >= max(1, self.max_concurrent - reserve):
-            return False
-        if self.per_minute is not None and len(used) >= max(1, self.per_minute - reserve):
-            return False
-        return True
+        return self.in_flight[key] < max(1, self.max_concurrent - reserve)
 
     def try_take(self, now: float | None = None, reserve: int = 0) -> str | None:
         """A key with capacity right now (and count the request against it), else None.
@@ -86,18 +76,10 @@ class Limiter:
         if self._freed is not None:
             self._freed.set()
 
-    def wait_time(self, now: float | None = None, reserve: int = 0) -> float:
-        """Seconds until some key has capacity beyond the reserve (0 if only waiting on an in-flight slot)."""
+    def wait_time(self, now: float | None = None) -> float:
+        """Seconds until some key is no longer resting (0 if only waiting on an in-flight slot)."""
         now = time.monotonic() if now is None else now
-        waits = []
-        for k, u in self.used.items():
-            w = self.blocked[k]
-            if self.per_minute is not None:
-                cap = max(1, self.per_minute - reserve)
-                if len(u) >= cap:
-                    w = max(w, u[len(u) - cap] + 60)
-            waits.append(w - now)
-        return max(0.0, min(waits))
+        return max(0.0, min(self.blocked.values()) - now)
 
     def refused(self, key: str, retry_after: float, now: float | None = None) -> None:
         self.blocked[key] = (time.monotonic() if now is None else now) + retry_after
@@ -109,7 +91,7 @@ class Limiter:
         for i, key in enumerate(self.used, 1):
             self._free(key, now)  # drops requests older than a minute
             out.append({"key": i, "in_flight": self.in_flight[key], "max_concurrent": self.max_concurrent,
-                        "used_last_minute": len(self.used[key]), "per_minute": self.per_minute,
+                        "used_last_minute": len(self.used[key]),
                         "resting_seconds": round(max(0.0, self.blocked[key] - now)),
                         "credits_remaining": self.credits[key]})
         return out
@@ -121,7 +103,7 @@ class Limiter:
             self._freed.clear()
             if (key := self.try_take(reserve=reserve)) is not None:
                 return key
-            wait = self.wait_time(reserve=reserve)
+            wait = self.wait_time()
             try:
                 await asyncio.wait_for(self._freed.wait(), 0.25 if wait == 0 else wait + 0.05)
             except asyncio.TimeoutError:
@@ -130,14 +112,12 @@ class Limiter:
 
 
 def limiter() -> Limiter:
-    """CONTEXT_DEV_API_KEY may hold several comma-separated keys; each has its own concurrency/rate allowance."""
+    """CONTEXT_DEV_API_KEY may hold several comma-separated keys; each has its own concurrency allowance."""
     global _limiter
     if _limiter is None:
         keys = [k.strip() for k in os.environ["CONTEXT_DEV_API_KEY"].split(",") if k.strip()]
-        rpm_raw = os.environ.get("CONTEXT_DEV_RPM", "")
-        rpm = int(rpm_raw) if rpm_raw.strip() else None
         conc = int(os.environ.get("CONTEXT_DEV_CONCURRENCY", str(DEFAULT_CONCURRENCY)))
-        _limiter = Limiter(keys, per_minute=rpm, max_concurrent=conc)
+        _limiter = Limiter(keys, max_concurrent=conc)
     return _limiter
 
 
@@ -186,10 +166,8 @@ def status() -> dict:
         keys = limiter().status()
     except KeyError:  # no key configured
         keys = []
-    per_min = sum(k["per_minute"] for k in keys if k["per_minute"] is not None) if any(
-        k["per_minute"] is not None for k in keys) else None
     return {"keys": keys, "max_concurrent": sum(k["max_concurrent"] for k in keys),
-            "in_flight": sum(k["in_flight"] for k in keys), "per_minute": per_min,
+            "in_flight": sum(k["in_flight"] for k in keys), "per_minute": None,  # no per-minute cap on current plans
             "used_last_minute": sum(k["used_last_minute"] for k in keys)}
 
 
@@ -291,7 +269,7 @@ async def search(query: str, *, freshness: str | None = "last_24_hours", include
                  exclude_domains: list[str] | None = None, num_results: int = 10, reserve: int = 0) -> list[dict]:
     """Search results with the passages of each page that are relevant to the query (one request, 2 credits).
 
-    Background callers pass `reserve` to leave that many requests a minute per key for a person asking.
+    Background callers pass `reserve` to leave that many concurrent requests per key for a person asking.
     """
     body = {"query": query[:500], "numResults": num_results, "highlightsOptions": {"enabled": True}}
     if freshness:
@@ -329,8 +307,7 @@ async def news(company: str, *, since: float, limit: int = 25, reserve: int = 0)
 
 async def scrape(url: str) -> tuple[str, float | None]:
     """Text and publish time of a page, or nothing when there is no spare capacity: searches come first."""
-    lim = limiter()
-    reserve = (lim.per_minute // 2) if lim.per_minute else min(50, lim.max_concurrent // 2)
+    reserve = min(50, limiter().max_concurrent // 2)
     data = await _call("/web/scrape", {"url": url, "formats": {"markdown": True},
                                        "sharedParams": {"mainContentOnly": True},
                                        "timeoutOpts": {"milliseconds": 20000, "behavior": "fail"}},

@@ -120,6 +120,25 @@ def test_deleting_a_market_takes_its_contracts_ticks_and_prices_with_it():
     assert ticks(db, "m") == [] and prices(db, "rel") == [] and len(ticks(db, "other")) == 1
 
 
+def test_a_delete_that_fails_midway_leaves_the_market_whole():
+    import sqlite3
+
+    import pytest
+
+    from terminal.db import delete_market, get_market
+
+    db = connect(":memory:")
+    market(db)
+    add_price(db, "m", 1, 50.0)
+    add_tick(db, tick())
+    # the last of the deletes fails, after the ticks and prices are gone
+    db.execute("CREATE TRIGGER fail BEFORE DELETE ON markets BEGIN SELECT RAISE(ABORT, 'disk trouble'); END")
+    with pytest.raises(sqlite3.Error):
+        delete_market(db, "m")
+    assert get_market(db, "m") is not None and len(ticks(db, "m")) == 1 and len(prices(db, "m")) == 1
+    assert not db.in_transaction  # later writes are not left inside a transaction nobody commits
+
+
 def test_a_markets_subreddits_are_those_whose_posts_were_shown_most():
     from terminal.db import subreddits
 

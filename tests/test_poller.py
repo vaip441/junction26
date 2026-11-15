@@ -105,6 +105,27 @@ def test_resolved_markets_are_dropped_with_everything_they_hold_and_the_rest_are
     assert events.empty()
 
 
+def test_a_resolved_markets_page_stays_until_its_monitor_is_stopped(monkeypatch):
+    from terminal import pages
+
+    db, bus = store.connect(":memory:"), Bus()
+    for id in ("a", "b"):
+        store.add_market(db, id=id, venue="kalshi", venue_ref=id, title=id, rules="r", url=None)
+        store.add_page(db, f"page-{id}", id, "https://a.example/", "A", f"mon_{id}", "whsec", 1.0)
+
+    async def delete_monitor(id):
+        if id == "mon_b":
+            raise pages.contextdev.ContextError("timeout")
+        return True
+
+    async def resolved(m):
+        return True
+
+    monkeypatch.setattr(pages.contextdev, "delete_monitor", delete_monitor)
+    assert sorted(asyncio.run(poller.drop_resolved(db, bus, resolved=resolved))) == ["a", "b"]
+    assert store.get_page(db, "page-a") is None and store.get_page(db, "page-b") is not None  # for stop_monitors.py
+
+
 
 def test_after_a_restart_the_markets_come_due_one_after_another_not_all_at_once():
     # all at once, the whole list was searched together every interval for ever, and the screen got its

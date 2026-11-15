@@ -148,7 +148,7 @@ def comment_slug(db, market: dict) -> str | None:
 
 
 async def venue_comments(slug: str) -> list[dict]:
-    return await asyncio.to_thread(polymarket.comments, slug)
+    return await venues.run(polymarket.comments, slug)
 
 
 async def unscored(*_) -> Score:

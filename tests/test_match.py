@@ -101,6 +101,8 @@ def test_pick_is_no_match_only_when_none_is_likelier_than_all_markets_together()
     assert pick(c0=0.3, c1=0.3, none=0.4) == 0   # the same question on two venues splits the vote
     assert pick(c0=0.2, c1=0.3, none=0.5) is None
     assert pick(c0=0.05, c1=0.05, none=0.9) is None
+    assert pick(none=1.0) is None  # the markets it gave no chance left out
+    assert pick(c0=0.1, c1=0.1, c2=0.05, none=0.75) is None  # a market that was not offered is not read
 
 
 def test_pick_with_no_groups_does_not_call_the_model():
@@ -237,6 +239,7 @@ def test_twin_is_none_unless_the_model_is_sure_and_is_not_asked_when_the_other_v
         raise AssertionError("asked the model with nothing to choose from")
 
     assert asyncio.run(match.twin(mine, [[contract("polymarket", "b")]], decide=never)) is None
-    with pytest.raises(ScoringError):
-        asyncio.run(match.twin(mine, other, decide=decider({"same": {"probabilities": "odd"}})))
+    for odd in ({"probabilities": "odd"}, choice(k0=float("nan"), none=0.1)):
+        with pytest.raises(ScoringError):
+            asyncio.run(match.twin(mine, other, decide=decider({"same": odd})))
 

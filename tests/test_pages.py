@@ -225,9 +225,49 @@ def test_a_deleted_market_stops_its_monitor(tmp_path, monkeypatch):
         market(db)
         watched(db)
         store.add_page(db, "none", "m", None, None, None, None, NOW)
-        assert c.delete("/markets/m").status_code == 200
-        assert store.pages(db, "m") == [] and store.get_page(db, "tok") is None
+        assert c.delete("/markets/m").status_code == 200 and store.get_page(db, "none") is None
         assert c.get("/markets").status_code == 200 and stopped == ["mon_1"]  # stopped right after the answer
+        assert store.pages(db, "m") == []  # forgotten once stopped
+
+
+def test_a_page_is_forgotten_only_once_its_monitor_is_stopped(monkeypatch):
+    db = store.connect(":memory:")
+    market(db)
+    for id in ("ok", "lost", "down"):
+        store.add_page(db, id, "m", "https://news.acme.example/", "Acme Newsroom", f"mon_{id}", "whsec_a", NOW)
+
+    async def delete_monitor(id):
+        if id == "mon_down":
+            raise pages.contextdev.ContextError("timeout")
+        return id == "mon_ok"
+
+    monkeypatch.setattr(pages.contextdev, "delete_monitor", delete_monitor)
+    store.delete_market(db, "m")
+    asyncio.run(pages.stop(db, store.pages(db, "m"), "m"))
+    assert store.get_page(db, "ok") is None
+    assert store.get_page(db, "down") and store.get_page(db, "lost")  # left for scripts/stop_monitors.py
+    market(db)  # tracked again: watched afresh, not through a page whose monitor may be gone
+    assert store.pages(db, "m") == []
+
+
+def test_a_market_deleted_while_its_monitor_was_made_keeps_no_page_and_no_monitor(monkeypatch):
+    db, stopped = store.connect(":memory:"), []
+    m = market(db)
+
+    async def found(market):
+        return {"url": "https://news.acme.example/", "title": "Acme Newsroom"}
+
+    async def create(url, instructions, hook, name):
+        store.delete_market(db, "m")  # deleted, or resolved, while Context.dev made the monitor
+        return {"id": "mon_1", "secret": "whsec_a"}
+
+    async def delete_monitor(id):
+        stopped.append(id)
+        return True
+
+    monkeypatch.setattr(pages.contextdev, "delete_monitor", delete_monitor)
+    assert asyncio.run(pages.watch(db, m, "https://t.example", find=found, create=create, now=NOW)) is None
+    assert stopped == ["mon_1"] and store.pages(db, "m") == []
 
 
 def test_deleting_does_not_wait_for_the_monitor_to_stop(tmp_path, monkeypatch):

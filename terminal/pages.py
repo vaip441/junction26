@@ -7,7 +7,6 @@ market, Context.dev calls our webhook and the change becomes a tick like any oth
 import hashlib
 import hmac
 import logging
-import math
 import re
 import secrets
 import time
@@ -53,18 +52,11 @@ async def find(market: dict, *, ask=None, search=None, decide=None) -> dict | No
                                   "article), not a single news article, release or post.",
                   "criteria": {**{f"p{i}": f"{clean(r['url'], 200)} | {clean(r['title'], 120)}" for i, r in enumerate(results)},
                                "none": "None of these pages"}}})
-    try:
-        p = {k: float(v) for k, v in answers["page"]["probabilities"].items()}
-        if not all(math.isfinite(v) for v in p.values()):
-            raise ValueError("not a number")
-        best = max((k for k in p if k != "none"), key=p.get)
-        page = results[int(best[1:])]
-    except (KeyError, TypeError, ValueError, IndexError, AttributeError) as e:
-        raise scoring.ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
+    best, p, none = scoring.choice(answers, "page", results)
     # no bar on the best page itself: several good pages of one site split the vote between them
-    if p[best] <= p.get("none", 0.0):
+    if p[best] <= none:
         return None
-    return {"url": page["url"], "title": page["title"]}
+    return {"url": results[best]["url"], "title": results[best]["title"]}
 
 
 def instructions(market: dict) -> str:
@@ -85,7 +77,11 @@ async def watch(db, market: dict, public_url: str, *, find=find, create=None, no
         return None
     made = await (create or contextdev.create_monitor)(
         found["url"], instructions(market), f"{public_url.rstrip('/')}/hooks/context/{id}", f"terminal: {market['title']}")
-    return store.add_page(db, id, market["id"], found["url"], found["title"][:200], made["id"], made["secret"], now)
+    page = store.add_page(db, id, market["id"], found["url"], found["title"][:200], made["id"], made["secret"], now)
+    if store.get_market(db, market["id"]) is None:  # deleted or resolved while the monitor was being made
+        await stop(db, [page], market["id"])
+        return None
+    return page
 
 
 def verify(raw: bytes, header: str, secret: str, now: float | None = None) -> bool:
@@ -133,16 +129,20 @@ async def delivered(db, bus, scorer, page: dict, event, now: float | None = None
 
 async def unwatch(db, market_id: str) -> None:
     """Stop the monitors of a market that is being deleted: left running, each costs a credit every ten minutes."""
-    await stop(store.pages(db, market_id), market_id)
+    await stop(db, store.pages(db, market_id), market_id)
 
 
-async def stop(watched: list[dict], market_id: str) -> None:
-    """Stop the monitors of these pages of a market (as store.pages gave them). Never raises: a monitor that
-    could not be stopped is logged, and scripts/stop_monitors.py stops what is left."""
+async def stop(db, watched: list[dict], market_id: str) -> None:
+    """Stop the monitors of these pages of a market (as store.pages gave them), forgetting each page once its
+    monitor is stopped. Never raises: a monitor that could not be stopped is logged and its page kept, under
+    no market, for scripts/stop_monitors.py to stop."""
     for page in watched:
         if page["monitor_id"]:
+            store.detach_page(db, page["id"])  # first: the market may be tracked again before this is done
             try:
-                if not await contextdev.delete_monitor(page["monitor_id"]):
+                if await contextdev.delete_monitor(page["monitor_id"]):
+                    store.delete_page(db, page["id"])
+                else:
                     log.warning("monitor %s of %s was not found on any key", page["monitor_id"], market_id)
             except contextdev.ContextError as e:
                 log.warning("could not stop monitor %s of %s: %s", page["monitor_id"], market_id, e)

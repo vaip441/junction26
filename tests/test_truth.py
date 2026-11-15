@@ -76,3 +76,26 @@ def test_an_old_post_and_one_made_while_the_scraper_was_down():
     assert asyncio.run(truth.ingest_post(db, bus, scorer, POST, now=POSTED + 2 * 86400)) == 0
     assert asyncio.run(truth.ingest_post(db, bus, scorer, {**POST, "live": False}, now=POSTED + 7200)) == 1
     assert store.ticks(db, "iran")[0]["backfill"] is True  # history, not a live tick
+
+
+def test_a_bad_post_does_not_drop_the_rest_of_its_batch(tmp_path, monkeypatch):
+    import time
+    from datetime import UTC, datetime
+
+    db, bus = store.connect(":memory:"), Bus()
+    markets(db)
+
+    async def scorer(context, item, gate):
+        return Score(0.84, 0.12, 0.04, 0.8)
+
+    async def once(name, interval, step):
+        await step()
+
+    monkeypatch.setattr(truth, "forever", once)
+    fresh = {**POST, "created_at": datetime.fromtimestamp(time.time() - 60, UTC).isoformat()}
+    bad = {k: v for k, v in fresh.items() if k != "url"}
+    after = {**fresh, "url": POST["url"] + "0", "text": "Iran ceasefire talks resume."}
+    feed = tmp_path / "feed.jsonl"
+    feed.write_text("".join(json.dumps(p) + "\n" for p in (fresh, bad, after)))
+    asyncio.run(truth.truth_loop(db, bus, scorer, str(feed)))
+    assert sorted(t["url"] for t in store.ticks(db, "iran")) == [POST["url"], after["url"]]

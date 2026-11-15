@@ -51,8 +51,8 @@ async def candidates(words: str, *, search=None, resolve=None, venue_search=None
     web, own, kal = await asyncio.gather(
         asyncio.wait_for((search or contextdev.search)(words, freshness=None, include_domains=VENUE_SITES,
                                                        num_results=10), SEARCH_SECONDS),
-        asyncio.wait_for(asyncio.to_thread(venue_search or polymarket.search, words), SEARCH_SECONDS),
-        asyncio.wait_for(asyncio.to_thread(kalshi_search or kalshi.search, words), SEARCH_SECONDS),
+        asyncio.wait_for(venues.run(venue_search or polymarket.search, words), SEARCH_SECONDS),
+        asyncio.wait_for(venues.run(kalshi_search or kalshi.search, words), SEARCH_SECONDS),
         return_exceptions=True)
     for name, found in (("web", web), ("Polymarket", own), ("Kalshi", kal)):
         if isinstance(found, BaseException):
@@ -90,6 +90,7 @@ async def pick(words: str, groups: list[list[dict]], *, decide=None) -> tuple[in
                              "any": "The question is about the whole market, not one contract"}}
     answers = await (decide or scoring.decide)(f"A person wants to track this question: {words}", questions)
     try:
+        # not scoring.choice: an answer naming no market, or one not offered, is no match rather than an error
         p = {k: float(v) for k, v in answers["match"]["probabilities"].items()}
         probs = [p.get(f"c{i}", 0.0) for i in range(len(groups))]
         if not all(math.isfinite(v) for v in p.values()):
@@ -127,10 +128,5 @@ async def twin(market: dict, groups: list[list[dict]], *, decide=None) -> dict |
                      "none": "None of these resolves the same way"}}}
     answers = await (decide or scoring.decide)(
         f"A prediction market contract: {market['title'][:300]}\nIts rules: {market['rules'][:800]}", question)
-    try:
-        p = {k: float(v) for k, v in answers["same"]["probabilities"].items()}
-        best = max((k for k in p if k != "none"), key=p.get)
-        found = offered[int(best[1:])]
-    except (KeyError, TypeError, ValueError, AttributeError, IndexError) as e:
-        raise scoring.ScoringError(f"unexpected Decision 1 answer: {str(answers)[:200]}") from e
-    return found if p[best] >= SAME else None
+    best, p, _ = scoring.choice(answers, "same", offered)
+    return offered[best] if p[best] >= SAME else None

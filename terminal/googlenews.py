@@ -1,7 +1,6 @@
 """Google News as a way to find stories early: its search feed lists an article minutes after it is
 published, where the web search is hours behind. It gives the headline, the publisher and the time only;
 the address is Google's link to the article, not the article's own."""
-import asyncio
 import logging
 import time
 from email.utils import parsedate_to_datetime
@@ -10,19 +9,12 @@ from xml.etree import ElementTree
 
 import httpx
 
+from terminal import http
+
 log = logging.getLogger(__name__)
 FEED = "https://news.google.com/rss/search"
-_client: tuple[httpx.AsyncClient, asyncio.AbstractEventLoop] | None = None
-
-
-def _http() -> httpx.AsyncClient:
-    global _client
-    loop = asyncio.get_running_loop()
-    if _client is None or _client[1] is not loop or _client[0].is_closed:
-        _client = (httpx.AsyncClient(timeout=10, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) terminal/0.1"},
-                                     follow_redirects=True,
-                                     limits=httpx.Limits(max_connections=100, max_keepalive_connections=30)), loop)
-    return _client[0]
+_http = http.client(10, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) terminal/0.1"}, follow_redirects=True,
+                    limits=httpx.Limits(max_connections=100, max_keepalive_connections=30))
 MAX_ITEMS = 20  # a feed holds up to a hundred stories; the newest are what the web search lacks
 
 

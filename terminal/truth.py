@@ -74,6 +74,9 @@ async def truth_loop(db, bus, scorer, path: str, interval: float = 2) -> None:
         nonlocal offset
         found, offset = read_new(path, offset)
         for post in found:
-            await ingest_post(db, bus, scorer, post)
+            try:
+                await ingest_post(db, bus, scorer, post)
+            except Exception:  # the offset has moved past this batch: one odd post must not cost the rest
+                log.warning("feed post not ingested: %.200r", post, exc_info=True)
 
     await forever("truth feed", interval, step)

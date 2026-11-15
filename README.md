@@ -76,8 +76,7 @@ The real screen is the React app in `ui/`. Built once, the terminal serves it at
 (cd ui && npm ci && VITE_API_URL= npm run build)   # an empty VITE_API_URL: the screen talks to the address it came from
 ```
 
-http://127.0.0.1:18911/debug is a plain debug page: ask a question, pick a market, type a sentence and
-watch it become a tick. It is also what `/` shows until the screen is built.
+Until the screen is built, the terminal serves the interface alone and `/` answers 404.
 
 | Variable | Meaning |
 | --- | --- |

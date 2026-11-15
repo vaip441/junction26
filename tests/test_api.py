@@ -259,7 +259,6 @@ def test_status_reports_context_dev_capacity(path, monkeypatch):
     from terminal import contextdev
 
     monkeypatch.setenv("CONTEXT_DEV_API_KEY", "k1, k2 ,k3")
-    monkeypatch.delenv("CONTEXT_DEV_RPM", raising=False)
     monkeypatch.delenv("CONTEXT_DEV_CONCURRENCY", raising=False)
     monkeypatch.setattr(contextdev, "_limiter", None)
     with client(path) as c:
@@ -551,7 +550,7 @@ def test_the_demo_market_can_be_reset_before_a_presentation_and_no_other_market_
         assert [p["price"] for p in c.get("/markets/mu-demo/prices").json()] == [20.0]
 
 
-def test_the_built_screen_is_served_at_the_root_and_the_debug_page_moves_aside(path, tmp_path):
+def test_the_built_screen_is_served_at_the_root_and_there_is_no_debug_page(path, tmp_path):
     ui = tmp_path / "dist"
     (ui / "assets").mkdir(parents=True)
     (ui / "index.html").write_text("<html>the real screen</html>")
@@ -562,11 +561,24 @@ def test_the_built_screen_is_served_at_the_root_and_the_debug_page_moves_aside(p
         # one from the browser's cache); its files carry a new name with every build and may be kept
         assert c.get("/").headers["cache-control"] == "no-cache"
         assert c.get("/assets/app.js").status_code == 200 and "cache-control" not in c.get("/assets/app.js").headers
-        assert "Terminal debug page" in c.get("/debug").text
+        assert c.get("/debug").status_code == 404  # it read the write key from the address, into request logs
         assert c.get("/markets").json()[0]["id"] == "mu-demo"  # the interface still answers first
         assert c.get("/nothing-here").status_code == 404
     with TestClient(create_app(db_path=path, scorer=up, poll=False, ui=tmp_path / "not-built")) as c:
-        assert "Terminal debug page" in c.get("/").text and "Terminal debug page" in c.get("/debug").text
+        assert c.get("/").status_code == 404 and c.get("/debug").status_code == 404
+        assert c.get("/markets").json()[0]["id"] == "mu-demo"
+
+
+def test_the_service_logs_at_info_but_not_every_outgoing_request():
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    code =("import logging, terminal.api; print(logging.getLogger('terminal.poller').isEnabledFor(logging.INFO),"
+            " logging.getLogger('httpx').isEnabledFor(logging.INFO))")
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=True,
+                         cwd=Path(__file__).parent.parent).stdout
+    assert out.split() == ["True", "False"]
 
 
 def test_the_same_question_on_both_venues_is_shown_as_one_consensus(path, monkeypatch):
@@ -650,4 +662,71 @@ def test_two_markets_already_tracked_are_paired_where_they_stand(path, monkeypat
         assert [x["id"] for x in m["related"]] == ["pm-m1", "pm-m2"]  # the Kalshi one stays a market of its own
         listed = {x["id"]: x["consensus"] for x in c.get("/markets").json()}
         assert listed["pm-m0"]["gap"] == 5.0 and listed["k-KX-0"]["venues"][0]["id"] == "k-KX-0"
+
+
+def test_a_preview_is_read_only_for_an_address_a_tick_has(path, monkeypatch):
+    from terminal import db as store
+    from terminal import preview
+
+    read = []
+
+    async def read_page(url):
+        read.append(url)
+        return '<meta property="og:image" content="/a.png">', url
+
+    monkeypatch.setattr(preview, "read_page", read_page)
+    with client(path) as c:
+        store.add_tick(c.app.state.db, {
+            "market_id": "mu-demo", "ts": 1.0, "published_ts": None, "kind": "article", "source": "news.example.com",
+            "url": "https://news.example.com/story", "headline": "h", "up": 0.1, "none": 0.8, "down": 0.1,
+            "strength": 0.0, "verdict": "none", "confidence": 0.8, "price_at": 20.0, "test": False, "backfill": False,
+            "hidden": False, "dedupe_key": "k"})
+        assert c.get("/preview", params={"url": "https://anywhere.example/"}).status_code == 404 and read == []
+        r = c.get("/preview", params={"url": "https://news.example.com/story"})
+        assert r.status_code == 200 and r.json()["image"] == "https://news.example.com/a.png"
+        assert read == ["https://news.example.com/story"]
+
+
+def test_a_body_posted_to_an_unknown_hook_is_never_read(path):
+    read = []
+
+    def body():
+        read.append(True)
+        yield b"x" * 1000
+
+    with client(path) as c:
+        assert c.post("/hooks/context/unknown", content=body()).status_code == 401
+    assert read == []
+
+
+def test_a_body_over_the_cap_is_refused_before_it_is_read(path):
+    from terminal.api import MAX_BODY
+
+    json_ = {"content-type": "application/json"}
+    with client(path) as c:
+        assert c.post("/markets", content=b"x" * (MAX_BODY + 1), headers=json_).status_code == 413
+        assert c.post("/markets", content=b"x", headers=json_).status_code == 422  # under the cap: read as usual
+
+
+def test_a_body_with_no_length_is_cut_off_at_the_cap(path):
+    import asyncio
+
+    import httpx
+
+    from terminal.api import MAX_BODY
+
+    sent = []
+
+    async def chunked():  # no Content-Length: the body comes in pieces until it ends
+        for _ in range(3 * MAX_BODY // 100_000):
+            sent.append(True)
+            yield b"x" * 100_000
+
+    async def post():  # not TestClient: it reads the whole body before the app sees any of it
+        transport = httpx.ASGITransport(create_app(db_path=path, scorer=up, poll=False, key="secret"))
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            return await c.post("/markets", content=chunked(), headers={"content-type": "application/json"})
+
+    assert asyncio.run(post()).status_code == 413  # with no key: the body is read before the key is checked
+    assert len(sent) <= MAX_BODY // 100_000 + 1  # and read no further than the cap
 

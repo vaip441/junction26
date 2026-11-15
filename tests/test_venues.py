@@ -279,3 +279,13 @@ def test_a_market_is_resolved_only_when_its_venue_says_so(monkeypatch):
     run = lambda m: asyncio.run(venues.resolved(m))
     assert run({"venue": "polymarket", "venue_ref": "over"}) is True and run({"venue": "kalshi", "venue_ref": "KX-OPEN"}) is False
 
+
+def test_venue_calls_run_on_the_venues_own_threads_not_the_shared_pool(monkeypatch):
+    import asyncio
+    import threading
+
+    from terminal import venues
+
+    monkeypatch.setattr(kalshi, "current_price", lambda ticker: threading.current_thread().name)
+    assert asyncio.run(venues.current_price({"venue": "kalshi", "venue_ref": "KX-A"})).startswith("venue")
+
