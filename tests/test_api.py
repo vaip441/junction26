@@ -218,6 +218,21 @@ def test_a_question_needs_no_key_while_open_places_are_left(path, monkeypatch):
         assert c.delete("/markets/pm-b").status_code == 401  # everything but asking still needs the key
 
 
+def test_a_related_contract_made_a_market_without_the_key_takes_a_place(path, monkeypatch):
+    from terminal import api, venues
+
+    async def resolve(link):
+        return CONTRACTS if link.endswith("/e") else sorted(CONTRACTS, key=lambda c: not link.endswith(c["slug"]))
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    monkeypatch.setattr(api, "OPEN_ASKS", 1)
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="s3cret")) as c:
+        c.post("/markets", json={"query": "https://polymarket.com/event/e"}, headers={"X-Terminal-Key": "s3cret"})
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/e/m1"}).json()["id"] == "pm-m1"
+        assert c.post("/markets", json={"query": "https://polymarket.com/event/e/m2"}).status_code == 401
+        assert [x["id"] for x in c.get("/markets").json()] == ["mu-demo", "pm-m0", "pm-m1"]  # it is searched now
+
+
 def test_questions_without_the_key_cannot_come_in_a_flood(path, monkeypatch):
     from terminal import api
 

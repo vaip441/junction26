@@ -432,7 +432,7 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
                 raise HTTPException(401, "the questions open to everyone are taken: this one needs the X-Terminal-Key header")
             if len(guest_asks) >= OPEN_RATE[0]:
                 raise HTTPException(429, "too many questions at once, try again in a few minutes")
-            known = store.market_ids(db)
+            known = {m["id"] for m in store.list_markets(db)}  # a related contract made a market is new too
             guests.add(place)  # held while the answer is worked out, so asks at the same moment cannot pass the limit
             guest_asks.append(now)
             body.poll_seconds = max(body.poll_seconds, MarketIn.model_fields["poll_seconds"].default)

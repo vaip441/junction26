@@ -133,10 +133,6 @@ def get_market(db, id: str) -> dict | None:
     return _market(db.execute("SELECT * FROM markets WHERE id = ?", (id,)).fetchone())
 
 
-def market_ids(db) -> set[str]:
-    return {r[0] for r in db.execute("SELECT id FROM markets")}
-
-
 def list_markets(db) -> list[dict]:
     return [_market(r) for r in db.execute("SELECT * FROM markets WHERE lead_id IS NULL ORDER BY created_ts, id")]
 
