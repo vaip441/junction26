@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
@@ -26,6 +27,8 @@ from terminal.pipeline import ingest, public
 from terminal.record import record
 from terminal.seed import DEMO
 
+log = logging.getLogger(__name__)
+
 UI = Path(__file__).parent.parent / "ui" / "dist"  # the real screen, once built (see README)
 REPLAYS = Path(__file__).parent.parent / "replays"  # finished markets to play back (see replay.py)
 DAY = 86400
@@ -33,6 +36,8 @@ MAX_RELATED = 5  # an event can hold over a hundred contracts; each one costs a 
 MAX_SHOWN = 6  # markets found for a question that are named to the frontend
 HISTORY_WAIT = 8  # seconds a new market's answer may wait for the venue's price history; past that it goes without
 OTHER_VENUE_ABOVE = 0.2  # how likely the other venue's market must be the same question to be shown beside the match
+OPEN_ASKS = 10  # questions asked without the key that may be tracked at one time: each costs credits every hour
+OPEN_RATE = (30, 600)  # and at most this many such asks, in this many seconds: each is model calls
 MAX_BODY = 2_000_000  # the largest body any route takes is a recording, at most speech.MAX_BYTES
 
 
@@ -123,9 +128,16 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
 
     stopping: set[asyncio.Task] = set()  # monitors of deleted markets, being stopped
 
+    # shortcut: kept in memory, so a restart gives the places back; store them if that is ever abused
+    guests: set = set()  # markets asked without the key and still tracked (ids), and such asks under way
+    guest_asks: deque[float] = deque()  # when the last questions without the key were asked
+
+    def has_key(given: str) -> bool:
+        return not key or hmac.compare_digest(given.encode(), key.encode())
+
     def write_access(x_terminal_key: str = Header("")):
         """Writes cost model calls and Context.dev credits, so a public deployment sets TERMINAL_KEY."""
-        if key and not hmac.compare_digest(x_terminal_key.encode(), key.encode()):
+        if not has_key(x_terminal_key):
             raise HTTPException(401, "missing or wrong X-Terminal-Key header")
 
     @asynccontextmanager
@@ -406,9 +418,35 @@ def create_app(db_path: str | None = None, scorer=None, poll: bool = True, key: 
             fresh += keep_twin(store.get_market(db, app.state.asked[made_id]), twin)
         return app.state.asked[made_id], True, fresh
 
-    @app.post("/markets", dependencies=[Depends(write_access)])
-    async def add_market(body: MarketIn):
-        """Track a market from a Kalshi or Polymarket link, or from a question in plain words."""
+    @app.post("/markets")
+    async def add_market(body: MarketIn, x_terminal_key: str = Header("")):
+        """Track a market from a Kalshi or Polymarket link, or from a question in plain words. This one write
+        is open without the key, so a visitor can try it: OPEN_ASKS such questions at a time, no faster
+        searches than the default, and no flood of asks."""
+        db, now, place = app.state.db, time.time(), object()
+        if guest := not has_key(x_terminal_key):
+            guests.difference_update({g for g in guests if isinstance(g, str) and not store.get_market(db, g)})
+            while guest_asks and guest_asks[0] < now - OPEN_RATE[1]:
+                guest_asks.popleft()
+            if len(guests) >= OPEN_ASKS:
+                raise HTTPException(401, "the questions open to everyone are taken: this one needs the X-Terminal-Key header")
+            if len(guest_asks) >= OPEN_RATE[0]:
+                raise HTTPException(429, "too many questions at once, try again in a few minutes")
+            known = store.market_ids(db)
+            guests.add(place)  # held while the answer is worked out, so asks at the same moment cannot pass the limit
+            guest_asks.append(now)
+            body.poll_seconds = max(body.poll_seconds, MarketIn.model_fields["poll_seconds"].default)
+        try:
+            answer = await ask(body)
+        finally:
+            guests.discard(place)
+        if guest and answer["id"] not in known:  # one already tracked takes no place
+            guests.add(answer["id"])
+        if guest:
+            log.info("asked without the key (%d of %d places taken): %r -> %s", len(guests), OPEN_ASKS, body.query, answer["id"])
+        return answer
+
+    async def ask(body: MarketIn) -> dict:
         try:
             (lead_id, fresh), matched = track(await venues.resolve(body.query), [], body.poll_seconds), True
             if fresh:  # tracked just now: the same question on the other venue is looked for once, here

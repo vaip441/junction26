@@ -100,7 +100,7 @@ and of every stream event, is in
 | Request | What it does |
 | --- | --- |
 | `GET /markets`, `GET /markets/{id}` | tracked markets with price, 24-hour change and ticks today; one market with its related contracts, sources and watched page |
-| `POST /markets` | track a market from a link or from plain words |
+| `POST /markets` | track a market from a link or from plain words; open without the key for ten questions at a time, so a visitor can try it |
 | `DELETE /markets/{id}` | stop tracking a market (the venues are also asked every ten minutes which markets have resolved, and those are dropped the same way) |
 | `POST /markets/mu-demo/reset` | put the demo market back to its starting price with an empty tape |
 | `GET /markets/{id}/ticks`, `GET /markets/{id}/prices` | history for the tape and the chart |

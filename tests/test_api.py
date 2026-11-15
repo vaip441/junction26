@@ -184,9 +184,48 @@ def test_writes_need_the_shared_key_when_one_is_set(path):
         body = {"text": "hello", "kind": "typed"}
         assert c.post("/markets/mu-demo/ticks", json=body).status_code == 401
         assert c.post("/markets/mu-demo/ticks", json=body, headers={"X-Terminal-Key": "wrong"}).status_code == 401
-        assert c.post("/markets", json={"query": "https://polymarket.com/event/e"}).status_code == 401
         assert c.post("/markets/mu-demo/ticks", json=body, headers={"X-Terminal-Key": "s3cret"}).status_code == 200
         assert c.get("/markets").status_code == 200
+
+
+def guest_asks(monkeypatch):
+    """ask(client, name, **kw): a question about a market of its own, sent without the key unless kw has one."""
+    from terminal import venues
+
+    async def resolve(link):
+        n = link.rsplit("/", 1)[1]
+        return [{**CONTRACTS[0], "venue_ref": f"tok-{n}", "slug": n, "url": link}]
+
+    monkeypatch.setattr(venues, "resolve", resolve)
+    return lambda c, n, **kw: c.post("/markets", json={"query": f"https://polymarket.com/event/{n}", "poll_seconds": 30}, **kw)
+
+
+def test_a_question_needs_no_key_while_open_places_are_left(path, monkeypatch):
+    from terminal import api
+
+    ask, key = guest_asks(monkeypatch), {"X-Terminal-Key": "s3cret"}
+    monkeypatch.setattr(api, "OPEN_ASKS", 2)
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="s3cret")) as c:
+        first = ask(c, "a")
+        assert first.status_code == 200 and first.json()["id"] == "pm-a"
+        assert first.json()["poll_seconds"] == 180  # a visitor cannot ask for faster searches
+        assert ask(c, "a").status_code == 200  # already tracked: it takes no second place
+        assert ask(c, "b").status_code == 200
+        assert ask(c, "c").status_code == 401 and c.get("/markets/pm-c").status_code == 404  # both places taken
+        assert ask(c, "c", headers=key).json()["poll_seconds"] == 30  # the key is never limited
+        assert c.delete("/markets/pm-a", headers=key).status_code == 200
+        assert ask(c, "d").status_code == 200  # a removed question frees its place
+        assert c.delete("/markets/pm-b").status_code == 401  # everything but asking still needs the key
+
+
+def test_questions_without_the_key_cannot_come_in_a_flood(path, monkeypatch):
+    from terminal import api
+
+    ask = guest_asks(monkeypatch)
+    monkeypatch.setattr(api, "OPEN_RATE", (2, 600))
+    with TestClient(create_app(db_path=path, scorer=up, poll=False, key="s3cret")) as c:
+        assert [ask(c, "a").status_code for _ in range(3)] == [200, 200, 429]
+        assert ask(c, "a", headers={"X-Terminal-Key": "s3cret"}).status_code == 200
 
 
 def test_pasting_a_related_contract_makes_it_a_market(path, monkeypatch):
