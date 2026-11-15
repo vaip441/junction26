@@ -72,10 +72,10 @@ export const api = {
   /** The image a page declares as its own, for the hover card. The backend reads it once and keeps it. */
   preview: (url: string) => request<Preview>(`/preview?url=${encodeURIComponent(url)}`),
 
-  addMarket: (query: string, pollSeconds = 900) =>
+  addMarket: (query: string) =>
     request<MarketDetail & { matched: boolean }>(
       '/markets',
-      { method: 'POST', body: JSON.stringify({ query, poll_seconds: pollSeconds }) },
+      { method: 'POST', body: JSON.stringify({ query }) },
       true,
     ),
   addTick: (id: string, text: string, kind: 'mic' | 'typed') =>
